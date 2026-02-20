@@ -77,8 +77,12 @@ npm run cf:dev
 - `tf`: `day|week|month|min15`
 - TF별 캔들 반환
 
-### `GET /api/analysis?query=005930&tf=multi&days=180`
+### `GET /api/analysis?query=005930&tf=multi&count=180`
 - `tf`: `day|week|month|min15|multi`
+- `count`: 일봉(day) 기준 조회 봉 수(week/month는 내부 최소치 강제)
+- `higher_tf_source`(선택): `resample|kis` (기본 `resample`)
+  - `resample`: day OHLCV를 서버에서 주봉/월봉으로 집계
+  - `kis`: week/month를 KIS에 별도 호출
 - `tf=multi` 응답 구조:
 
 ```json
@@ -95,13 +99,18 @@ npm run cf:dev
 }
 ```
 
+- `tf=multi`는 부분 성공 허용:
+  - 일부 TF 데이터가 부족해도 가능한 TF 결과를 반환
+  - `day`만 가능하면 final은 day 기반으로 계산
+  - `min15`가 없으면 `timing=null` + warnings에 비활성 안내 추가
+- `timeframes.month/week/day/min15`는 데이터 부족 시 `null`일 수 있음
 - `tf=day|week|month|min15`는 단일 TF 분석 응답(기존 day 응답 호환) 반환
 
 ## 데이터 수집 로직
 
 - `month/week/day`:
-  - KIS `inquire-daily-itemchartprice` 호출
-  - 기간코드 `M/W/D`로 수집
+  - KIS `inquire-daily-itemchartprice` 호출 (일봉 직접 조회)
+  - multi 기본 모드에서는 day를 충분히 수집한 뒤 주봉/월봉으로 리샘플링
 - `min15`:
   - KIS `inquire-time-itemchartprice`(주식당일분봉조회)로 당일 분봉 수집
   - 서버에서 15분봉으로 리샘플링(OHLCV/Volume 집계)
@@ -136,6 +145,7 @@ npm run cf:dev
 
 - 분석 캐시 + 원천 OHLCV 캐시를 분리 사용
 - TF별 캐시 키(`종목 + tf`)로 저장
+- multi 디버그를 위해 `warnings`에 `timeframes.*.candles.length`를 포함
 - TTL:
   - `day/min15`
     - 장중: 60초
@@ -158,4 +168,3 @@ npm run cf:dev
 ```bash
 npm run stocks:refresh
 ```
-

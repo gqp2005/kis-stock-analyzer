@@ -208,8 +208,8 @@ const fetchPeriodCandles = async (
 ): Promise<{ name: string; candles: Candle[] }> => {
   const periodCode = tf === "day" ? "D" : tf === "week" ? "W" : "M";
   const windowDays = tf === "day" ? 420 : tf === "week" ? 4500 : 12000;
-  const maxPage = tf === "day" ? 6 : 4;
   const targetCount = Math.max(minCount, tf === "day" ? 170 : tf === "week" ? 120 : 80);
+  const maxPage = tf === "day" ? Math.max(6, Math.ceil(targetCount / 90) + 2) : 4;
   const candleByDate = new Map<string, Candle>();
 
   let endDate = formatKstDate(new Date());
@@ -261,6 +261,48 @@ const fetchPeriodCandles = async (
 
   return { name: latestName, candles };
 };
+
+const isoWeekId = (dateText: string): string => {
+  const [y, m, d] = dateText.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+};
+
+const aggregateCandles = (
+  candles: Candle[],
+  keyFn: (candle: Candle) => string,
+): Candle[] => {
+  const sorted = [...candles].sort((a, b) => a.time.localeCompare(b.time));
+  const map = new Map<string, Candle>();
+  const order: string[] = [];
+
+  for (const candle of sorted) {
+    const key = keyFn(candle);
+    const cur = map.get(key);
+    if (!cur) {
+      map.set(key, { ...candle });
+      order.push(key);
+    } else {
+      cur.high = Math.max(cur.high, candle.high);
+      cur.low = Math.min(cur.low, candle.low);
+      cur.close = candle.close;
+      cur.volume += candle.volume;
+      cur.time = candle.time; // 마지막 봉 시점을 대표 시간으로 사용
+    }
+  }
+
+  return order.map((key) => map.get(key) as Candle).filter((c) => c.close > 0);
+};
+
+export const resampleDayToWeekCandles = (dayCandles: Candle[]): Candle[] =>
+  aggregateCandles(dayCandles, (candle) => isoWeekId(candle.time.slice(0, 10)));
+
+export const resampleDayToMonthCandles = (dayCandles: Candle[]): Candle[] =>
+  aggregateCandles(dayCandles, (candle) => candle.time.slice(0, 7));
 
 const fetchMinuteChunk = async (
   env: Env,
@@ -435,4 +477,3 @@ export const fetchDailyCandles = async (
     candles: result.candles,
   };
 };
-

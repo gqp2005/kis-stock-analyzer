@@ -1,11 +1,20 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
-import { fetchTimeframeCandles } from "../lib/kis";
+import {
+  fetchTimeframeCandles,
+  resampleDayToMonthCandles,
+  resampleDayToWeekCandles,
+} from "../lib/kis";
 import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { badRequest, json, serverError } from "../lib/response";
-import { analyzeTimeframe, computeMultiFinal } from "../lib/scoring";
+import {
+  analyzeTimeframe,
+  buildDisabledMin15Analysis,
+  computeMultiFinal,
+} from "../lib/scoring";
 import { resolveStock } from "../lib/stockResolver";
 import type {
   AnalysisPayload,
+  Candle,
   Env,
   MultiAnalysisPayload,
   Timeframe,
@@ -16,6 +25,19 @@ import { normalizeInput } from "../lib/utils";
 const VALID_TFS: Timeframe[] = ["day", "week", "month", "min15"];
 type TfParam = Timeframe | "multi";
 
+const MIN_MULTI = {
+  month: 60,
+  week: 160,
+  day: 40,
+  min15: 40,
+} as const;
+
+const TARGET_MULTI = {
+  month: 80,
+  week: 200,
+  min15: 180,
+} as const;
+
 const parseTf = (raw: string | null): TfParam => {
   if (!raw) return "day";
   const tf = raw.toLowerCase();
@@ -24,23 +46,60 @@ const parseTf = (raw: string | null): TfParam => {
   return "day";
 };
 
-const singleTfCount = (tf: Timeframe, days: number): number => {
-  if (tf === "day") return Math.max(days, 200);
-  if (tf === "week") return Math.max(140, Math.floor(days / 3));
-  if (tf === "month") return Math.max(96, Math.floor(days / 8));
-  return 180; // min15: 당일 데이터라 넉넉히 확보 후 리샘플링
+const parseDayCount = (url: URL): number => {
+  const raw = Number(url.searchParams.get("count") ?? url.searchParams.get("days") ?? "180");
+  if (!Number.isFinite(raw)) return 180;
+  return Math.max(60, Math.min(500, Math.floor(raw)));
 };
 
-const visibleCount = (tf: Timeframe, days: number): number => {
-  if (tf === "day") return days;
-  if (tf === "week") return Math.max(60, Math.min(180, Math.floor(days / 3)));
-  if (tf === "month") return Math.max(36, Math.min(120, Math.floor(days / 8)));
-  return 120; // min15 탭 표시는 최근 120개 15분봉
+const visibleCount = (tf: Timeframe, dayCount: number): number => {
+  if (tf === "day") return dayCount;
+  if (tf === "week") return 160;
+  if (tf === "month") return 80;
+  return 120;
+};
+
+const singleTfCount = (tf: Timeframe, dayCount: number): number => {
+  if (tf === "day") return Math.max(dayCount, 200);
+  if (tf === "week") return 200;
+  if (tf === "month") return 80;
+  return 180;
 };
 
 const analysisTtlByTf = (tf: TfParam): number => {
   if (tf === "multi") return timeframeCacheTtlSec("day");
   return timeframeCacheTtlSec(tf);
+};
+
+const ensureMinCandles = (
+  tf: "month" | "week" | "day",
+  candles: Candle[] | null,
+  min: number,
+  warnings: string[],
+): Candle[] | null => {
+  const length = candles?.length ?? 0;
+  if (length < min) {
+    warnings.push(`${tf} 데이터 부족 (${length}/${min})`);
+    return null;
+  }
+  return candles;
+};
+
+const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
+
+const safeFetchTf = async (
+  context: { env: Env; cache: Cache; symbol: string },
+  tf: Timeframe,
+  minCount: number,
+  warnings: string[],
+): Promise<{ name: string; candles: Candle[]; cacheTtlSec: number } | null> => {
+  try {
+    return await fetchTimeframeCandles(context.env, context.cache, context.symbol, tf, minCount);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    warnings.push(`${tf} 조회 실패: ${message}`);
+    return null;
+  }
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -54,15 +113,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           "",
       ) || "";
     const tfParam = parseTf(url.searchParams.get("tf"));
+    const dayCount = parseDayCount(url);
+    const higherTfSource = (url.searchParams.get("higher_tf_source") ?? "resample").toLowerCase();
+    const useResampledHigherTf = higherTfSource !== "kis";
 
     if (!input) {
       return badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.");
     }
-
-    const daysParam = Number(url.searchParams.get("days") ?? "180");
-    const days = Number.isFinite(daysParam)
-      ? Math.max(60, Math.min(300, Math.floor(daysParam)))
-      : 180;
 
     const resolved = resolveStock(input);
     if (!resolved) {
@@ -70,10 +127,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }
 
     const ttlSec = analysisTtlByTf(tfParam);
-    const cache = await caches.open("kis-analyzer-cache-v2");
-    const cacheKey = `https://cache.local/analysis/v3?code=${encodeURIComponent(
+    const cache = await caches.open("kis-analyzer-cache-v3");
+    const cacheKey = `https://cache.local/analysis/v4?code=${encodeURIComponent(
       resolved.code,
-    )}&tf=${tfParam}&days=${days}`;
+    )}&tf=${tfParam}&count=${dayCount}&src=${useResampledHigherTf ? "resample" : "kis"}`;
 
     if (tfParam === "multi") {
       const cached = await getCachedJson<MultiAnalysisPayload>(cache, cacheKey);
@@ -86,52 +143,103 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       }
       console.log(`[analysis-cache-miss] tf=multi symbol=${resolved.code}`);
 
-      const [monthRaw, weekRaw, dayRaw, min15Raw] = await Promise.all([
-        fetchTimeframeCandles(context.env, cache, resolved.code, "month", 100),
-        fetchTimeframeCandles(context.env, cache, resolved.code, "week", 140),
-        fetchTimeframeCandles(context.env, cache, resolved.code, "day", Math.max(days, 220)),
-        fetchTimeframeCandles(context.env, cache, resolved.code, "min15", 180),
-      ]);
+      const warnings: string[] = [];
+      const fetchCtx = { env: context.env, cache, symbol: resolved.code };
 
-      const monthCandles = monthRaw.candles.slice(-120);
-      const weekCandles = weekRaw.candles.slice(-180);
-      const dayCandles = dayRaw.candles.slice(-Math.max(days, 160));
-      const min15Candles = min15Raw.candles.slice(-180);
+      const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
+      const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
+      const min15Raw = await safeFetchTf(fetchCtx, "min15", TARGET_MULTI.min15, warnings);
 
-      if (monthCandles.length < 30 || weekCandles.length < 70 || dayCandles.length < 130 || min15Candles.length < 40) {
-        return badRequest("멀티 타임프레임 분석에 필요한 데이터가 부족합니다.");
+      let weekCandlesRaw: Candle[] | null = null;
+      let monthCandlesRaw: Candle[] | null = null;
+      let weekName = resolved.name;
+      let monthName = resolved.name;
+
+      if (useResampledHigherTf) {
+        if (dayRaw && dayRaw.candles.length > 0) {
+          weekCandlesRaw = resampleDayToWeekCandles(dayRaw.candles);
+          monthCandlesRaw = resampleDayToMonthCandles(dayRaw.candles);
+          weekName = dayRaw.name;
+          monthName = dayRaw.name;
+        } else {
+          warnings.push("week/month 리샘플링 실패: day 데이터가 없습니다.");
+        }
+      } else {
+        const [weekRaw, monthRaw] = await Promise.all([
+          safeFetchTf(fetchCtx, "week", TARGET_MULTI.week, warnings),
+          safeFetchTf(fetchCtx, "month", TARGET_MULTI.month, warnings),
+        ]);
+        weekCandlesRaw = weekRaw?.candles ?? null;
+        monthCandlesRaw = monthRaw?.candles ?? null;
+        weekName = weekRaw?.name ?? weekName;
+        monthName = monthRaw?.name ?? monthName;
       }
 
-      const month = analyzeTimeframe("month", monthCandles);
-      const week = analyzeTimeframe("week", weekCandles);
-      const day = analyzeTimeframe("day", dayCandles);
-      const min15 = analyzeTimeframe("min15", min15Candles);
+      const dayCandles = ensureMinCandles("day", dayRaw?.candles ?? null, MIN_MULTI.day, warnings);
+      const weekCandles = ensureMinCandles("week", weekCandlesRaw, MIN_MULTI.week, warnings);
+      const monthCandles = ensureMinCandles("month", monthCandlesRaw, MIN_MULTI.month, warnings);
+
+      const dayAnalysis = dayCandles ? analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 160))) : null;
+      const weekAnalysis = weekCandles ? analyzeTimeframe("week", weekCandles.slice(-200)) : null;
+      const monthAnalysis = monthCandles ? analyzeTimeframe("month", monthCandles.slice(-120)) : null;
+
+      let min15Analysis: TimeframeAnalysis | null = null;
+      if (!min15Raw || min15Raw.candles.length === 0) {
+        warnings.push("15분봉은 장중/당일 데이터가 없어서 비활성");
+        min15Analysis = buildDisabledMin15Analysis([]);
+      } else if (min15Raw.candles.length < MIN_MULTI.min15) {
+        warnings.push(`15분봉 데이터 부족 (${min15Raw.candles.length}/${MIN_MULTI.min15})`);
+        min15Analysis = buildDisabledMin15Analysis(min15Raw.candles);
+      } else {
+        min15Analysis = analyzeTimeframe("min15", min15Raw.candles.slice(-180));
+      }
 
       const timeframes: MultiAnalysisPayload["timeframes"] = {
-        month: {
-          ...month,
-          candles: month.candles.slice(-visibleCount("month", days)),
-        } as TimeframeAnalysis,
-        week: {
-          ...week,
-          candles: week.candles.slice(-visibleCount("week", days)),
-        } as TimeframeAnalysis,
-        day: {
-          ...day,
-          candles: day.candles.slice(-visibleCount("day", days)),
-        } as TimeframeAnalysis,
-        min15: {
-          ...min15,
-          candles: min15.candles.slice(-visibleCount("min15", days)),
-        } as TimeframeAnalysis,
+        month: monthAnalysis
+          ? {
+              ...monthAnalysis,
+              candles: monthAnalysis.candles.slice(-visibleCount("month", dayCount)),
+            }
+          : null,
+        week: weekAnalysis
+          ? {
+              ...weekAnalysis,
+              candles: weekAnalysis.candles.slice(-visibleCount("week", dayCount)),
+            }
+          : null,
+        day: dayAnalysis
+          ? {
+              ...dayAnalysis,
+              candles: dayAnalysis.candles.slice(-visibleCount("day", dayCount)),
+            }
+          : null,
+        min15: min15Analysis
+          ? {
+              ...min15Analysis,
+              candles: min15Analysis.candles.slice(-visibleCount("min15", dayCount)),
+            }
+          : null,
       };
+      warnings.push(
+        `timeframes.candles.length month=${timeframes.month?.candles.length ?? 0}, week=${timeframes.week?.candles.length ?? 0}, day=${timeframes.day?.candles.length ?? 0}, min15=${timeframes.min15?.candles.length ?? 0}`,
+      );
 
-      const final = computeMultiFinal(timeframes.month, timeframes.week, timeframes.day, timeframes.min15);
+      const final = computeMultiFinal(
+        timeframes.month,
+        timeframes.week,
+        timeframes.day,
+        timeframes.min15,
+      );
       const payload: MultiAnalysisPayload = {
         meta: {
           input,
           symbol: resolved.code,
-          name: dayRaw.name || resolved.name,
+          name:
+            dayRaw?.name ??
+            weekName ??
+            monthName ??
+            min15Raw?.name ??
+            resolved.name,
           market: resolved.market,
           asOf: nowIsoKst(),
           source: "KIS",
@@ -143,7 +251,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           summary: final.summary,
         },
         timeframes,
-        warnings: final.warnings,
+        warnings: dedupeWarnings([...warnings, ...final.warnings]),
       };
 
       await putCachedJson(cache, cacheKey, payload, ttlSec);
@@ -162,12 +270,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         "cache-control": `public, max-age=${ttlSec}`,
       });
     }
-    console.log(`[analysis-cache-miss] tf=${tf} symbol=${resolved.code}`);
 
-    const minCount = singleTfCount(tf, days);
+    const minCount = singleTfCount(tf, dayCount);
     const fetched = await fetchTimeframeCandles(context.env, cache, resolved.code, tf, minCount);
     const candlesForAnalysis = fetched.candles.slice(-Math.max(minCount, 140));
-    const candlesForChart = candlesForAnalysis.slice(-visibleCount(tf, days));
+    const candlesForChart = candlesForAnalysis.slice(-visibleCount(tf, dayCount));
     if (candlesForAnalysis.length < (tf === "min15" ? 40 : 70)) {
       return badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`);
     }
@@ -192,7 +299,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       levels: analysis.levels,
       candles: candlesForChart,
       regime: analysis.regime,
-      timing: analysis.timing,
+      timing: analysis.timing ?? null,
     };
 
     await putCachedJson(cache, cacheKey, payload, ttlSec);
@@ -205,4 +312,3 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return serverError(message);
   }
 };
-

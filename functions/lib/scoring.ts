@@ -518,11 +518,73 @@ export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAna
   return base;
 };
 
+export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAnalysis => {
+  const nullLevels: IndicatorLevels = {
+    ma20: null,
+    maFast: null,
+    maMid: null,
+    maLong: null,
+    rsi14: null,
+    bbUpper: null,
+    bbMid: null,
+    bbLower: null,
+    atr14: null,
+    atrPercent: null,
+    recentHigh: null,
+    recentLow: null,
+    volumeMa20: null,
+    support: null,
+    resistance: null,
+  };
+
+  const emptySignals: Signals = {
+    trend: {
+      closeAboveMid: false,
+      fastAboveMid: false,
+      midSlopeUp: false,
+      midAboveLong: false,
+      breakout: false,
+    },
+    momentum: {
+      rsi: null,
+      rsiBand: "LOW",
+      rsiUpN: false,
+      closeAboveFast: false,
+      returnNPositive: false,
+      volumeAboveMa20: false,
+    },
+    risk: {
+      atrPercent: null,
+      atrBucket: "N/A",
+      bbPosition: "N/A",
+      mddN: null,
+      sharpDropBar: false,
+    },
+  };
+
+  return {
+    tf: "min15",
+    regime: "SIDE",
+    summaryText: "15분봉 비활성",
+    scores: {
+      trend: 0,
+      momentum: 0,
+      risk: 0,
+      overall: "NEUTRAL",
+    },
+    signals: emptySignals,
+    reasons: ["15분봉은 장중/당일 데이터가 없어서 비활성"],
+    levels: nullLevels,
+    candles,
+    timing: null,
+  };
+};
+
 export const computeMultiFinal = (
-  month: TimeframeAnalysis,
-  week: TimeframeAnalysis,
-  day: TimeframeAnalysis,
-  min15: TimeframeAnalysis,
+  month: TimeframeAnalysis | null,
+  week: TimeframeAnalysis | null,
+  day: TimeframeAnalysis | null,
+  min15: TimeframeAnalysis | null,
 ): {
   overall: Overall;
   confidence: number;
@@ -530,37 +592,45 @@ export const computeMultiFinal = (
   warnings: string[];
 } => {
   const warnings: string[] = [];
-  let overall = day.scores.overall;
+  const base = day ?? week ?? month ?? min15;
+  let overall: Overall = base?.scores.overall ?? "CAUTION";
 
-  if (month.regime === "DOWN") {
+  if (!day) {
+    warnings.push("일봉 데이터 부족: final은 제한적으로 계산");
+  }
+
+  if (month?.regime === "DOWN") {
     overall = downgradeOverall(overall);
     warnings.push("장기 역풍");
   }
-  if (week.regime === "DOWN") {
+  if (week?.regime === "DOWN") {
     overall = downgradeOverall(overall);
     warnings.push("중기 역풍");
   }
-  if (month.regime === "DOWN" && week.regime === "DOWN") {
+  if (month?.regime === "DOWN" && week?.regime === "DOWN") {
     overall = "CAUTION";
   }
 
   let confidence = 50;
-  confidence += month.regime === "UP" ? 15 : month.regime === "SIDE" ? 5 : -15;
-  confidence += week.regime === "UP" ? 15 : week.regime === "SIDE" ? 5 : -15;
-  if (day.scores.trend >= 70) confidence += 10;
-  if (day.scores.momentum >= 60) confidence += 5;
-  if (day.scores.risk < 35) confidence -= 15;
-  if (day.signals.momentum.volumeAboveMa20) confidence += 5;
+  if (month) confidence += month.regime === "UP" ? 15 : month.regime === "SIDE" ? 5 : -15;
+  if (week) confidence += week.regime === "UP" ? 15 : week.regime === "SIDE" ? 5 : -15;
+  if (day) {
+    if (day.scores.trend >= 70) confidence += 10;
+    if (day.scores.momentum >= 60) confidence += 5;
+    if (day.scores.risk < 35) confidence -= 15;
+    if (day.signals.momentum.volumeAboveMa20) confidence += 5;
+  }
 
   // 명세: month/ week 동시 UP일 때 보너스(점수 or confidence 중 택1) -> confidence로 통일
-  if (month.regime === "UP" && week.regime === "UP") {
+  if (month?.regime === "UP" && week?.regime === "UP") {
     confidence += 10;
   }
 
   confidence = clamp(confidence, 0, 100);
 
-  const timingText = min15.timing ? min15.timing.timingLabel : "타이밍 정보 없음";
-  const summary = `${day.summaryText} · ${timingText}`;
+  const summaryBase = day?.summaryText ?? week?.summaryText ?? month?.summaryText ?? "분석 데이터 부족";
+  const timingText = min15?.timing ? min15.timing.timingLabel : "15분 타이밍 비활성";
+  const summary = `${summaryBase} · ${timingText}`;
 
   return {
     overall,
@@ -589,4 +659,3 @@ export const analyzeCandles = (
     summaryText: day.summaryText,
   };
 };
-

@@ -38,12 +38,18 @@ const TF_LABEL: Record<Timeframe, string> = {
   min15: "15분",
 };
 
+const TF_TABS: Timeframe[] = ["month", "week", "day", "min15"];
+const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min15"];
+
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
     return Math.floor(new Date(value).getTime() / 1000) as Time;
   }
   return value as Time;
 };
+
+const pickDefaultTf = (payload: MultiAnalysisResponse): Timeframe =>
+  TF_FALLBACK_ORDER.find((tf) => payload.timeframes[tf] !== null) ?? "day";
 
 export default function App() {
   const [query, setQuery] = useState("005930");
@@ -89,11 +95,13 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&days=${lookback}&tf=multi`;
+      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi`;
       const response = await fetch(url);
       const data = (await response.json()) as MultiAnalysisResponse | { error: string };
       if (!response.ok) throw new Error("error" in data ? data.error : "분석 요청 실패");
-      setResult(data as MultiAnalysisResponse);
+      const payload = data as MultiAnalysisResponse;
+      setResult(payload);
+      setActiveTf((prev) => (payload.timeframes[prev] ? prev : pickDefaultTf(payload)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
       setResult(null);
@@ -277,7 +285,7 @@ export default function App() {
 
         {error && <p className="error">{error}</p>}
 
-        {result && activeAnalysis && (
+        {result && (
           <section className="result">
             <div className="summary">
               <div>
@@ -308,63 +316,82 @@ export default function App() {
             )}
 
             <div className="tf-tabs">
-              {(["month", "week", "day", "min15"] as Timeframe[]).map((tf) => (
-                <button
-                  key={tf}
-                  type="button"
-                  className={tf === activeTf ? "tab active" : "tab"}
-                  onClick={() => setActiveTf(tf)}
-                >
-                  {TF_LABEL[tf]}
-                </button>
-              ))}
+              {TF_TABS.map((tf) => {
+                const disabled = !result.timeframes[tf];
+                return (
+                  <button
+                    key={tf}
+                    type="button"
+                    className={tf === activeTf ? "tab active" : disabled ? "tab disabled" : "tab"}
+                    disabled={disabled}
+                    onClick={() => setActiveTf(tf)}
+                  >
+                    {TF_LABEL[tf]}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="score-grid">
-              <article className={scoreClass(activeAnalysis.scores.trend)}>
-                <h3>Trend</h3>
-                <strong>{activeAnalysis.scores.trend}</strong>
-              </article>
-              <article className={scoreClass(activeAnalysis.scores.momentum)}>
-                <h3>Momentum</h3>
-                <strong>{activeAnalysis.scores.momentum}</strong>
-              </article>
-              <article className={scoreClass(activeAnalysis.scores.risk)}>
-                <h3>Risk</h3>
-                <strong>{activeAnalysis.scores.risk}</strong>
-              </article>
-            </div>
+            {activeAnalysis && (
+              <>
+                <div className="score-grid">
+                  <article className={scoreClass(activeAnalysis.scores.trend)}>
+                    <h3>Trend</h3>
+                    <strong>{activeAnalysis.scores.trend}</strong>
+                  </article>
+                  <article className={scoreClass(activeAnalysis.scores.momentum)}>
+                    <h3>Momentum</h3>
+                    <strong>{activeAnalysis.scores.momentum}</strong>
+                  </article>
+                  <article className={scoreClass(activeAnalysis.scores.risk)}>
+                    <h3>Risk</h3>
+                    <strong>{activeAnalysis.scores.risk}</strong>
+                  </article>
+                </div>
 
-            {activeTf === "min15" && activeAnalysis.timing && (
-              <div className="timing-box">
-                <h3>
-                  15분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
-                </h3>
-                <ul>
-                  {activeAnalysis.timing.reasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
-                </ul>
+                {activeTf === "min15" && (
+                  <div className="timing-box">
+                    {activeAnalysis.timing ? (
+                      <>
+                        <h3>
+                          15분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
+                        </h3>
+                        <ul>
+                          {activeAnalysis.timing.reasons.map((reason) => (
+                            <li key={reason}>{reason}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <h3>15분봉은 장중/당일 데이터가 없어 타이밍 분석이 비활성입니다.</h3>
+                    )}
+                  </div>
+                )}
+
+                <div className="card">
+                  <h3>{TF_LABEL[activeTf]} 근거</h3>
+                  <ul>
+                    {activeAnalysis.reasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="card">
+                  <h3>OHLCV Chart ({TF_LABEL[activeTf]})</h3>
+                  <div ref={chartRef} className="chart" />
+                </div>
+              </>
+            )}
+            {!activeAnalysis && (
+              <div className="card">
+                <h3>{TF_LABEL[activeTf]} 데이터 없음</h3>
+                <p>해당 타임프레임 데이터가 부족해 비활성화되었습니다. 다른 탭을 선택해 주세요.</p>
               </div>
             )}
-
-            <div className="card">
-              <h3>{TF_LABEL[activeTf]} 근거</h3>
-              <ul>
-                {activeAnalysis.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="card">
-              <h3>OHLCV Chart ({TF_LABEL[activeTf]})</h3>
-              <div ref={chartRef} className="chart" />
-            </div>
           </section>
         )}
       </main>
     </div>
   );
 }
-

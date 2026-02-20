@@ -83,7 +83,7 @@ export interface TimeframeAnalysis {
   reasons: string[];
   levels: IndicatorLevels;
   candles: Candle[];
-  timing?: TimingInfo;
+  timing?: TimingInfo | null;
 }
 
 export interface AnalysisPayload {
@@ -105,7 +105,7 @@ export interface AnalysisPayload {
   levels: IndicatorLevels;
   candles: Candle[];
   regime: Regime;
-  timing?: TimingInfo;
+  timing?: TimingInfo | null;
 }
 
 export interface MultiAnalysisPayload {
@@ -124,10 +124,10 @@ export interface MultiAnalysisPayload {
     summary: string;
   };
   timeframes: {
-    month: TimeframeAnalysis;
-    week: TimeframeAnalysis;
-    day: TimeframeAnalysis;
-    min15: TimeframeAnalysis;
+    month: TimeframeAnalysis | null;
+    week: TimeframeAnalysis | null;
+    day: TimeframeAnalysis | null;
+    min15: TimeframeAnalysis | null;
   };
   warnings: string[];
 }
@@ -146,4 +146,3 @@ export interface OhlcvPayload {
   };
   candles: Candle[];
 }
-

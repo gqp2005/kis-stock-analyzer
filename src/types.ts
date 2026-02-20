@@ -48,7 +48,7 @@ export interface TimeframeAnalysis {
     resistance: number | null;
   };
   candles: Candle[];
-  timing?: TimingInfo;
+  timing?: TimingInfo | null;
 }
 
 export interface MultiAnalysisResponse {
@@ -67,11 +67,10 @@ export interface MultiAnalysisResponse {
     summary: string;
   };
   timeframes: {
-    month: TimeframeAnalysis;
-    week: TimeframeAnalysis;
-    day: TimeframeAnalysis;
-    min15: TimeframeAnalysis;
+    month: TimeframeAnalysis | null;
+    week: TimeframeAnalysis | null;
+    day: TimeframeAnalysis | null;
+    min15: TimeframeAnalysis | null;
   };
   warnings: string[];
 }
-

@@ -263,6 +263,10 @@ h2 {
   background: rgba(87, 163, 255, 0.25);
 }
 
+.tab.disabled {
+  opacity: 0.45;
+}
+
 .score {
   border-radius: 14px;
   border: 1px solid var(--line);
