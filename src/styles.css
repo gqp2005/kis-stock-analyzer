@@ -346,6 +346,38 @@ h2 {
   margin-bottom: 6px;
 }
 
+.reason-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.reason-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  border: 1px solid;
+}
+
+.reason-tag.positive {
+  color: #b3ffee;
+  border-color: rgba(0, 179, 134, 0.7);
+  background: rgba(0, 179, 134, 0.2);
+}
+
+.reason-tag.negative {
+  color: #ffd0d9;
+  border-color: rgba(255, 90, 118, 0.7);
+  background: rgba(255, 90, 118, 0.2);
+}
+
 .chart {
   width: 100%;
   height: 420px;

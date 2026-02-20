@@ -85,9 +85,45 @@ const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null
 };
 
 const formatPrice = (value: number | null): string =>
-  value == null ? "-" : value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
 
 const formatSigned = (value: number): string => `${value > 0 ? "+" : ""}${value}`;
+const formatRiskReward = (value: number | null): string =>
+  value == null ? "-" : `${Math.round(value)}대1`;
+
+type ReasonTone = "positive" | "negative";
+
+const toneBadge = (tone: ReasonTone): { text: "긍정" | "부정"; className: string } =>
+  tone === "positive"
+    ? { text: "긍정", className: "reason-tag positive" }
+    : { text: "부정", className: "reason-tag negative" };
+
+const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone => {
+  if (index === 0) return analysis.signals.trend.closeAboveMid ? "positive" : "negative";
+  if (index === 1) return analysis.signals.trend.fastAboveMid ? "positive" : "negative";
+  if (index === 2) return analysis.signals.trend.breakout ? "positive" : "negative";
+  if (index === 3) return analysis.signals.momentum.rsiBand === "LOW" ? "negative" : "positive";
+  if (index === 4) {
+    const atrPercent = analysis.signals.risk.atrPercent;
+    return atrPercent != null && atrPercent <= 4 ? "positive" : "negative";
+  }
+  if (index === 5) return analysis.signals.risk.sharpDropBar ? "negative" : "positive";
+  return "negative";
+};
+
+const timingReasonTone = (reason: string): ReasonTone => {
+  if (reason.includes("위라 단기 방향이 우호적")) return "positive";
+  if (reason.includes("정렬로 단기 추세 정렬이 좋습니다")) return "positive";
+  if (reason.includes("가 55 이상입니다")) return "positive";
+  if (reason.includes("최근 4봉 기준 상승했습니다")) return "positive";
+
+  if (reason.includes("아래라 단기 추세가 약합니다")) return "negative";
+  if (reason.includes("정렬이 아직 아닙니다")) return "negative";
+  if (reason.includes("하단 이탈")) return "negative";
+  if (reason.includes("상단 이탈")) return "negative";
+  if (reason.includes("변동성이 높습니다")) return "negative";
+  return "negative";
+};
 
 export default function App() {
   const [query, setQuery] = useState("005930");
@@ -271,7 +307,7 @@ export default function App() {
             lineStyle: LineStyle.Solid,
             lineVisible: false,
             axisLabelVisible: true,
-            title: `MA${ma.period} ${last.value.toFixed(2)}`,
+            title: `MA${ma.period} ${Math.round(last.value).toLocaleString("ko-KR")}원`,
           });
         }
       }
@@ -284,7 +320,7 @@ export default function App() {
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "Support",
+        title: "지지",
       });
     }
     if (active.levels.resistance != null) {
@@ -294,7 +330,7 @@ export default function App() {
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "Resistance",
+        title: "저항",
       });
     }
 
@@ -430,8 +466,8 @@ export default function App() {
     <div className="page">
       <main className="panel">
         <header className="hero">
-          <p className="eyebrow">KIS DEVELOPERS OPENAPI</p>
-          <h1>KR Stock Signal Board</h1>
+          <p className="eyebrow">KIS 개발자 오픈API</p>
+          <h1>한국 주식 시그널 보드</h1>
           <p className="subtitle">멀티 타임프레임(월/주/일/15분) 스코어링으로 종목 상태를 확인합니다.</p>
         </header>
 
@@ -488,7 +524,7 @@ export default function App() {
                   {result.meta.name} ({result.meta.symbol})
                 </h2>
                 <p className="meta">
-                  {result.meta.market} · {result.meta.asOf} · source {result.meta.source}
+                  {result.meta.market} · {result.meta.asOf} · 출처 {result.meta.source}
                 </p>
               </div>
               <div className="summary-right">
@@ -548,7 +584,7 @@ export default function App() {
 
                 {riskBreakdown && (
                   <div className="card">
-                    <h3>Risk 점수 분해</h3>
+                    <h3>위험도 점수 분해</h3>
                     <div className="risk-breakdown-grid">
                       <div className="risk-row">
                         <span>ATR 구간</span>
@@ -573,31 +609,29 @@ export default function App() {
                         </strong>
                       </div>
                     </div>
-                    <p className="plan-note">Risk = ATR + BB + MDD + 급락 패널티 (0~100으로 보정)</p>
+                    <p className="plan-note">위험도 = ATR + 볼린저 + MDD + 급락 패널티 (0~100 보정)</p>
                   </div>
                 )}
 
                 {tradePlan && (
                   <div className="card">
-                    <h3>Entry / Stop / Target (참고)</h3>
+                    <h3>진입가 / 손절가 / 목표가 (참고)</h3>
                     <div className="plan-grid">
                       <div className="plan-item">
-                        <span>Entry</span>
+                        <span>진입가</span>
                         <strong>{formatPrice(tradePlan.entry)}</strong>
                       </div>
                       <div className="plan-item">
-                        <span>Stop</span>
+                        <span>손절가</span>
                         <strong>{formatPrice(tradePlan.stop)}</strong>
                       </div>
                       <div className="plan-item">
-                        <span>Target</span>
+                        <span>목표가</span>
                         <strong>{formatPrice(tradePlan.target)}</strong>
                       </div>
                       <div className="plan-item">
-                        <span>R/R</span>
-                        <strong>
-                          {tradePlan.riskReward != null ? `${tradePlan.riskReward.toFixed(2)}R` : "-"}
-                        </strong>
+                        <span>손익비</span>
+                        <strong>{formatRiskReward(tradePlan.riskReward)}</strong>
                       </div>
                     </div>
                     <p className="plan-note">{tradePlan.note}</p>
@@ -613,7 +647,13 @@ export default function App() {
                         </h3>
                         <ul>
                           {activeAnalysis.timing.reasons.map((reason) => (
-                            <li key={reason}>{reason}</li>
+                            <li key={reason} className="reason-item">
+                              <span>{reason}</span>
+                              {(() => {
+                                const tone = toneBadge(timingReasonTone(reason));
+                                return <small className={tone.className}>{tone.text}</small>;
+                              })()}
+                            </li>
                           ))}
                         </ul>
                       </>
@@ -626,14 +666,20 @@ export default function App() {
                 <div className="card">
                   <h3>{TF_LABEL[activeTf]} 근거</h3>
                   <ul>
-                    {activeAnalysis.reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
+                    {activeAnalysis.reasons.map((reason, index) => (
+                      <li key={reason} className="reason-item">
+                        <span>{reason}</span>
+                        {(() => {
+                          const tone = toneBadge(coreReasonTone(activeAnalysis, index));
+                          return <small className={tone.className}>{tone.text}</small>;
+                        })()}
+                      </li>
                     ))}
                   </ul>
                 </div>
 
                 <div className="card">
-                  <h3>OHLCV Chart ({TF_LABEL[activeTf]})</h3>
+                  <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
                   {maInfo && activeTf !== "min15" && (
                     <div className="indicator-controls">
                       <label>

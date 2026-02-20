@@ -223,7 +223,7 @@ const buildTradePlan = (
     stop: round2(stop),
     target: round2(target),
     riskReward: round2(riskReward),
-    note: `참고 레벨입니다. 진입은 추세 확인 후, 손절은 stop 이탈 시, 목표는 target 부근 분할 대응을 권장합니다.`,
+    note: `참고 레벨입니다. 진입은 추세 확인 후, 손절은 손절가 이탈 시, 목표는 목표가 부근 분할 대응을 권장합니다.`,
   };
 };
 
