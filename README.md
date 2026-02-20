@@ -148,6 +148,12 @@ npm run cf:dev
   4. 점수 정렬 후 snapshot 저장(Top N 메타 포함)
      - key: `screener:v1:market=ALL:strategy=ALL:YYYY-MM-DD`
   5. `last_success` 키 갱신
+- 타임아웃 회피(v1.1):
+  - 한 번에 500개 전량 처리하지 않고 `batch` 단위로 분할 처리
+  - 진행 상태 key: `screener:v1:rebuild-progress:YYYY-MM-DD`
+  - 예: `batch=40`이면 호출 1회당 최대 40종목씩 처리
+  - 진행 중 응답은 `202` + `inProgress=true` + `progress` 필드 반환
+  - 같은 엔드포인트를 재호출하면 이어서 처리, 완료 시 `200` + `inProgress=false`
 - 동시 실행 방지:
   - lock key: `lock:rebuild-screener`
 - 실패 시:
@@ -157,6 +163,12 @@ npm run cf:dev
 
 ```bash
 curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMIN_TOKEN>"
+```
+
+분할 처리 예시(batch 40):
+
+```bash
+curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMIN_TOKEN>&batch=40"
 ```
 
 ### `GET /api/backtest?query=005930&count=520&holdBars=10&signal=GOOD`
@@ -280,6 +292,7 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - 스크리너는 배치 snapshot 캐시를 사용(실시간 계산 없음)
   - 유니버스: `universe:turnoverTop500:YYYY-MM-DD`
   - 스크리너: `screener:v1:market=ALL:strategy=ALL:YYYY-MM-DD`
+  - 재빌드 진행상태: `screener:v1:rebuild-progress:YYYY-MM-DD`
   - last success:
     - `universe:turnoverTop500:last_success`
     - `screener:v1:market=ALL:strategy=ALL:last_success`

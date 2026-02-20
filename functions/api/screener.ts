@@ -5,7 +5,9 @@ import { json, serverError } from "../lib/response";
 import { buildScreenerView } from "../lib/screener";
 import {
   SCREENER_CACHE_TTL_SEC,
+  type RebuildProgressSnapshot,
   type ScreenerSnapshot,
+  rebuildProgressKey,
   screenerDateKey,
   screenerLastSuccessKey,
 } from "../lib/screenerStore";
@@ -54,6 +56,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const today = nowIsoKst().slice(0, 10);
     const todayKey = screenerDateKey(today);
     const lastSuccessKey = screenerLastSuccessKey();
+    const progress = await getCachedJson<RebuildProgressSnapshot>(
+      cache,
+      rebuildProgressKey(today),
+    );
 
     let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
     let rebuildRequired = false;
@@ -71,6 +77,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         warnings.push("오늘 스크리너 캐시가 없어 마지막 성공 결과를 반환합니다. 재빌드가 필요합니다.");
       } else {
         warnings.push("스크리너 결과 캐시가 없습니다. /api/admin/rebuild-screener 실행이 필요합니다.");
+      }
+      if (progress && progress.universeCount > 0) {
+        warnings.push(
+          `현재 rebuild 진행 중: ${progress.cursor}/${progress.universeCount} 처리됨`,
+        );
       }
     }
 
@@ -146,4 +157,3 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return finalize(serverError(message, context.request));
   }
 };
-

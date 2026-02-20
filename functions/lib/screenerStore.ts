@@ -21,6 +21,9 @@ export const screenerLastSuccessKey = (): string =>
 export const rebuildLockKey = (): string =>
   toCacheUrl("lock:rebuild-screener");
 
+export const rebuildProgressKey = (date: string): string =>
+  toCacheUrl(`screener:v1:rebuild-progress:${date}`);
+
 export interface UniverseSnapshot {
   date: string;
   updatedAt: string;
@@ -41,3 +44,15 @@ export interface ScreenerSnapshot {
   topCandidates: ScreenerStoredCandidate[];
 }
 
+export interface RebuildProgressSnapshot {
+  date: string;
+  startedAt: string;
+  updatedAt: string;
+  cursor: number;
+  universeCount: number;
+  processedCount: number;
+  ohlcvFailures: number;
+  insufficientData: number;
+  warnings: string[];
+  candidates: ScreenerStoredCandidate[];
+}

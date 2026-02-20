@@ -108,7 +108,11 @@ describe("/api/screener (cache-only)", () => {
   });
 
   it("returns cached snapshot immediately", async () => {
-    getCachedJsonMock.mockResolvedValue(sampleSnapshot as never);
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      return sampleSnapshot as never;
+    });
 
     const response = await onRequestGet(
       makeContext("http://localhost/api/screener?market=KOSPI&strategy=ALL&count=30"),
@@ -126,10 +130,12 @@ describe("/api/screener (cache-only)", () => {
   });
 
   it("returns last-success snapshot with rebuildRequired on cache miss", async () => {
-    let calls = 0;
-    getCachedJsonMock.mockImplementation(async () => {
-      calls += 1;
-      return (calls === 1 ? null : sampleSnapshot) as never;
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      if (keyText.includes("market=ALL:strategy=ALL:last_success")) return sampleSnapshot as never;
+      if (keyText.includes("market=ALL:strategy=ALL:")) return null as never;
+      return null as never;
     });
 
     const response = await onRequestGet(
@@ -147,4 +153,3 @@ describe("/api/screener (cache-only)", () => {
     expect(body.warnings.some((warning) => warning.includes("재빌드"))).toBe(true);
   });
 });
-
