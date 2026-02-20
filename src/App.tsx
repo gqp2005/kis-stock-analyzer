@@ -19,6 +19,7 @@ import type {
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
+import ScreenerPanel from "./ScreenerPanel";
 
 interface StockLookup {
   code: string;
@@ -242,6 +243,7 @@ const timingReasonTone = (reason: string): ReasonTone => {
 };
 
 export default function App() {
+  const [pageMode, setPageMode] = useState<"analysis" | "screener">("analysis");
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -333,9 +335,7 @@ export default function App() {
   };
 
   const onSelectSuggestion = (stock: StockLookup) => {
-    setQuery(stock.code);
-    setShowSuggestions(false);
-    fetchDashboard(stock.code, days, backtestHoldBars, backtestSignal);
+    moveToAnalysisWithSymbol(stock.code);
   };
 
   const clearQuery = () => {
@@ -343,6 +343,13 @@ export default function App() {
     setSuggestions([]);
     setShowSuggestions(false);
     queryInputRef.current?.focus();
+  };
+
+  const moveToAnalysisWithSymbol = (code: string) => {
+    setPageMode("analysis");
+    setQuery(code);
+    setShowSuggestions(false);
+    fetchDashboard(code, days, backtestHoldBars, backtestSignal);
   };
 
   useEffect(() => {
@@ -762,6 +769,26 @@ export default function App() {
           <h1>한국 주식 시그널 보드</h1>
           <p className="subtitle">멀티 타임프레임(월/주/일/15분) 스코어링으로 종목 상태를 확인합니다.</p>
         </header>
+
+        <div className="mode-tabs">
+          <button
+            type="button"
+            className={pageMode === "analysis" ? "tab active" : "tab"}
+            onClick={() => setPageMode("analysis")}
+          >
+            종목 분석
+          </button>
+          <button
+            type="button"
+            className={pageMode === "screener" ? "tab active" : "tab"}
+            onClick={() => setPageMode("screener")}
+          >
+            종목 추천(스크리너)
+          </button>
+        </div>
+
+        {pageMode === "analysis" ? (
+          <>
 
         <form className="search" onSubmit={onSubmit}>
           <div className="search-input-wrap" ref={searchWrapRef}>
@@ -1338,6 +1365,10 @@ export default function App() {
               </div>
             )}
           </section>
+        )}
+          </>
+        ) : (
+          <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         )}
       </main>
     </div>

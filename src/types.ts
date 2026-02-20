@@ -183,6 +183,81 @@ export interface MultiAnalysisResponse {
   warnings: string[];
 }
 
+export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
+export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS";
+export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
+
+export interface StrategyBacktestSummary {
+  trades: number;
+  winRate: number | null;
+  avgReturn: number | null;
+  PF: number | null;
+  MDD: number | null;
+}
+
+export interface PatternHit {
+  detected: boolean;
+  state: PatternState;
+  neckline: number | null;
+  breakDate: string | null;
+  target: number | null;
+  score: number;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface VolumeHit {
+  score: number;
+  confidence: number;
+  volRatio: number;
+  patterns: VolumePatternType[];
+  reasons: string[];
+}
+
+export interface ScreenerItem {
+  code: string;
+  name: string;
+  market: string;
+  lastClose: number;
+  lastDate: string;
+  scoreTotal: number;
+  confidence: number;
+  overallLabel: Overall;
+  hits: {
+    volume: VolumeHit;
+    hs: PatternHit;
+    ihs: PatternHit;
+  };
+  reasons: string[];
+  levels: {
+    support: number | null;
+    resistance: number | null;
+    neckline: number | null;
+  };
+  backtestSummary: StrategyBacktestSummary | null;
+}
+
+export interface ScreenerResponse {
+  meta: {
+    market: ScreenerMarketFilter;
+    strategy: ScreenerStrategyFilter;
+    count: number;
+    universe: number;
+    scanned: number;
+    candidates: number;
+    asOf: string;
+    lastUpdatedAt: string | null;
+    universeLabel: string;
+    source: "KIS";
+    cacheTtlSec: number;
+    includeBacktest: boolean;
+    rebuildRequired: boolean;
+  };
+  items: ScreenerItem[];
+  warningItems: ScreenerItem[];
+  warnings: string[];
+}
+
 export type BacktestOutcome = "WIN" | "LOSS" | "FLAT";
 export type BacktestExitReason = "TARGET" | "STOP" | "TIMEOUT";
 

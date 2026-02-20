@@ -5,3 +5,4 @@ KIS_APP_SECRET=your_kis_app_secret
 # KIS_ENV=real
 # RATE_LIMIT_MAX_REQUESTS=120
 # RATE_LIMIT_WINDOW_SEC=60
+# ADMIN_TOKEN=change-me

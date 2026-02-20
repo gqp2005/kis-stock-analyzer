@@ -5,6 +5,7 @@ export interface Env {
   KIS_ENV?: "real" | "demo";
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
+  ADMIN_TOKEN?: string;
 }
 
 export type Timeframe = "month" | "week" | "day" | "min15";
@@ -215,6 +216,81 @@ export interface MultiAnalysisPayload {
     day: TimeframeAnalysis | null;
     min15: TimeframeAnalysis | null;
   };
+  warnings: string[];
+}
+
+export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
+export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS";
+export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
+
+export interface StrategyBacktestSummary {
+  trades: number;
+  winRate: number | null;
+  avgReturn: number | null;
+  PF: number | null;
+  MDD: number | null;
+}
+
+export interface PatternHit {
+  detected: boolean;
+  state: PatternState;
+  neckline: number | null;
+  breakDate: string | null;
+  target: number | null;
+  score: number;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface VolumeHit {
+  score: number;
+  confidence: number;
+  volRatio: number;
+  patterns: VolumePatternType[];
+  reasons: string[];
+}
+
+export interface ScreenerItem {
+  code: string;
+  name: string;
+  market: string;
+  lastClose: number;
+  lastDate: string;
+  scoreTotal: number;
+  confidence: number;
+  overallLabel: Overall;
+  hits: {
+    volume: VolumeHit;
+    hs: PatternHit;
+    ihs: PatternHit;
+  };
+  reasons: string[];
+  levels: {
+    support: number | null;
+    resistance: number | null;
+    neckline: number | null;
+  };
+  backtestSummary: StrategyBacktestSummary | null;
+}
+
+export interface ScreenerPayload {
+  meta: {
+    market: ScreenerMarketFilter;
+    strategy: ScreenerStrategyFilter;
+    count: number;
+    universe: number;
+    scanned: number;
+    candidates: number;
+    asOf: string;
+    lastUpdatedAt: string | null;
+    universeLabel: string;
+    source: "KIS";
+    cacheTtlSec: number;
+    includeBacktest: boolean;
+    rebuildRequired: boolean;
+  };
+  items: ScreenerItem[];
+  warningItems: ScreenerItem[];
   warnings: string[];
 }
 
