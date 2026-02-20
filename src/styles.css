@@ -141,6 +141,12 @@ button:disabled {
   gap: 6px;
 }
 
+.final-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 h2 {
   margin: 0 0 4px;
   font-size: 24px;
@@ -156,6 +162,32 @@ h2 {
   margin: 0;
   color: #c7d8ea;
   font-size: 13px;
+}
+
+.confidence {
+  border-radius: 999px;
+  border: 1px solid;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.confidence.good {
+  color: #b3ffee;
+  border-color: rgba(0, 179, 134, 0.7);
+  background: rgba(0, 179, 134, 0.2);
+}
+
+.confidence.neutral {
+  color: #ffe7b2;
+  border-color: rgba(226, 173, 34, 0.7);
+  background: rgba(226, 173, 34, 0.2);
+}
+
+.confidence.caution {
+  color: #ffd0d9;
+  border-color: rgba(255, 90, 118, 0.7);
+  background: rgba(255, 90, 118, 0.2);
 }
 
 .badge {
@@ -189,6 +221,46 @@ h2 {
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.warning-box {
+  margin: 8px 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.warning-box span {
+  background: rgba(255, 90, 118, 0.18);
+  border: 1px solid rgba(255, 90, 118, 0.45);
+  color: #ffd7de;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.tf-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(13, 27, 40, 0.8);
+  color: var(--muted);
+  padding: 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: #dff7ff;
+  border-color: rgba(87, 163, 255, 0.7);
+  background: rgba(87, 163, 255, 0.25);
 }
 
 .score {
@@ -248,6 +320,23 @@ h2 {
 .chart {
   width: 100%;
   height: 420px;
+}
+
+.timing-box {
+  border: 1px solid rgba(87, 163, 255, 0.4);
+  background: rgba(18, 39, 59, 0.7);
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.timing-box h3 {
+  margin: 0 0 8px;
+}
+
+.timing-box ul {
+  margin: 0;
+  padding-left: 18px;
 }
 
 .suggestions {

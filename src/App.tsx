@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ColorType, LineStyle, createChart, type Time } from "lightweight-charts";
-import type { AnalysisResponse } from "./types";
 import stockMap from "../data/kr-stocks.json";
+import type { MultiAnalysisResponse, Overall, Timeframe, TimeframeAnalysis } from "./types";
 
 interface StockLookup {
   code: string;
@@ -19,10 +19,30 @@ const scoreClass = (score: number): string => {
   return "score caution";
 };
 
-const overallClass = (overall: AnalysisResponse["scores"]["overall"]): string => {
+const overallClass = (overall: Overall): string => {
   if (overall === "GOOD") return "badge good";
   if (overall === "NEUTRAL") return "badge neutral";
   return "badge caution";
+};
+
+const confidenceClass = (confidence: number): string => {
+  if (confidence >= 70) return "confidence good";
+  if (confidence >= 45) return "confidence neutral";
+  return "confidence caution";
+};
+
+const TF_LABEL: Record<Timeframe, string> = {
+  month: "월봉",
+  week: "주봉",
+  day: "일봉",
+  min15: "15분",
+};
+
+const toChartTime = (value: string): Time => {
+  if (value.includes("T")) {
+    return Math.floor(new Date(value).getTime() / 1000) as Time;
+  }
+  return value as Time;
 };
 
 export default function App() {
@@ -30,15 +50,17 @@ export default function App() {
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
+  const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
+
   const chartRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
+
   const suggestions = useMemo(() => {
     const raw = query.trim();
     if (!raw) return [];
-
     const qCode = raw.toUpperCase();
     const qName = normalizeSearch(raw);
 
@@ -47,7 +69,6 @@ export default function App() {
         const code = stock.code.toUpperCase();
         const name = normalizeSearch(stock.name);
         let rank = Number.MAX_SAFE_INTEGER;
-
         if (code === qCode) rank = 0;
         else if (name === qName) rank = 1;
         else if (code.startsWith(qCode)) rank = 2;
@@ -68,13 +89,11 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&days=${lookback}`;
+      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&days=${lookback}&tf=multi`;
       const response = await fetch(url);
-      const data = (await response.json()) as AnalysisResponse | { error: string };
-      if (!response.ok) {
-        throw new Error("error" in data ? data.error : "분석 요청 실패");
-      }
-      setResult(data as AnalysisResponse);
+      const data = (await response.json()) as MultiAnalysisResponse | { error: string };
+      if (!response.ok) throw new Error("error" in data ? data.error : "분석 요청 실패");
+      setResult(data as MultiAnalysisResponse);
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
       setResult(null);
@@ -105,17 +124,16 @@ export default function App() {
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
       if (!searchWrapRef.current) return;
-      if (!searchWrapRef.current.contains(event.target as Node)) {
-        setShowSuggestions(false);
-      }
+      if (!searchWrapRef.current.contains(event.target as Node)) setShowSuggestions(false);
     };
-
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
   useEffect(() => {
-    if (!chartRef.current || !result || result.candles.length === 0) return;
+    if (!chartRef.current || !result) return;
+    const active = result.timeframes[activeTf];
+    if (!active || active.candles.length === 0) return;
 
     const container = chartRef.current;
     const chart = createChart(container, {
@@ -129,14 +147,13 @@ export default function App() {
         vertLines: { color: "#1e2d3f" },
         horzLines: { color: "#1e2d3f" },
       },
-      crosshair: {
-        mode: 0,
-      },
       rightPriceScale: {
         borderColor: "#30445a",
       },
       timeScale: {
         borderColor: "#30445a",
+        timeVisible: activeTf === "min15",
+        secondsVisible: false,
       },
     });
 
@@ -149,8 +166,8 @@ export default function App() {
     });
 
     candleSeries.setData(
-      result.candles.map((c) => ({
-        time: c.time as Time,
+      active.candles.map((c) => ({
+        time: toChartTime(c.time),
         open: c.open,
         high: c.high,
         low: c.low,
@@ -158,9 +175,9 @@ export default function App() {
       })),
     );
 
-    if (result.levels.support != null) {
+    if (active.levels.support != null) {
       candleSeries.createPriceLine({
-        price: result.levels.support,
+        price: active.levels.support,
         color: "rgba(0, 179, 134, 0.95)",
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
@@ -168,10 +185,9 @@ export default function App() {
         title: "Support",
       });
     }
-
-    if (result.levels.resistance != null) {
+    if (active.levels.resistance != null) {
       candleSeries.createPriceLine({
-        price: result.levels.resistance,
+        price: active.levels.resistance,
         color: "rgba(255, 90, 118, 0.95)",
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
@@ -187,40 +203,33 @@ export default function App() {
       priceLineVisible: false,
     });
     volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.78,
-        bottom: 0,
-      },
+      scaleMargins: { top: 0.78, bottom: 0 },
     });
-
     volumeSeries.setData(
-      result.candles.map((c) => ({
-        time: c.time as Time,
+      active.candles.map((c) => ({
+        time: toChartTime(c.time),
         value: c.volume,
         color: c.close >= c.open ? "rgba(0,179,134,0.45)" : "rgba(255,90,118,0.45)",
       })),
     );
 
-    const onResize = () => {
-      chart.applyOptions({ width: container.clientWidth });
-    };
-
+    const onResize = () => chart.applyOptions({ width: container.clientWidth });
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
       chart.remove();
     };
-  }, [result]);
+  }, [result, activeTf]);
+
+  const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
 
   return (
     <div className="page">
       <main className="panel">
         <header className="hero">
-          <p className="eyebrow">KIS Developers OpenAPI</p>
+          <p className="eyebrow">KIS DEVELOPERS OPENAPI</p>
           <h1>KR Stock Signal Board</h1>
-          <p className="subtitle">
-            종목코드(예: 005930) 또는 종목명(예: 삼성전자)으로 일봉 분석 결과를 확인합니다.
-          </p>
+          <p className="subtitle">멀티 타임프레임(월/주/일/15분) 스코어링으로 종목 상태를 확인합니다.</p>
         </header>
 
         <form className="search" onSubmit={onSubmit}>
@@ -268,7 +277,7 @@ export default function App() {
 
         {error && <p className="error">{error}</p>}
 
-        {result && (
+        {result && activeAnalysis && (
           <section className="result">
             <div className="summary">
               <div>
@@ -276,41 +285,80 @@ export default function App() {
                   {result.meta.name} ({result.meta.symbol})
                 </h2>
                 <p className="meta">
-                  {result.meta.market} · {result.meta.asOf} · candles {result.meta.candleCount}
+                  {result.meta.market} · {result.meta.asOf} · source {result.meta.source}
                 </p>
               </div>
               <div className="summary-right">
-                <span className={overallClass(result.scores.overall)}>{result.scores.overall}</span>
-                <p className="summary-text">{result.meta.summaryText || "요약 없음"}</p>
+                <div className="final-badges">
+                  <span className={overallClass(result.final.overall)}>{result.final.overall}</span>
+                  <span className={confidenceClass(result.final.confidence)}>
+                    confidence {result.final.confidence}
+                  </span>
+                </div>
+                <p className="summary-text">{result.final.summary}</p>
               </div>
             </div>
 
+            {result.warnings.length > 0 && (
+              <div className="warning-box">
+                {result.warnings.map((warning) => (
+                  <span key={warning}>{warning}</span>
+                ))}
+              </div>
+            )}
+
+            <div className="tf-tabs">
+              {(["month", "week", "day", "min15"] as Timeframe[]).map((tf) => (
+                <button
+                  key={tf}
+                  type="button"
+                  className={tf === activeTf ? "tab active" : "tab"}
+                  onClick={() => setActiveTf(tf)}
+                >
+                  {TF_LABEL[tf]}
+                </button>
+              ))}
+            </div>
+
             <div className="score-grid">
-              <article className={scoreClass(result.scores.trend)}>
+              <article className={scoreClass(activeAnalysis.scores.trend)}>
                 <h3>Trend</h3>
-                <strong>{result.scores.trend}</strong>
+                <strong>{activeAnalysis.scores.trend}</strong>
               </article>
-              <article className={scoreClass(result.scores.momentum)}>
+              <article className={scoreClass(activeAnalysis.scores.momentum)}>
                 <h3>Momentum</h3>
-                <strong>{result.scores.momentum}</strong>
+                <strong>{activeAnalysis.scores.momentum}</strong>
               </article>
-              <article className={scoreClass(result.scores.risk)}>
+              <article className={scoreClass(activeAnalysis.scores.risk)}>
                 <h3>Risk</h3>
-                <strong>{result.scores.risk}</strong>
+                <strong>{activeAnalysis.scores.risk}</strong>
               </article>
             </div>
 
+            {activeTf === "min15" && activeAnalysis.timing && (
+              <div className="timing-box">
+                <h3>
+                  15분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
+                </h3>
+                <ul>
+                  {activeAnalysis.timing.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="card">
-              <h3>Reasons</h3>
+              <h3>{TF_LABEL[activeTf]} 근거</h3>
               <ul>
-                {result.reasons.map((reason) => (
+                {activeAnalysis.reasons.map((reason) => (
                   <li key={reason}>{reason}</li>
                 ))}
               </ul>
             </div>
 
             <div className="card">
-              <h3>OHLCV Chart</h3>
+              <h3>OHLCV Chart ({TF_LABEL[activeTf]})</h3>
               <div ref={chartRef} className="chart" />
             </div>
           </section>
@@ -319,3 +367,4 @@ export default function App() {
     </div>
   );
 }
+

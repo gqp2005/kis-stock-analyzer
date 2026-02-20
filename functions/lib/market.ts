@@ -62,3 +62,39 @@ export const analysisTtlSec = (date = new Date()): number => {
   return 1800; // weekday but off-session: 30 min
 };
 
+export const timeframeCacheTtlSec = (
+  tf: "month" | "week" | "day" | "min15",
+  date = new Date(),
+): number => {
+  const kst = toKstDate(date);
+  const day = kst.getUTCDay();
+  const weekend = day === 0 || day === 6;
+  const regular = isKrxRegularSession(date);
+
+  if (tf === "day" || tf === "min15") {
+    if (regular) return 60;
+    if (weekend) return 6 * 60 * 60; // 6h
+    return 30 * 60; // 30m
+  }
+
+  if (regular) return 30 * 60; // 30m
+  if (weekend) return 24 * 60 * 60; // 24h
+  return 60 * 60; // 60m
+};
+
+export const nowKstDateYmd = (): string => formatKstDate(new Date());
+
+export const hhmmssToMinutes = (hhmmss: string): number => {
+  const clean = hhmmss.replace(/\D/g, "");
+  if (clean.length < 4) return 0;
+  const hh = Number(clean.slice(0, 2));
+  const mm = Number(clean.slice(2, 4));
+  return hh * 60 + mm;
+};
+
+export const minutesToHhmmss = (minutes: number): string => {
+  const safe = Math.max(0, Math.floor(minutes));
+  const hh = String(Math.floor(safe / 60)).padStart(2, "0");
+  const mm = String(safe % 60).padStart(2, "0");
+  return `${hh}${mm}00`;
+};

@@ -1,4 +1,6 @@
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
+export type Timeframe = "month" | "week" | "day" | "min15";
+export type Regime = "UP" | "SIDE" | "DOWN";
 
 export interface Candle {
   time: string;
@@ -9,7 +11,47 @@ export interface Candle {
   volume: number;
 }
 
-export interface AnalysisResponse {
+export interface Scores {
+  trend: number;
+  momentum: number;
+  risk: number;
+  overall: Overall;
+}
+
+export interface TimingInfo {
+  timingScore: number;
+  timingLabel: "타이밍 양호" | "관망/조건부" | "진입 비추";
+  reasons: string[];
+}
+
+export interface TimeframeAnalysis {
+  tf: Timeframe;
+  regime: Regime;
+  summaryText: string;
+  scores: Scores;
+  reasons: string[];
+  levels: {
+    ma20: number | null;
+    maFast: number | null;
+    maMid: number | null;
+    maLong: number | null;
+    rsi14: number | null;
+    bbUpper: number | null;
+    bbMid: number | null;
+    bbLower: number | null;
+    atr14: number | null;
+    atrPercent: number | null;
+    recentHigh: number | null;
+    recentLow: number | null;
+    volumeMa20: number | null;
+    support: number | null;
+    resistance: number | null;
+  };
+  candles: Candle[];
+  timing?: TimingInfo;
+}
+
+export interface MultiAnalysisResponse {
   meta: {
     input: string;
     symbol: string;
@@ -18,32 +60,18 @@ export interface AnalysisResponse {
     asOf: string;
     source: "KIS";
     cacheTtlSec: number;
-    candleCount: number;
-    summaryText: string;
   };
-  scores: {
-    trend: number;
-    momentum: number;
-    risk: number;
+  final: {
     overall: Overall;
+    confidence: number;
+    summary: string;
   };
-  signals: Record<string, unknown>;
-  reasons: string[];
-  levels: {
-    ma20: number | null;
-    ma60: number | null;
-    ma120: number | null;
-    rsi14: number | null;
-    bbUpper: number | null;
-    bbMid: number | null;
-    bbLower: number | null;
-    atr14: number | null;
-    atrPercent: number | null;
-    recentHigh20: number | null;
-    recentLow20: number | null;
-    volumeMa20: number | null;
-    support: number | null;
-    resistance: number | null;
+  timeframes: {
+    month: TimeframeAnalysis;
+    week: TimeframeAnalysis;
+    day: TimeframeAnalysis;
+    min15: TimeframeAnalysis;
   };
-  candles: Candle[];
+  warnings: string[];
 }
+

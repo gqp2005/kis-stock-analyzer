@@ -1,18 +1,17 @@
 # KIS Stock Analyzer (Cloudflare Pages Functions + React)
 
-한국 주식 종목코드/종목명을 입력하면 아래를 제공하는 웹 서비스입니다.
+KIS OpenAPI 기반 한국 주식 멀티 타임프레임 분석 서비스입니다.
 
-1. 일봉 OHLCV 차트
-2. RSI / Bollinger Bands / Moving Average / ATR 계산
-3. trend / momentum / risk 점수 + overall 판정
-4. 판정 근거(reasons) 3~6개
+- 타임프레임: `month`, `week`, `day`, `min15`
+- 핵심 API: `/api/analysis?tf=multi`
+- 프론트: 월/주/일/15분 탭 + 최종 판정/신뢰도 표시
 
 ## 기술 스택
 
 - Frontend: React + Vite
-- Chart: `lightweight-charts` (캔들 + 거래량 히스토그램)
-- Backend: Cloudflare Pages Functions (Workers 런타임)
-- Data: 한국투자증권 KIS OpenAPI
+- Chart: `lightweight-charts`
+- Backend: Cloudflare Pages Functions (Workers)
+- Data: KIS Developers OpenAPI
 - Cache: Cloudflare Cache API
 
 ## 폴더 구조
@@ -26,163 +25,137 @@
 │  │  └─ health.ts
 │  └─ lib/
 │     ├─ kis.ts
+│     ├─ market.ts
 │     ├─ indicators.ts
 │     ├─ scoring.ts
 │     ├─ stockResolver.ts
 │     └─ ...
 ├─ src/
 │  ├─ App.tsx
-│  ├─ main.tsx
+│  ├─ types.ts
 │  └─ styles.css
-├─ data/
-│  └─ kr-stocks.json
-├─ tests/
-│  ├─ indicators.test.ts
-│  └─ health.test.ts
-└─ scripts/
-   └─ build-stock-map.mjs
+├─ data/kr-stocks.json
+└─ tests/
 ```
 
 ## 환경 변수
 
-Cloudflare Pages Functions env 또는 로컬 `.dev.vars`에 아래 값을 넣어주세요.
+Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 
 - `KIS_APP_KEY` (필수)
 - `KIS_APP_SECRET` (필수)
-- `KIS_BASE_URL` (선택, 기본값: `https://openapi.koreainvestment.com:9443`)
-- `KIS_ENV` (선택, `real`/`demo`, 기본 `real`)
+- `KIS_BASE_URL` (선택, 기본: 실전 URL)
+- `KIS_ENV` (선택, `real|demo`)
 
-로컬 테스트용 파일:
-
-1. `.dev.vars.example`을 복사해서 `.dev.vars` 생성
-2. `KIS_APP_KEY`, `KIS_APP_SECRET` 입력
+주의:
+- 키/시크릿은 반드시 Functions env에서만 읽습니다.
+- 브라우저 코드에는 노출하지 않습니다.
 
 ## 로컬 실행
 
-1. 설치
-
 ```bash
 npm install
-```
-
-2. 테스트 실행
-
-```bash
 npm test
-```
-
-3. 프론트 개발 서버
-
-```bash
-npm run dev
-```
-
-4. Functions 포함 전체 동작 확인 (권장)
-
-```bash
+npm run build
 npm run cf:dev
 ```
 
-`cf:dev`는 `dist`를 빌드한 뒤 Pages Functions를 함께 띄웁니다.
-
 ## Cloudflare Pages 배포
 
-1. Cloudflare Pages 프로젝트 생성 (Git 연동)
+1. Pages 프로젝트 생성 (Git 연동)
 2. Build command: `npm run build`
-3. Build output directory: `dist`
-4. Environment Variables에 `KIS_APP_KEY`, `KIS_APP_SECRET` 등록
+3. Build output: `dist`
+4. Environment variables: `KIS_APP_KEY`, `KIS_APP_SECRET` 설정
 5. 배포
 
-Functions는 `functions/` 폴더를 자동 인식합니다.
-
-## API 엔드포인트
+## API
 
 ### `GET /api/health`
+- 상태 체크, 200 반환
 
-- 200 응답으로 헬스체크
+### `GET /api/ohlcv?query=005930&tf=day&days=180`
+- `tf`: `day|week|month|min15`
+- TF별 캔들 반환
 
-### `GET /api/ohlcv?query=005930&days=180`
-
-- OHLCV 캔들 반환
-- `query`는 종목코드 또는 종목명
-
-### `GET /api/analysis?query=삼성전자&days=180`
-
-- 응답 구조:
+### `GET /api/analysis?query=005930&tf=multi&days=180`
+- `tf`: `day|week|month|min15|multi`
+- `tf=multi` 응답 구조:
 
 ```json
 {
   "meta": {},
-  "scores": {},
-  "signals": {},
-  "reasons": [],
-  "levels": {},
-  "candles": []
+  "final": { "overall": "GOOD|NEUTRAL|CAUTION", "confidence": 0, "summary": "" },
+  "timeframes": {
+    "month": {},
+    "week": {},
+    "day": {},
+    "min15": {}
+  },
+  "warnings": []
 }
 ```
 
-- `meta.summaryText`: 점수 기반 한줄 요약 (`상승 추세 · 모멘텀 강함 · 변동성 보통` 형식)
-- `levels.support` / `levels.resistance`: Pivot + Swing + BB 후보에서 추출한 핵심 지지/저항
+- `tf=day|week|month|min15`는 단일 TF 분석 응답(기존 day 응답 호환) 반환
 
-## 스코어 카드 v1 구현 내용
+## 데이터 수집 로직
 
-- Trend(0~100)
-  - `close > ma60` +25
-  - `ma20 > ma60` +25
-  - `ma60 slope up` +20
-  - `ma60 > ma120` +20
-  - `20일 신고가` +10
-- Momentum(0~100)
-  - `rsi>=55` +20, `45~54` +10, `<45` +0
-  - `rsi 5일 상승` +20
-  - `close > ma20` +20
-  - `5일 수익률 > 0` +20
-  - `vol > vol_ma20` +20
-- Risk(0~100)
-  - ATR% 구간 점수
-    - `<=2%` 30, `2~4%` 20, `4~6%` 10, `>6%` 0
-  - 볼밴 위치
-    - 밴드 내부 `+10`, 상단 돌파 `-20`, 하단 이탈 `-10`
-  - 20일 MDD
-    - `>= -5%` +20, `>= -10%` +10, 그 외 +0
-  - 급락일(당일 수익률 `<= -5%`) `-20`
-- Overall
-  - `GOOD`: `trend>=70 && momentum>=55 && risk>=45`
-  - `NEUTRAL`: `trend>=40 && risk>=35`
-  - else `CAUTION`
+- `month/week/day`:
+  - KIS `inquire-daily-itemchartprice` 호출
+  - 기간코드 `M/W/D`로 수집
+- `min15`:
+  - KIS `inquire-time-itemchartprice`(주식당일분봉조회)로 당일 분봉 수집
+  - 서버에서 15분봉으로 리샘플링(OHLCV/Volume 집계)
 
-## KIS 토큰/호출 흐름
+제약:
+- `min15`는 KIS 제약상 **당일 분봉 기반**입니다.
+- 전일 이전 분봉은 제공되지 않습니다.
 
-1. `/api/analysis` 또는 `/api/ohlcv` 요청 수신
-2. 종목명 입력이면 로컬 `kr-stocks.json`으로 코드 해석
-3. Cache API에서 분석 캐시 확인
-4. KIS access token 캐시 확인 (메모리 + Cache API)
-5. 토큰 만료 10분 전이면 `/oauth2/tokenP` 재발급
-6. `/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice` 호출
-7. 지표/점수 계산 후 결과 캐시 저장 및 응답
+## 스코어링 v1 (요약)
 
-## 캐시 동작
+- TF별 지표
+  - month: MA(6/12/24), RSI14, BB20, ATR14, breakout(12)
+  - week: MA(10/30/60), RSI14, BB20, ATR14, breakout(20)
+  - day: MA(20/60/120), RSI14, BB20, ATR14, breakout(20)
+  - min15: MA(20/60), RSI14, BB20, ATR14, breakout(20)
+- 레짐
+  - `trend >= 70`: `UP`
+  - `40~69`: `SIDE`
+  - `<40`: `DOWN`
+- 최종 결합
+  - day overall 기준
+  - month DOWN: 1단계 강등 + `장기 역풍`
+  - week DOWN: 1단계 강등 + `중기 역풍`
+  - month/ week 모두 DOWN: 최소 `CAUTION`
+- confidence(0~100)
+  - base 50 + 명세 가중치
+  - month/ week 모두 UP일 때 confidence +10 보너스
+- min15 timingScore
+  - 명세 기반 계산 + timingLabel(`타이밍 양호/관망·조건부/진입 비추`)
 
-- `analysis` / `ohlcv` 결과를 Cache API에 저장
-- TTL 정책
-  - 장중(한국시간 09:00~15:30, 평일): `60초`
-  - 장마감 후 평일: `30분`
-  - 주말: `60분`
-- 동일 종목 재조회 시 KIS 호출 최소화
+## 캐시 정책
 
-## 종목명 매핑 데이터
+- 분석 캐시 + 원천 OHLCV 캐시를 분리 사용
+- TF별 캐시 키(`종목 + tf`)로 저장
+- TTL:
+  - `day/min15`
+    - 장중: 60초
+    - 장마감 후 평일: 30분
+    - 주말: 6시간
+  - `week/month`
+    - 장중: 30분
+    - 장마감 후 평일: 60분
+    - 주말: 24시간
 
-- `data/kr-stocks.json`은 KIS 제공 마스터 파일(`kospi_code.mst`, `kosdaq_code.mst`) 기반으로 생성
-- 갱신 명령:
+로그:
+- 캐시 히트/미스: `[analysis-cache-hit]`, `[data-cache-hit]`
+- KIS 호출 로그: `[kis-call] ...`
+
+## 종목명 검색 데이터
+
+- `data/kr-stocks.json`은 KIS 마스터 파일 기반
+- 갱신:
 
 ```bash
 npm run stocks:refresh
 ```
 
-## GitHub 업로드 팁
-
-```bash
-git init
-git add .
-git commit -m "feat: KIS stock analysis web service on Cloudflare Pages"
-```

@@ -1,10 +1,30 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
-import { fetchDailyCandles } from "../lib/kis";
-import { analysisTtlSec, nowIsoKst } from "../lib/market";
+import { fetchTimeframeCandles } from "../lib/kis";
+import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { badRequest, json, serverError } from "../lib/response";
 import { resolveStock } from "../lib/stockResolver";
-import type { Env, OhlcvPayload } from "../lib/types";
+import type { Env, OhlcvPayload, Timeframe } from "../lib/types";
 import { normalizeInput } from "../lib/utils";
+
+const parseTf = (raw: string | null): Timeframe => {
+  const tf = (raw ?? "day").toLowerCase();
+  if (tf === "month" || tf === "week" || tf === "day" || tf === "min15") return tf;
+  return "day";
+};
+
+const visibleCount = (tf: Timeframe, days: number): number => {
+  if (tf === "day") return days;
+  if (tf === "week") return Math.max(60, Math.min(180, Math.floor(days / 3)));
+  if (tf === "month") return Math.max(36, Math.min(120, Math.floor(days / 8)));
+  return 120;
+};
+
+const minCount = (tf: Timeframe, days: number): number => {
+  if (tf === "day") return Math.max(days, 200);
+  if (tf === "week") return 140;
+  if (tf === "month") return 100;
+  return 180;
+};
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   try {
@@ -16,6 +36,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           url.searchParams.get("code") ??
           "",
       ) || "";
+    const tf = parseTf(url.searchParams.get("tf"));
 
     if (!input) {
       return badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.");
@@ -31,11 +52,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return badRequest(`종목명을 찾지 못했습니다: ${input}`);
     }
 
-    const ttlSec = analysisTtlSec();
-    const cache = await caches.open("kis-analyzer-cache-v1");
-    const cacheKey = `https://cache.local/ohlcv/v1?code=${encodeURIComponent(
+    const ttlSec = timeframeCacheTtlSec(tf);
+    const cache = await caches.open("kis-analyzer-cache-v2");
+    const cacheKey = `https://cache.local/ohlcv/v2?code=${encodeURIComponent(
       resolved.code,
-    )}&days=${days}`;
+    )}&tf=${tf}&days=${days}`;
 
     const cached = await getCachedJson<OhlcvPayload>(cache, cacheKey);
     if (cached) {
@@ -45,8 +66,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       });
     }
 
-    const fetched = await fetchDailyCandles(context.env, cache, resolved.code, days);
-    const candles = fetched.candles.slice(-days);
+    const fetched = await fetchTimeframeCandles(context.env, cache, resolved.code, tf, minCount(tf, days));
+    const candles = fetched.candles.slice(-visibleCount(tf, days));
 
     const payload: OhlcvPayload = {
       meta: {
@@ -58,6 +79,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         source: "KIS",
         cacheTtlSec: ttlSec,
         candleCount: candles.length,
+        tf,
       },
       candles,
     };
@@ -72,3 +94,4 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return serverError(message);
   }
 };
+

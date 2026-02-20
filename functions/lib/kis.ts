@@ -1,7 +1,14 @@
-import { addDaysToYmd, formatKstDate } from "./market";
-import type { Candle, Env } from "./types";
-import { parseKisDate, toNumber } from "./utils";
 import { getCachedJson, putCachedJson } from "./cache";
+import {
+  addDaysToYmd,
+  formatKstDate,
+  hhmmssToMinutes,
+  minutesToHhmmss,
+  nowKstDateYmd,
+  timeframeCacheTtlSec,
+} from "./market";
+import type { Candle, Env, Timeframe } from "./types";
+import { parseKisDate, toNumber } from "./utils";
 
 interface TokenCacheRecord {
   token: string;
@@ -15,6 +22,11 @@ interface KisResponseBase {
 }
 
 interface KisDailyChartResponse extends KisResponseBase {
+  output1?: Record<string, string>;
+  output2?: Array<Record<string, string>>;
+}
+
+interface KisMinuteChartResponse extends KisResponseBase {
   output1?: Record<string, string>;
   output2?: Array<Record<string, string>>;
 }
@@ -34,7 +46,6 @@ const parseTokenExpiry = (raw: unknown): number | null => {
   if (!m) return null;
   const [_, y, mo, d, h, mi, s] = m;
 
-  // KIS 응답은 KST 문자열이므로 UTC로 변환할 때 9시간을 차감합니다.
   return Date.UTC(
     Number(y),
     Number(mo) - 1,
@@ -56,6 +67,7 @@ const fetchNewToken = async (env: Env): Promise<TokenCacheRecord> => {
     throw new Error("KIS_APP_KEY / KIS_APP_SECRET env가 필요합니다.");
   }
 
+  console.log("[kis-call] oauth2/tokenP");
   const response = await fetch(`${getBaseUrl(env)}/oauth2/tokenP`, {
     method: "POST",
     headers: {
@@ -132,6 +144,7 @@ const kisGet = async <T extends KisResponseBase>(
       url.searchParams.set(key, value);
     }
 
+    console.log(`[kis-call] ${path} tr_id=${trId}`);
     const response = await fetch(url.toString(), {
       headers: {
         authorization: `Bearer ${token}`,
@@ -162,10 +175,11 @@ const kisGet = async <T extends KisResponseBase>(
   throw new Error("KIS API 호출 실패: 토큰 재발급 후에도 요청이 실패했습니다.");
 };
 
-const fetchDailyChunk = async (
+const fetchPeriodChunk = async (
   env: Env,
   cache: Cache,
   symbol: string,
+  periodCode: "D" | "W" | "M",
   startDate: string,
   endDate: string,
 ): Promise<KisDailyChartResponse> => {
@@ -179,31 +193,33 @@ const fetchDailyChunk = async (
       FID_INPUT_ISCD: symbol,
       FID_INPUT_DATE_1: startDate,
       FID_INPUT_DATE_2: endDate,
-      FID_PERIOD_DIV_CODE: "D",
+      FID_PERIOD_DIV_CODE: periodCode,
       FID_ORG_ADJ_PRC: "1",
     },
   );
 };
 
-export const fetchDailyCandles = async (
+const fetchPeriodCandles = async (
   env: Env,
   cache: Cache,
   symbol: string,
-  minCount = 200,
+  tf: "day" | "week" | "month",
+  minCount: number,
 ): Promise<{ name: string; candles: Candle[] }> => {
-  const targetCount = Math.max(minCount, 130);
+  const periodCode = tf === "day" ? "D" : tf === "week" ? "W" : "M";
+  const windowDays = tf === "day" ? 420 : tf === "week" ? 4500 : 12000;
+  const maxPage = tf === "day" ? 6 : 4;
+  const targetCount = Math.max(minCount, tf === "day" ? 170 : tf === "week" ? 120 : 80);
   const candleByDate = new Map<string, Candle>();
+
   let endDate = formatKstDate(new Date());
   let latestName = symbol;
   let lastOldest = "";
 
-  for (let page = 0; page < 6 && candleByDate.size < targetCount; page += 1) {
-    const startDate = addDaysToYmd(endDate, -420);
-    const data = await fetchDailyChunk(env, cache, symbol, startDate, endDate);
-
-    if (data.output1?.hts_kor_isnm) {
-      latestName = data.output1.hts_kor_isnm;
-    }
+  for (let page = 0; page < maxPage && candleByDate.size < targetCount; page += 1) {
+    const startDate = addDaysToYmd(endDate, -windowDays);
+    const data = await fetchPeriodChunk(env, cache, symbol, periodCode, startDate, endDate);
+    if (data.output1?.hts_kor_isnm) latestName = data.output1.hts_kor_isnm;
 
     const rows = Array.isArray(data.output2) ? data.output2 : [];
     if (rows.length === 0) break;
@@ -227,9 +243,7 @@ export const fetchDailyCandles = async (
       candleByDate.set(day, candle);
     }
 
-    if (!/^\d{8}$/.test(oldest) || oldest === lastOldest) {
-      break;
-    }
+    if (!/^\d{8}$/.test(oldest) || oldest === lastOldest) break;
     lastOldest = oldest;
 
     const nextEnd = addDaysToYmd(oldest, -1);
@@ -242,11 +256,183 @@ export const fetchDailyCandles = async (
     .map((entry) => entry[1]);
 
   if (candles.length === 0) {
-    throw new Error("KIS에서 OHLCV 데이터를 받지 못했습니다.");
+    throw new Error(`KIS에서 ${tf} OHLCV 데이터를 받지 못했습니다.`);
   }
 
+  return { name: latestName, candles };
+};
+
+const fetchMinuteChunk = async (
+  env: Env,
+  cache: Cache,
+  symbol: string,
+  inputHour: string,
+): Promise<KisMinuteChartResponse> => {
+  return kisGet<KisMinuteChartResponse>(
+    env,
+    cache,
+    "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+    "FHKST03010200",
+    {
+      FID_ETC_CLS_CODE: "",
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: symbol,
+      FID_INPUT_HOUR_1: inputHour,
+      FID_PW_DATA_INCU_YN: "Y",
+    },
+  );
+};
+
+const toIsoKst = (yyyymmdd: string, hhmmss: string): string => {
+  const day = parseKisDate(yyyymmdd);
+  const hh = hhmmss.slice(0, 2);
+  const mm = hhmmss.slice(2, 4);
+  return `${day}T${hh}:${mm}:00+09:00`;
+};
+
+const fetchMinuteCandlesToday = async (
+  env: Env,
+  cache: Cache,
+  symbol: string,
+): Promise<{ name: string; candles: Candle[] }> => {
+  const minuteMap = new Map<string, Candle>();
+  const today = nowKstDateYmd();
+  let latestName = symbol;
+  let inputHour = "153000";
+  let lastOldestKey = "";
+
+  for (let page = 0; page < 30; page += 1) {
+    const data = await fetchMinuteChunk(env, cache, symbol, inputHour);
+    if (data.output1?.hts_kor_isnm) latestName = data.output1.hts_kor_isnm;
+    const rows = Array.isArray(data.output2) ? data.output2 : [];
+    if (rows.length === 0) break;
+
+    let oldestKey = "99999999999999";
+    for (const row of rows) {
+      const day = String(row.stck_bsop_date ?? "");
+      const time = String(row.stck_cntg_hour ?? "");
+      if (!/^\d{8}$/.test(day) || !/^\d{6}$/.test(time)) continue;
+      if (day !== today) continue;
+
+      const key = `${day}${time}`;
+      if (key < oldestKey) oldestKey = key;
+      minuteMap.set(key, {
+        time: toIsoKst(day, time),
+        open: toNumber(row.stck_oprc),
+        high: toNumber(row.stck_hgpr),
+        low: toNumber(row.stck_lwpr),
+        close: toNumber(row.stck_prpr ?? row.stck_clpr),
+        volume: toNumber(row.cntg_vol ?? row.acml_vol),
+      });
+    }
+
+    if (oldestKey === "99999999999999" || oldestKey === lastOldestKey) break;
+    lastOldestKey = oldestKey;
+
+    const oldestTime = oldestKey.slice(8);
+    if (oldestTime <= "090000") break;
+    const nextMinutes = hhmmssToMinutes(oldestTime) - 1;
+    if (nextMinutes <= 0) break;
+    inputHour = minutesToHhmmss(nextMinutes);
+  }
+
+  const candles = [...minuteMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map((entry) => entry[1])
+    .filter((candle) => candle.close > 0 && candle.high >= candle.low);
+
+  if (candles.length === 0) {
+    throw new Error("KIS에서 당일 분봉 데이터를 받지 못했습니다.");
+  }
+
+  return { name: latestName, candles };
+};
+
+const resampleTo15m = (minuteCandles: Candle[]): Candle[] => {
+  if (minuteCandles.length === 0) return [];
+
+  const buckets = new Map<string, Candle>();
+  const order: string[] = [];
+
+  const sorted = [...minuteCandles].sort((a, b) => a.time.localeCompare(b.time));
+  for (const candle of sorted) {
+    const day = candle.time.slice(0, 10);
+    const hh = Number(candle.time.slice(11, 13));
+    const mm = Number(candle.time.slice(14, 16));
+    const minuteBucket = Math.floor(mm / 15) * 15;
+    const key = `${day}T${String(hh).padStart(2, "0")}:${String(minuteBucket).padStart(2, "0")}:00+09:00`;
+
+    const current = buckets.get(key);
+    if (!current) {
+      buckets.set(key, {
+        time: key,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      });
+      order.push(key);
+    } else {
+      current.high = Math.max(current.high, candle.high);
+      current.low = Math.min(current.low, candle.low);
+      current.close = candle.close;
+      current.volume += candle.volume;
+    }
+  }
+
+  return order.map((key) => buckets.get(key) as Candle).filter((c) => c.close > 0);
+};
+
+const cacheKeyForTf = (symbol: string, tf: Timeframe, minCount: number): string => {
+  if (tf === "min15") {
+    return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&date=${nowKstDateYmd()}`;
+  }
+  return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&min=${minCount}`;
+};
+
+export const fetchTimeframeCandles = async (
+  env: Env,
+  cache: Cache,
+  symbol: string,
+  tf: Timeframe,
+  minCount: number,
+): Promise<{ name: string; candles: Candle[]; cacheTtlSec: number }> => {
+  const ttlSec = timeframeCacheTtlSec(tf);
+  const rawKey = cacheKeyForTf(symbol, tf, minCount);
+  const cached = await getCachedJson<{ name: string; candles: Candle[] }>(cache, rawKey);
+  if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+    console.log(`[data-cache-hit] tf=${tf} symbol=${symbol}`);
+    return { ...cached, cacheTtlSec: ttlSec };
+  }
+
+  console.log(`[data-cache-miss] tf=${tf} symbol=${symbol}`);
+  let data: { name: string; candles: Candle[] };
+  if (tf === "day" || tf === "week" || tf === "month") {
+    data = await fetchPeriodCandles(env, cache, symbol, tf, minCount);
+  } else {
+    const minute = await fetchMinuteCandlesToday(env, cache, symbol);
+    data = {
+      name: minute.name,
+      candles: resampleTo15m(minute.candles),
+    };
+  }
+
+  await putCachedJson(cache, rawKey, data, ttlSec);
+  return { ...data, cacheTtlSec: ttlSec };
+};
+
+// Backward compatibility helper (legacy day-only usage)
+export const fetchDailyCandles = async (
+  env: Env,
+  cache: Cache,
+  symbol: string,
+  minCount = 200,
+): Promise<{ name: string; candles: Candle[] }> => {
+  const result = await fetchTimeframeCandles(env, cache, symbol, "day", minCount);
   return {
-    name: latestName,
-    candles,
+    name: result.name,
+    candles: result.candles,
   };
 };
+
