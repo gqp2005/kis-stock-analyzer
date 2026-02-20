@@ -140,6 +140,7 @@ export default function App() {
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
   const rsiChartRef = useRef<HTMLDivElement | null>(null);
+  const queryInputRef = useRef<HTMLInputElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
@@ -174,6 +175,13 @@ export default function App() {
     setQuery(stock.code);
     setShowSuggestions(false);
     fetchAnalysis(stock.code, days);
+  };
+
+  const clearQuery = () => {
+    setQuery("");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    queryInputRef.current?.focus();
   };
 
   useEffect(() => {
@@ -474,6 +482,7 @@ export default function App() {
         <form className="search" onSubmit={onSubmit}>
           <div className="search-input-wrap" ref={searchWrapRef}>
             <input
+              ref={queryInputRef}
               value={query}
               onFocus={() => setShowSuggestions(true)}
               onChange={(e) => {
@@ -483,6 +492,17 @@ export default function App() {
               placeholder="005930 또는 삼성전자"
               aria-label="종목 코드 또는 종목명"
             />
+            {query.trim().length > 0 && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                aria-label="입력값 지우기"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={clearQuery}
+              >
+                ×
+              </button>
+            )}
             {showSuggestions && suggestions.length > 0 && (
               <ul className="suggestions" role="listbox" aria-label="종목 추천 목록">
                 {suggestions.map((stock) => (
