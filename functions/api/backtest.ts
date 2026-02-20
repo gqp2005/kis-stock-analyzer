@@ -1,5 +1,5 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
-import { runDayBacktest } from "../lib/backtest";
+import { DAY_SCORE_RULE_ID, runDayBacktest } from "../lib/backtest";
 import { fetchTimeframeCandles } from "../lib/kis";
 import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
@@ -108,12 +108,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         candleCount: candles.length,
         holdBars,
         signalOverall,
+        ruleId: DAY_SCORE_RULE_ID,
       },
       summary: backtest.summary,
       periods: backtest.periods,
       trades: backtest.trades,
       warnings: [
         ...backtest.warnings,
+        `rule=${DAY_SCORE_RULE_ID}`,
         `candles.length=${candles.length}`,
       ],
     };

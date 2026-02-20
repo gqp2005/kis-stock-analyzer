@@ -143,6 +143,7 @@ export default function App() {
   const [backtestError, setBacktestError] = useState("");
   const [backtestSignal, setBacktestSignal] = useState<Overall>("GOOD");
   const [backtestHoldBars, setBacktestHoldBars] = useState(10);
+  const [riskBreakdownOpen, setRiskBreakdownOpen] = useState(false);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<StockLookup[]>([]);
@@ -587,9 +588,9 @@ export default function App() {
               onChange={(e) => setBacktestSignal(e.target.value as Overall)}
               aria-label="백테스트 진입 신호"
             >
-              <option value="GOOD">GOOD</option>
-              <option value="NEUTRAL">NEUTRAL</option>
-              <option value="CAUTION">CAUTION</option>
+              <option value="GOOD">양호</option>
+              <option value="NEUTRAL">중립</option>
+              <option value="CAUTION">주의</option>
             </select>
           </label>
           <label>
@@ -678,32 +679,48 @@ export default function App() {
 
                 {riskBreakdown && (
                   <div className="card">
-                    <h3>위험도 점수 분해</h3>
-                    <div className="risk-breakdown-grid">
-                      <div className="risk-row">
-                        <span>ATR 구간</span>
-                        <strong>{formatSigned(riskBreakdown.atrScore)}</strong>
-                      </div>
-                      <div className="risk-row">
-                        <span>볼린저 위치</span>
-                        <strong>{formatSigned(riskBreakdown.bbScore)}</strong>
-                      </div>
-                      <div className="risk-row">
-                        <span>20일 MDD</span>
-                        <strong>{formatSigned(riskBreakdown.mddScore)}</strong>
-                      </div>
-                      <div className="risk-row">
-                        <span>급락 패널티</span>
-                        <strong>{formatSigned(riskBreakdown.sharpDropScore)}</strong>
-                      </div>
-                      <div className="risk-row total">
-                        <span>원점수 / 최종</span>
-                        <strong>
-                          {riskBreakdown.rawTotal} / {riskBreakdown.finalRisk}
-                        </strong>
-                      </div>
+                    <div className="collapsible-head">
+                      <h3>위험도 점수 분해</h3>
+                      <button
+                        type="button"
+                        className="collapse-toggle"
+                        aria-expanded={riskBreakdownOpen}
+                        onClick={() => setRiskBreakdownOpen((prev) => !prev)}
+                      >
+                        {riskBreakdownOpen ? "접기" : "펼치기"}
+                      </button>
                     </div>
-                    <p className="plan-note">위험도 = ATR + 볼린저 + MDD + 급락 패널티 (0~100 보정)</p>
+                    {riskBreakdownOpen ? (
+                      <>
+                        <div className="risk-breakdown-grid">
+                          <div className="risk-row">
+                            <span>ATR 구간</span>
+                            <strong>{formatSigned(riskBreakdown.atrScore)}</strong>
+                          </div>
+                          <div className="risk-row">
+                            <span>볼린저 위치</span>
+                            <strong>{formatSigned(riskBreakdown.bbScore)}</strong>
+                          </div>
+                          <div className="risk-row">
+                            <span>20일 MDD</span>
+                            <strong>{formatSigned(riskBreakdown.mddScore)}</strong>
+                          </div>
+                          <div className="risk-row">
+                            <span>급락 패널티</span>
+                            <strong>{formatSigned(riskBreakdown.sharpDropScore)}</strong>
+                          </div>
+                          <div className="risk-row total">
+                            <span>원점수 / 최종</span>
+                            <strong>
+                              {riskBreakdown.rawTotal} / {riskBreakdown.finalRisk}
+                            </strong>
+                          </div>
+                        </div>
+                        <p className="plan-note">위험도 = ATR + 볼린저 + MDD + 급락 패널티 (0~100 보정)</p>
+                      </>
+                    ) : (
+                      <p className="plan-note">기본은 접힘 상태입니다. 펼치기를 누르면 상세 점수를 확인할 수 있습니다.</p>
+                    )}
                   </div>
                 )}
 
@@ -734,7 +751,7 @@ export default function App() {
 
                 <div className="card">
                   <div className="backtest-head">
-                    <h3>일봉 백테스트 (시그널: {backtest?.meta.signalOverall ?? "GOOD"})</h3>
+                    <h3>일봉 백테스트 (시그널: {overallLabel(backtest?.meta.signalOverall ?? backtestSignal)})</h3>
                     {backtestLoading && <span className="backtest-state">계산 중...</span>}
                   </div>
                   {backtestError && <p className="backtest-error">{backtestError}</p>}
@@ -754,6 +771,10 @@ export default function App() {
                           <strong>{formatPercent(backtestSummary.avgReturnPercent)}</strong>
                         </div>
                         <div className="plan-item">
+                          <span>손익비</span>
+                          <strong>{formatFactor(backtestSummary.payoffRatio)}</strong>
+                        </div>
+                        <div className="plan-item">
                           <span>최대 낙폭(MDD)</span>
                           <strong>{formatPercent(backtestSummary.maxDrawdownPercent)}</strong>
                         </div>
@@ -767,6 +788,7 @@ export default function App() {
                               <th>승률</th>
                               <th>평균손익</th>
                               <th>평균 R</th>
+                              <th>손익비</th>
                               <th>PF</th>
                               <th>MDD</th>
                             </tr>
@@ -779,6 +801,7 @@ export default function App() {
                                 <td>{formatPercent(period.winRate)}</td>
                                 <td>{formatPercent(period.avgReturnPercent)}</td>
                                 <td>{formatR(period.avgRMultiple)}</td>
+                                <td>{formatFactor(period.payoffRatio)}</td>
                                 <td>{formatFactor(period.profitFactor)}</td>
                                 <td>{formatPercent(period.maxDrawdownPercent)}</td>
                               </tr>
@@ -787,10 +810,10 @@ export default function App() {
                         </table>
                       </div>
                       <p className="plan-note">
-                        신호 발생 다음 봉 시가 진입, 목표/손절/보유기간(10봉) 기준 시뮬레이션입니다.
+                        신호 발생 다음 봉 시가 진입, 목표/손절/보유기간({backtest.meta.holdBars}봉) 기준 시뮬레이션입니다.
                       </p>
                       <p className="plan-note">
-                        전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
+                        룰 {backtest.meta.ruleId} · 전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 손익비 {formatFactor(backtestSummary.payoffRatio)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
                       </p>
                       {backtest.warnings.length > 0 && (
                         <p className="plan-note">{backtest.warnings.join(" · ")}</p>

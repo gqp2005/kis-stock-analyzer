@@ -217,6 +217,7 @@ export interface BacktestPeriodMetrics {
   winRate: number | null;
   avgReturnPercent: number | null;
   avgRMultiple: number | null;
+  payoffRatio: number | null;
   profitFactor: number | null;
   expectancyR: number | null;
   maxDrawdownPercent: number | null;
@@ -227,6 +228,7 @@ export interface BacktestSummary {
   winRate: number | null;
   avgReturnPercent: number | null;
   avgRMultiple: number | null;
+  payoffRatio: number | null;
   profitFactor: number | null;
   expectancyR: number | null;
   maxDrawdownPercent: number | null;
@@ -244,6 +246,7 @@ export interface BacktestPayload {
     candleCount: number;
     holdBars: number;
     signalOverall: Overall;
+    ruleId: string;
   };
   summary: BacktestSummary;
   periods: BacktestPeriodMetrics[];

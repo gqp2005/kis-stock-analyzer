@@ -241,10 +241,14 @@ h2 {
 }
 
 .badge {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
   border-radius: 999px;
-  padding: 9px 14px;
+  padding: 7px 11px;
+  font-size: 12px;
   border: 1px solid;
 }
 
@@ -359,6 +363,34 @@ h2 {
 
 .card h3 {
   margin: 0 0 10px;
+}
+
+.collapsible-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.collapsible-head h3 {
+  margin: 0;
+}
+
+.collapse-toggle {
+  height: 30px;
+  min-width: 72px;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 163, 255, 0.5);
+  background: rgba(87, 163, 255, 0.16);
+  color: #cde6ff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.collapse-toggle:hover {
+  background: rgba(87, 163, 255, 0.26);
 }
 
 .indicator-controls {
@@ -556,7 +588,7 @@ h2 {
 
 .backtest-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }

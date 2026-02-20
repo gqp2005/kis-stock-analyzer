@@ -71,15 +71,17 @@ describe("/api/backtest", () => {
       makeContext("http://localhost/api/backtest?query=005930&count=520&holdBars=10"),
     );
     const body = (await response.json()) as {
-      meta: { signalOverall: string; holdBars: number };
-      summary: { tradeCount: number };
+      meta: { signalOverall: string; holdBars: number; ruleId: string };
+      summary: { tradeCount: number; payoffRatio: number | null };
       periods: Array<{ label: string }>;
     };
 
     expect(response.status).toBe(200);
     expect(body.meta.signalOverall).toBe("GOOD");
     expect(body.meta.holdBars).toBe(10);
+    expect(body.meta.ruleId).toBe("score-card-v1-day-overall");
     expect(body.summary.tradeCount).toBeGreaterThanOrEqual(0);
+    expect(body.summary).toHaveProperty("payoffRatio");
     expect(body.periods).toHaveLength(3);
     expect(fetchMock).toHaveBeenCalled();
   });

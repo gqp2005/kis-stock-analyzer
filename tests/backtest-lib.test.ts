@@ -25,10 +25,12 @@ describe("runDayBacktest", () => {
     const result = runDayBacktest(candles, { holdBars: 10, signalOverall: "GOOD" });
 
     expect(result.summary.tradeCount).toBeGreaterThan(0);
+    expect(result.summary).toHaveProperty("payoffRatio");
     expect(result.periods).toHaveLength(3);
     expect(result.periods[0].label).toBe("3개월");
     expect(result.periods[1].label).toBe("6개월");
     expect(result.periods[2].label).toBe("1년");
+    expect(result.periods[0]).toHaveProperty("payoffRatio");
     expect(result.trades.length).toBeGreaterThan(0);
   });
 
