@@ -1,0 +1,14 @@
+node_modules
+dist
+.wrangler
+.DS_Store
+coverage
+*.log
+.dev.vars
+.env
+.env.local
+_kis_ref
+_kis_ref_kospi
+_kis_ref_kosdaq
+_kis_ref_kospi.zip
+_kis_ref_kosdaq.zip

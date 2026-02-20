@@ -1,0 +1,5 @@
+KIS_APP_KEY=your_kis_app_key
+KIS_APP_SECRET=your_kis_app_secret
+# Optional
+# KIS_BASE_URL=https://openapi.koreainvestment.com:9443
+# KIS_ENV=real

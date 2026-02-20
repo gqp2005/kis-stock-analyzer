@@ -1,0 +1,32 @@
+{
+  "name": "kis-stock-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "cf:dev": "npm run build && wrangler pages dev dist --compatibility-date=2025-01-01",
+    "stocks:refresh": "node scripts/build-stock-map.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "lightweight-charts": "^4.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260110.0",
+    "@types/react": "^18.3.20",
+    "@types/react-dom": "^18.3.6",
+    "@vitejs/plugin-react": "^4.4.1",
+    "iconv-lite": "^0.7.0",
+    "jszip": "^3.10.1",
+    "typescript": "^5.8.2",
+    "vite": "^5.4.14",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.3.0"
+  }
+}
