@@ -5,6 +5,7 @@ import {
   createChart,
   type LineData,
   type LogicalRange,
+  type SeriesMarker,
   type Time,
   type WhitespaceData,
 } from "lightweight-charts";
@@ -15,6 +16,8 @@ import type {
   Overall,
   Timeframe,
   TimeframeAnalysis,
+  VolumePatternSignal,
+  VolumePatternType,
 } from "./types";
 
 interface StockLookup {
@@ -62,12 +65,99 @@ const TF_LABEL: Record<Timeframe, string> = {
 
 const TF_TABS: Timeframe[] = ["month", "week", "day", "min15"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min15"];
+const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
+  BreakoutConfirmed: "돌파 확인(A)",
+  Upthrust: "불트랩(B)",
+  PullbackReaccumulation: "눌림 재축적(C)",
+  ClimaxUp: "상승 클라이맥스(D)",
+  CapitulationAbsorption: "투매 흡수(E)",
+  WeakBounce: "약한 반등(F)",
+};
+
+const BASIC_PATTERN_TYPES = new Set<VolumePatternType>([
+  "BreakoutConfirmed",
+  "Upthrust",
+  "PullbackReaccumulation",
+]);
+
+const PATTERN_MARKER_CONFIG: Record<
+  VolumePatternType,
+  {
+    position: "aboveBar" | "belowBar";
+    shape: "arrowUp" | "arrowDown" | "circle" | "square";
+    text: string;
+    color: string;
+  }
+> = {
+  BreakoutConfirmed: {
+    position: "aboveBar",
+    shape: "arrowUp",
+    text: "BRK",
+    color: "#00b386",
+  },
+  Upthrust: {
+    position: "aboveBar",
+    shape: "arrowDown",
+    text: "TRAP",
+    color: "#ff5a76",
+  },
+  PullbackReaccumulation: {
+    position: "belowBar",
+    shape: "arrowUp",
+    text: "PB",
+    color: "#57a3ff",
+  },
+  ClimaxUp: {
+    position: "aboveBar",
+    shape: "square",
+    text: "HOT",
+    color: "#ff9f43",
+  },
+  CapitulationAbsorption: {
+    position: "belowBar",
+    shape: "circle",
+    text: "CAP",
+    color: "#00d2d3",
+  },
+  WeakBounce: {
+    position: "aboveBar",
+    shape: "circle",
+    text: "WB",
+    color: "#c792ea",
+  },
+};
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
     return Math.floor(new Date(value).getTime() / 1000) as Time;
   }
   return value as Time;
+};
+
+const toPatternTimeKey = (value: string): string => (value.includes("T") ? value.slice(0, 16) : value);
+
+const fromChartTimeKey = (value: unknown): string | null => {
+  if (!value) return null;
+  if (typeof value === "string") return toPatternTimeKey(value);
+  if (typeof value === "number") {
+    return new Date(value * 1000).toISOString().slice(0, 10);
+  }
+  if (typeof value === "object" && value !== null && "year" in value && "month" in value && "day" in value) {
+    const businessDay = value as { year: number; month: number; day: number };
+    return `${businessDay.year}-${String(businessDay.month).padStart(2, "0")}-${String(businessDay.day).padStart(2, "0")}`;
+  }
+  return null;
+};
+
+const findCandleIndexByPatternTime = (
+  candles: Array<{ time: string }>,
+  patternTime: string,
+): number => {
+  const selectedKey = toPatternTimeKey(patternTime);
+  return candles.findIndex((candle) => {
+    const candleKey = toPatternTimeKey(candle.time);
+    return candleKey === selectedKey || candle.time.startsWith(`${selectedKey}T`);
+  });
 };
 
 const pickDefaultTf = (payload: MultiAnalysisResponse): Timeframe =>
@@ -85,6 +175,23 @@ const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null
   return null;
 };
 
+const toPatternMarkers = (
+  patterns: VolumePatternSignal[],
+  showAdvanced: boolean,
+): SeriesMarker<Time>[] =>
+  patterns
+    .filter((pattern) => showAdvanced || BASIC_PATTERN_TYPES.has(pattern.type))
+    .map((pattern) => {
+      const cfg = PATTERN_MARKER_CONFIG[pattern.type];
+      return {
+        time: toChartTime(pattern.t),
+        position: cfg.position,
+        shape: cfg.shape,
+        color: cfg.color,
+        text: cfg.text,
+      } as SeriesMarker<Time>;
+    });
+
 const formatPrice = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
 
@@ -97,6 +204,8 @@ const formatR = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}R`;
 const formatFactor = (value: number | null): string =>
   value == null ? "-" : value.toFixed(2);
+const formatRatio = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(2)}배`;
 
 type ReasonTone = "positive" | "negative";
 
@@ -150,6 +259,12 @@ export default function App() {
   const [showMa1, setShowMa1] = useState(true);
   const [showMa2, setShowMa2] = useState(true);
   const [showMa3, setShowMa3] = useState(false);
+  const [showSupportResistance, setShowSupportResistance] = useState(true);
+  const [showVolumePatternMarkers, setShowVolumePatternMarkers] = useState(true);
+  const [showAdvancedPatternMarkers, setShowAdvancedPatternMarkers] = useState(false);
+  const [showPatternReferenceLevel, setShowPatternReferenceLevel] = useState(true);
+  const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
+  const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
   const rsiChartRef = useRef<HTMLDivElement | null>(null);
@@ -278,6 +393,12 @@ export default function App() {
   }, [apiBase, query, showSuggestions]);
 
   useEffect(() => {
+    if (activeTf !== "day" || !showVolumePatternMarkers) {
+      setSelectedPattern(null);
+    }
+  }, [activeTf, showVolumePatternMarkers]);
+
+  useEffect(() => {
     if (!priceChartRef.current || !result) return;
     const active = result.timeframes[activeTf];
     if (!active || active.candles.length === 0) return;
@@ -367,7 +488,22 @@ export default function App() {
       }
     }
 
-    if (active.levels.support != null) {
+    const markerPatterns =
+      activeTf === "day"
+        ? (active.signals.volumePatterns ?? []).filter(
+            (pattern) => showAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
+          )
+        : [];
+
+    if (showVolumePatternMarkers && activeTf === "day") {
+      candleSeries.setMarkers(
+        toPatternMarkers(markerPatterns, true),
+      );
+    } else {
+      candleSeries.setMarkers([]);
+    }
+
+    if (showSupportResistance && active.levels.support != null) {
       candleSeries.createPriceLine({
         price: active.levels.support,
         color: "rgba(0, 179, 134, 0.95)",
@@ -377,7 +513,7 @@ export default function App() {
         title: "지지",
       });
     }
-    if (active.levels.resistance != null) {
+    if (showSupportResistance && active.levels.resistance != null) {
       candleSeries.createPriceLine({
         price: active.levels.resistance,
         color: "rgba(255, 90, 118, 0.95)",
@@ -386,6 +522,54 @@ export default function App() {
         axisLabelVisible: true,
         title: "저항",
       });
+    }
+
+    const selectedCandleIndex =
+      activeTf === "day" && selectedPattern
+        ? findCandleIndexByPatternTime(active.candles, selectedPattern.t)
+        : -1;
+
+    if (
+      activeTf === "day" &&
+      showPatternReferenceLevel &&
+      selectedPattern?.details?.refLevel != null &&
+      Number.isFinite(selectedPattern.details.refLevel) &&
+      selectedCandleIndex >= 0
+    ) {
+      const startIndex = Math.max(0, selectedCandleIndex - 10);
+      const endIndex = Math.min(active.candles.length - 1, selectedCandleIndex + 10);
+      const refLevel = selectedPattern.details.refLevel;
+      const refSeries = mainChart.addLineSeries({
+        color: "rgba(246, 199, 95, 0.95)",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      refSeries.setData([
+        { time: toChartTime(active.candles[startIndex].time), value: refLevel },
+        { time: toChartTime(active.candles[endIndex].time), value: refLevel },
+      ]);
+    }
+
+    if (activeTf === "day" && highlightSelectedCandle && selectedCandleIndex >= 0) {
+      const selectedCandle = active.candles[selectedCandleIndex];
+      const highlightSeries = mainChart.addHistogramSeries({
+        priceScaleId: "selected-candle-highlight",
+        priceFormat: { type: "volume" },
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      highlightSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0, bottom: 0 },
+      });
+      highlightSeries.setData([
+        {
+          time: toChartTime(selectedCandle.time),
+          value: 1,
+          color: "rgba(87, 163, 255, 0.25)",
+        },
+      ]);
     }
 
     const volumeSeries = mainChart.addHistogramSeries({
@@ -409,6 +593,30 @@ export default function App() {
     const hasRsi = rsiPoints.some((point) => point.value != null);
     let rsiChart: ReturnType<typeof createChart> | null = null;
     let onMainRangeChange: ((range: LogicalRange | null) => void) | null = null;
+    let onMainChartClick: ((param: unknown) => void) | null = null;
+
+    if (activeTf === "day") {
+      onMainChartClick = (param: unknown) => {
+        if (!showVolumePatternMarkers) return;
+        const clicked = param as { time?: unknown };
+        const clickedKey = fromChartTimeKey(clicked.time);
+        if (!clickedKey) return;
+
+        let matched: VolumePatternSignal | null = null;
+        for (let i = markerPatterns.length - 1; i >= 0; i -= 1) {
+          const pattern = markerPatterns[i];
+          const patternKey = toPatternTimeKey(pattern.t);
+          if (patternKey === clickedKey || pattern.t.startsWith(`${clickedKey}T`)) {
+            matched = pattern;
+            break;
+          }
+        }
+        if (matched) {
+          setSelectedPattern(matched);
+        }
+      };
+      mainChart.subscribeClick(onMainChartClick);
+    }
 
     if (hasRsi && rsiChartRef.current) {
       const rsiContainer = rsiChartRef.current;
@@ -499,10 +707,25 @@ export default function App() {
       if (onMainRangeChange) {
         mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRangeChange);
       }
+      if (onMainChartClick) {
+        mainChart.unsubscribeClick(onMainChartClick);
+      }
       rsiChart?.remove();
       mainChart.remove();
     };
-  }, [result, activeTf, showMa1, showMa2, showMa3]);
+  }, [
+    result,
+    activeTf,
+    showMa1,
+    showMa2,
+    showMa3,
+    showSupportResistance,
+    showVolumePatternMarkers,
+    showAdvancedPatternMarkers,
+    showPatternReferenceLevel,
+    highlightSelectedCandle,
+    selectedPattern,
+  ]);
 
   const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
   const maInfo = activeAnalysis?.indicators.ma ?? null;
@@ -510,12 +733,26 @@ export default function App() {
   const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
+  const volumeSignal = activeAnalysis?.signals.volume ?? null;
+  const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
+    .slice(-10)
+    .reverse();
+  const majorVolumePatterns = recentVolumePatterns.slice(0, 2);
+  const selectedPatternDetails = selectedPattern?.details ?? null;
   const tradePlan = activeAnalysis?.tradePlan ?? null;
   const backtestSummary = backtest?.summary ?? null;
   const rsiDisabledMessage =
     activeTf === "min15"
       ? "15분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
       : "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
+
+  useEffect(() => {
+    if (!selectedPattern) return;
+    const exists = (activeAnalysis?.signals.volumePatterns ?? []).some(
+      (pattern) => pattern.t === selectedPattern.t && pattern.type === selectedPattern.type,
+    );
+    if (!exists) setSelectedPattern(null);
+  }, [activeAnalysis, selectedPattern]);
 
   return (
     <div className="page">
@@ -676,6 +913,75 @@ export default function App() {
                     <strong>{activeAnalysis.scores.risk}</strong>
                   </article>
                 </div>
+
+                {volumeSignal && (
+                  <div className="card">
+                    <h3>거래량/수급</h3>
+                    <div className="volume-grid">
+                      <div className="plan-item">
+                        <span>VolumeScore</span>
+                        <strong>{volumeSignal.volumeScore}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>거래량 비율</span>
+                        <strong>{formatRatio(volumeSignal.volRatio)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>대금(종가×거래량)</span>
+                        <strong>{formatPrice(volumeSignal.turnover)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>20일 위치(pos20)</span>
+                        <strong>{formatPercent(volumeSignal.pos20 * 100)}</strong>
+                      </div>
+                    </div>
+                    <div className="volume-patterns">
+                      <span>주요 패턴</span>
+                      {majorVolumePatterns.length > 0 ? (
+                        <div className="volume-pattern-tags">
+                          {majorVolumePatterns.map((pattern) => (
+                            <small key={`${pattern.t}-${pattern.type}`} className="reason-tag positive">
+                              {VOLUME_PATTERN_TEXT[pattern.type] ?? pattern.label}
+                            </small>
+                          ))}
+                        </div>
+                      ) : (
+                        <small className="volume-empty">패턴 없음</small>
+                      )}
+                    </div>
+                    <ul className="volume-reasons">
+                      {volumeSignal.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                    <div className="volume-pattern-list">
+                      <h4>최근 패턴 10개</h4>
+                      {recentVolumePatterns.length > 0 ? (
+                        <ul>
+                          {recentVolumePatterns.map((pattern) => (
+                            <li key={`${pattern.t}-${pattern.type}`}>
+                              <button
+                                type="button"
+                                className={
+                                  selectedPattern?.t === pattern.t && selectedPattern?.type === pattern.type
+                                    ? "pattern-row active"
+                                    : "pattern-row"
+                                }
+                                onClick={() => setSelectedPattern(pattern)}
+                              >
+                                <span>{pattern.t.slice(0, 10)}</span>
+                                <strong>{VOLUME_PATTERN_TEXT[pattern.type] ?? pattern.label}</strong>
+                                <em>{pattern.desc}</em>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>최근 10개 구간에서 감지된 패턴이 없습니다.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {riskBreakdown && (
                   <div className="card">
@@ -868,37 +1174,146 @@ export default function App() {
 
                 <div className="card">
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
-                  {maInfo && activeTf !== "min15" && (
+                  {maInfo && (
                     <div className="indicator-controls">
+                      {activeTf !== "min15" && (
+                        <>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={showMa1}
+                              onChange={(e) => setShowMa1(e.target.checked)}
+                            />
+                            MA{maInfo.ma1Period}
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={showMa2}
+                              onChange={(e) => setShowMa2(e.target.checked)}
+                            />
+                            MA{maInfo.ma2Period}
+                          </label>
+                          {maInfo.ma3Period != null && (
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={showMa3}
+                                onChange={(e) => setShowMa3(e.target.checked)}
+                              />
+                              MA{maInfo.ma3Period}
+                            </label>
+                          )}
+                        </>
+                      )}
                       <label>
                         <input
                           type="checkbox"
-                          checked={showMa1}
-                          onChange={(e) => setShowMa1(e.target.checked)}
+                          checked={showSupportResistance}
+                          onChange={(e) => setShowSupportResistance(e.target.checked)}
                         />
-                        MA{maInfo.ma1Period}
+                        Show Support/Resistance
                       </label>
                       <label>
                         <input
                           type="checkbox"
-                          checked={showMa2}
-                          onChange={(e) => setShowMa2(e.target.checked)}
+                          checked={showVolumePatternMarkers}
+                          onChange={(e) => setShowVolumePatternMarkers(e.target.checked)}
                         />
-                        MA{maInfo.ma2Period}
+                        Show Volume Pattern Markers
                       </label>
-                      {maInfo.ma3Period != null && (
+                      {activeTf === "day" && (
                         <label>
                           <input
                             type="checkbox"
-                            checked={showMa3}
-                            onChange={(e) => setShowMa3(e.target.checked)}
+                            checked={showAdvancedPatternMarkers}
+                            onChange={(e) => setShowAdvancedPatternMarkers(e.target.checked)}
                           />
-                          MA{maInfo.ma3Period}
+                          고급 패턴(HOT/CAP/WB)
+                        </label>
+                      )}
+                      {activeTf === "day" && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={showPatternReferenceLevel}
+                            onChange={(e) => setShowPatternReferenceLevel(e.target.checked)}
+                          />
+                          Show pattern reference level
+                        </label>
+                      )}
+                      {activeTf === "day" && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={highlightSelectedCandle}
+                            onChange={(e) => setHighlightSelectedCandle(e.target.checked)}
+                          />
+                          Highlight selected candle
                         </label>
                       )}
                     </div>
                   )}
                   <div ref={priceChartRef} className="chart" />
+                  {activeTf === "day" && showVolumePatternMarkers && selectedPattern && (
+                    <div className="marker-detail-panel">
+                      <div className="marker-detail-head">
+                        <h4>패턴 상세</h4>
+                        <button
+                          type="button"
+                          className="marker-detail-close"
+                          onClick={() => setSelectedPattern(null)}
+                        >
+                          닫기
+                        </button>
+                      </div>
+                      <div className="marker-detail-meta">
+                        <span>{selectedPattern.t.slice(0, 10)}</span>
+                        <strong>{VOLUME_PATTERN_TEXT[selectedPattern.type] ?? selectedPattern.label}</strong>
+                        <em>{selectedPattern.desc}</em>
+                      </div>
+                      <div className="marker-detail-grid">
+                        <div>
+                          <span>가격</span>
+                          <strong>{formatPrice(selectedPatternDetails?.price ?? null)}</strong>
+                        </div>
+                        <div>
+                          <span>거래량</span>
+                          <strong>{(selectedPatternDetails?.volume ?? 0).toLocaleString("ko-KR")}</strong>
+                        </div>
+                        <div>
+                          <span>거래량 비율</span>
+                          <strong>{formatRatio(selectedPatternDetails?.volRatio ?? null)}</strong>
+                        </div>
+                        <div>
+                          <span>ref.level</span>
+                          <strong>{formatPrice(selectedPatternDetails?.refLevel ?? null)}</strong>
+                        </div>
+                      </div>
+                      <div className="marker-checklist">
+                        <h5>조건 체크리스트</h5>
+                        <ul>
+                          {(selectedPatternDetails?.checklist ?? []).map((item) => (
+                            <li key={item.label} className={item.ok ? "ok" : "no"}>
+                              {item.ok ? "✓" : "✕"} {item.label}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <p
+                        className={
+                          selectedPatternDetails?.tone === "warning"
+                            ? "marker-signal warning"
+                            : "marker-signal confirm"
+                        }
+                      >
+                        {selectedPatternDetails?.message ?? selectedPattern.desc}
+                      </p>
+                    </div>
+                  )}
+                  {activeTf === "day" && showVolumePatternMarkers && !selectedPattern && (
+                    <p className="marker-detail-hint">차트 마커를 클릭하면 패턴 상세가 표시됩니다.</p>
+                  )}
                 </div>
 
                 <div className="card">

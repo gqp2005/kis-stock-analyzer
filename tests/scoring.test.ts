@@ -37,6 +37,10 @@ describe("analysis scoring extras", () => {
     expect(result.summaryText.includes("·")).toBe(true);
     expect(result.levels.support).not.toBeNull();
     expect(result.levels.resistance).not.toBeNull();
+    expect(result.signals.volume.volRatio).toBeTypeOf("number");
+    expect(result.signals.volume.volumeScore).toBeGreaterThanOrEqual(0);
+    expect(result.signals.volume.volumeScore).toBeLessThanOrEqual(100);
+    expect(Array.isArray(result.signals.volumePatterns)).toBe(true);
     expect((result.levels.support as number) < latestClose).toBe(true);
     expect((result.levels.resistance as number) > latestClose).toBe(true);
   });
@@ -65,5 +69,38 @@ describe("analysis scoring extras", () => {
 
     expect(final.overall).toBe(day.scores.overall);
     expect(final.summary.includes("15분 타이밍 비활성")).toBe(true);
+  });
+
+  it("should detect breakout pattern and raise volume score", () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    for (let i = 0; i < 60; i += 1) {
+      const open = price;
+      const close = price + 0.2;
+      candles.push({
+        time: `2025-03-${String((i % 28) + 1).padStart(2, "0")}`,
+        open,
+        high: Math.max(open, close) + 0.5,
+        low: Math.min(open, close) - 0.5,
+        close,
+        volume: 100000,
+      });
+      price = close;
+    }
+
+    const prevHigh = Math.max(...candles.slice(-20).map((candle) => candle.high));
+    candles.push({
+      time: "2025-04-01",
+      open: prevHigh - 0.5,
+      high: prevHigh + 3,
+      low: prevHigh - 1,
+      close: prevHigh + 2.5,
+      volume: 260000,
+    });
+
+    const day = analyzeTimeframe("day", candles);
+    expect(day.signals.volumePatterns.some((pattern) => pattern.type === "BreakoutConfirmed")).toBe(true);
+    expect(day.signals.volume.volRatio).toBeGreaterThanOrEqual(1.5);
+    expect(day.signals.volume.volumeScore).toBeGreaterThan(50);
   });
 });

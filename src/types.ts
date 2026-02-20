@@ -63,6 +63,35 @@ export interface TimingInfo {
   reasons: string[];
 }
 
+export type VolumePatternType =
+  | "BreakoutConfirmed"
+  | "Upthrust"
+  | "PullbackReaccumulation"
+  | "ClimaxUp"
+  | "CapitulationAbsorption"
+  | "WeakBounce";
+
+export interface VolumePatternSignal {
+  t: string;
+  type: VolumePatternType;
+  label: string;
+  desc: string;
+  strength?: number;
+  ref?: Record<string, number | string | null>;
+  details?: {
+    price: number;
+    volume: number;
+    volRatio: number;
+    checklist: Array<{
+      label: string;
+      ok: boolean;
+    }>;
+    refLevel?: number | null;
+    message: string;
+    tone: "confirm" | "warning";
+  };
+}
+
 export interface Signals {
   trend: {
     closeAboveMid: boolean;
@@ -84,8 +113,19 @@ export interface Signals {
     atrBucket: "<=2" | "2~4" | "4~6" | ">6" | "N/A";
     bbPosition: "ABOVE_UPPER" | "INSIDE_BAND" | "BELOW_LOWER" | "N/A";
     mddN: number | null;
-    sharpDropBar: boolean;
-    breakdown: RiskBreakdown;
+      sharpDropBar: boolean;
+      breakdown: RiskBreakdown;
+    };
+  volumePatterns: VolumePatternSignal[];
+  volume: {
+    volRatio: number;
+    turnover: number;
+    bodyPct: number;
+    upperWickPct: number;
+    lowerWickPct: number;
+    pos20: number;
+    volumeScore: number;
+    reasons: string[];
   };
 }
 
