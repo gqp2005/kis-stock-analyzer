@@ -8,7 +8,6 @@ import {
   type Time,
   type WhitespaceData,
 } from "lightweight-charts";
-import stockMap from "../data/kr-stocks.json";
 import type {
   IndicatorPoint,
   MultiAnalysisResponse,
@@ -23,9 +22,11 @@ interface StockLookup {
   market: string;
 }
 
-const stocks = stockMap as StockLookup[];
-
-const normalizeSearch = (value: string): string => value.replace(/\s+/g, "").toUpperCase();
+interface SearchResponse {
+  query: string;
+  count: number;
+  items: StockLookup[];
+}
 
 const scoreClass = (score: number): string => {
   if (score >= 70) return "score good";
@@ -83,6 +84,11 @@ const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null
   return null;
 };
 
+const formatPrice = (value: number | null): string =>
+  value == null ? "-" : value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+
+const formatSigned = (value: number): string => `${value > 0 ? "+" : ""}${value}`;
+
 export default function App() {
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
@@ -91,6 +97,7 @@ export default function App() {
   const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState<StockLookup[]>([]);
   const [showMa1, setShowMa1] = useState(true);
   const [showMa2, setShowMa2] = useState(true);
   const [showMa3, setShowMa3] = useState(false);
@@ -99,33 +106,6 @@ export default function App() {
   const rsiChartRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
-
-  const suggestions = useMemo(() => {
-    const raw = query.trim();
-    if (!raw) return [];
-    const qCode = raw.toUpperCase();
-    const qName = normalizeSearch(raw);
-
-    const ranked = stocks
-      .map((stock) => {
-        const code = stock.code.toUpperCase();
-        const name = normalizeSearch(stock.name);
-        let rank = Number.MAX_SAFE_INTEGER;
-        if (code === qCode) rank = 0;
-        else if (name === qName) rank = 1;
-        else if (code.startsWith(qCode)) rank = 2;
-        else if (name.startsWith(qName)) rank = 3;
-        else if (code.includes(qCode)) rank = 4;
-        else if (name.includes(qName)) rank = 5;
-        else return null;
-
-        return { ...stock, rank };
-      })
-      .filter((item): item is StockLookup & { rank: number } => item !== null)
-      .sort((a, b) => a.rank - b.rank || a.name.length - b.name.length || a.code.localeCompare(b.code));
-
-    return ranked.slice(0, 8);
-  }, [query]);
 
   const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
@@ -173,6 +153,39 @@ export default function App() {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const q = query.trim();
+    if (!q) {
+      setSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `${apiBase}/api/search?q=${encodeURIComponent(q)}&limit=8`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) {
+          setSuggestions([]);
+          return;
+        }
+        const data = (await response.json()) as SearchResponse;
+        setSuggestions(data.items ?? []);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSuggestions([]);
+      }
+    }, 180);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [apiBase, query, showSuggestions]);
 
   useEffect(() => {
     if (!priceChartRef.current || !result) return;
@@ -406,6 +419,8 @@ export default function App() {
   const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
   const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
+  const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
+  const tradePlan = activeAnalysis?.tradePlan ?? null;
   const rsiDisabledMessage =
     activeTf === "min15"
       ? "15분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
@@ -530,6 +545,64 @@ export default function App() {
                     <strong>{activeAnalysis.scores.risk}</strong>
                   </article>
                 </div>
+
+                {riskBreakdown && (
+                  <div className="card">
+                    <h3>Risk 점수 분해</h3>
+                    <div className="risk-breakdown-grid">
+                      <div className="risk-row">
+                        <span>ATR 구간</span>
+                        <strong>{formatSigned(riskBreakdown.atrScore)}</strong>
+                      </div>
+                      <div className="risk-row">
+                        <span>볼린저 위치</span>
+                        <strong>{formatSigned(riskBreakdown.bbScore)}</strong>
+                      </div>
+                      <div className="risk-row">
+                        <span>20일 MDD</span>
+                        <strong>{formatSigned(riskBreakdown.mddScore)}</strong>
+                      </div>
+                      <div className="risk-row">
+                        <span>급락 패널티</span>
+                        <strong>{formatSigned(riskBreakdown.sharpDropScore)}</strong>
+                      </div>
+                      <div className="risk-row total">
+                        <span>원점수 / 최종</span>
+                        <strong>
+                          {riskBreakdown.rawTotal} / {riskBreakdown.finalRisk}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="plan-note">Risk = ATR + BB + MDD + 급락 패널티 (0~100으로 보정)</p>
+                  </div>
+                )}
+
+                {tradePlan && (
+                  <div className="card">
+                    <h3>Entry / Stop / Target (참고)</h3>
+                    <div className="plan-grid">
+                      <div className="plan-item">
+                        <span>Entry</span>
+                        <strong>{formatPrice(tradePlan.entry)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>Stop</span>
+                        <strong>{formatPrice(tradePlan.stop)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>Target</span>
+                        <strong>{formatPrice(tradePlan.target)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>R/R</span>
+                        <strong>
+                          {tradePlan.riskReward != null ? `${tradePlan.riskReward.toFixed(2)}R` : "-"}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="plan-note">{tradePlan.note}</p>
+                  </div>
+                )}
 
                 {activeTf === "min15" && (
                   <div className="timing-box">

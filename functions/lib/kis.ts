@@ -7,6 +7,7 @@ import {
   nowKstDateYmd,
   timeframeCacheTtlSec,
 } from "./market";
+import { bumpMetric, type RequestMetrics } from "./observability";
 import type { Candle, Env, Timeframe } from "./types";
 import { parseKisDate, toNumber } from "./utils";
 
@@ -62,12 +63,13 @@ const getTokenCacheKey = (env: Env): string => {
   return `https://cache.local/kis/token?base=${encodeURIComponent(base)}&app=${encodeURIComponent(app)}`;
 };
 
-const fetchNewToken = async (env: Env): Promise<TokenCacheRecord> => {
+const fetchNewToken = async (env: Env, metrics?: RequestMetrics): Promise<TokenCacheRecord> => {
   if (!env.KIS_APP_KEY || !env.KIS_APP_SECRET) {
     throw new Error("KIS_APP_KEY / KIS_APP_SECRET env가 필요합니다.");
   }
 
   console.log("[kis-call] oauth2/tokenP");
+  bumpMetric(metrics, "kisCalls");
   const response = await fetch(`${getBaseUrl(env)}/oauth2/tokenP`, {
     method: "POST",
     headers: {
@@ -98,12 +100,18 @@ const fetchNewToken = async (env: Env): Promise<TokenCacheRecord> => {
   return { token, expiresAt };
 };
 
-const getAccessToken = async (env: Env, cache: Cache, forceRefresh = false): Promise<string> => {
+const getAccessToken = async (
+  env: Env,
+  cache: Cache,
+  forceRefresh = false,
+  metrics?: RequestMetrics,
+): Promise<string> => {
   const cacheIdentity = getTokenCacheKey(env);
   const now = Date.now();
 
   if (!forceRefresh && memoryToken && memoryToken.cacheIdentity === cacheIdentity) {
     if (memoryToken.expiresAt - now > TOKEN_BUFFER_MS) {
+      bumpMetric(metrics, "tokenCacheHits");
       return memoryToken.token;
     }
   }
@@ -112,11 +120,14 @@ const getAccessToken = async (env: Env, cache: Cache, forceRefresh = false): Pro
     const cached = await getCachedJson<TokenCacheRecord>(cache, cacheIdentity);
     if (cached && cached.expiresAt - now > TOKEN_BUFFER_MS) {
       memoryToken = { ...cached, cacheIdentity };
+      bumpMetric(metrics, "tokenCacheHits");
       return cached.token;
     }
   }
 
-  const fresh = await fetchNewToken(env);
+  bumpMetric(metrics, "tokenCacheMisses");
+  bumpMetric(metrics, "tokenRefreshes");
+  const fresh = await fetchNewToken(env, metrics);
   memoryToken = { ...fresh, cacheIdentity };
   const ttl = Math.max(60, Math.floor((fresh.expiresAt - now) / 1000));
   await putCachedJson(cache, cacheIdentity, fresh, ttl);
@@ -134,17 +145,19 @@ const kisGet = async <T extends KisResponseBase>(
   path: string,
   trId: string,
   params: Record<string, string>,
+  metrics?: RequestMetrics,
 ): Promise<T> => {
   const baseUrl = getBaseUrl(env);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const token = await getAccessToken(env, cache, attempt === 1);
+    const token = await getAccessToken(env, cache, attempt === 1, metrics);
     const url = new URL(`${baseUrl}${path}`);
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, value);
     }
 
     console.log(`[kis-call] ${path} tr_id=${trId}`);
+    bumpMetric(metrics, "kisCalls");
     const response = await fetch(url.toString(), {
       headers: {
         authorization: `Bearer ${token}`,
@@ -182,6 +195,7 @@ const fetchPeriodChunk = async (
   periodCode: "D" | "W" | "M",
   startDate: string,
   endDate: string,
+  metrics?: RequestMetrics,
 ): Promise<KisDailyChartResponse> => {
   return kisGet<KisDailyChartResponse>(
     env,
@@ -196,6 +210,7 @@ const fetchPeriodChunk = async (
       FID_PERIOD_DIV_CODE: periodCode,
       FID_ORG_ADJ_PRC: "1",
     },
+    metrics,
   );
 };
 
@@ -205,6 +220,7 @@ const fetchPeriodCandles = async (
   symbol: string,
   tf: "day" | "week" | "month",
   minCount: number,
+  metrics?: RequestMetrics,
 ): Promise<{ name: string; candles: Candle[] }> => {
   const periodCode = tf === "day" ? "D" : tf === "week" ? "W" : "M";
   const windowDays = tf === "day" ? 420 : tf === "week" ? 4500 : 12000;
@@ -218,7 +234,7 @@ const fetchPeriodCandles = async (
 
   for (let page = 0; page < maxPage && candleByDate.size < targetCount; page += 1) {
     const startDate = addDaysToYmd(endDate, -windowDays);
-    const data = await fetchPeriodChunk(env, cache, symbol, periodCode, startDate, endDate);
+    const data = await fetchPeriodChunk(env, cache, symbol, periodCode, startDate, endDate, metrics);
     if (data.output1?.hts_kor_isnm) latestName = data.output1.hts_kor_isnm;
 
     const rows = Array.isArray(data.output2) ? data.output2 : [];
@@ -309,6 +325,7 @@ const fetchMinuteChunk = async (
   cache: Cache,
   symbol: string,
   inputHour: string,
+  metrics?: RequestMetrics,
 ): Promise<KisMinuteChartResponse> => {
   return kisGet<KisMinuteChartResponse>(
     env,
@@ -322,6 +339,7 @@ const fetchMinuteChunk = async (
       FID_INPUT_HOUR_1: inputHour,
       FID_PW_DATA_INCU_YN: "Y",
     },
+    metrics,
   );
 };
 
@@ -336,6 +354,7 @@ const fetchMinuteCandlesToday = async (
   env: Env,
   cache: Cache,
   symbol: string,
+  metrics?: RequestMetrics,
 ): Promise<{ name: string; candles: Candle[] }> => {
   const minuteMap = new Map<string, Candle>();
   const today = nowKstDateYmd();
@@ -344,7 +363,7 @@ const fetchMinuteCandlesToday = async (
   let lastOldestKey = "";
 
   for (let page = 0; page < 30; page += 1) {
-    const data = await fetchMinuteChunk(env, cache, symbol, inputHour);
+    const data = await fetchMinuteChunk(env, cache, symbol, inputHour, metrics);
     if (data.output1?.hts_kor_isnm) latestName = data.output1.hts_kor_isnm;
     const rows = Array.isArray(data.output2) ? data.output2 : [];
     if (rows.length === 0) break;
@@ -439,21 +458,24 @@ export const fetchTimeframeCandles = async (
   symbol: string,
   tf: Timeframe,
   minCount: number,
+  metrics?: RequestMetrics,
 ): Promise<{ name: string; candles: Candle[]; cacheTtlSec: number }> => {
   const ttlSec = timeframeCacheTtlSec(tf);
   const rawKey = cacheKeyForTf(symbol, tf, minCount);
   const cached = await getCachedJson<{ name: string; candles: Candle[] }>(cache, rawKey);
   if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
     console.log(`[data-cache-hit] tf=${tf} symbol=${symbol}`);
+    bumpMetric(metrics, "dataCacheHits");
     return { ...cached, cacheTtlSec: ttlSec };
   }
 
   console.log(`[data-cache-miss] tf=${tf} symbol=${symbol}`);
+  bumpMetric(metrics, "dataCacheMisses");
   let data: { name: string; candles: Candle[] };
   if (tf === "day" || tf === "week" || tf === "month") {
-    data = await fetchPeriodCandles(env, cache, symbol, tf, minCount);
+    data = await fetchPeriodCandles(env, cache, symbol, tf, minCount, metrics);
   } else {
-    const minute = await fetchMinuteCandlesToday(env, cache, symbol);
+    const minute = await fetchMinuteCandlesToday(env, cache, symbol, metrics);
     data = {
       name: minute.name,
       candles: resampleTo15m(minute.candles),
@@ -471,7 +493,7 @@ export const fetchDailyCandles = async (
   symbol: string,
   minCount = 200,
 ): Promise<{ name: string; candles: Candle[] }> => {
-  const result = await fetchTimeframeCandles(env, cache, symbol, "day", minCount);
+  const result = await fetchTimeframeCandles(env, cache, symbol, "day", minCount, undefined);
   return {
     name: result.name,
     candles: result.candles,

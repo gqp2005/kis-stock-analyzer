@@ -18,6 +18,23 @@ export interface Scores {
   overall: Overall;
 }
 
+export interface RiskBreakdown {
+  atrScore: number;
+  bbScore: number;
+  mddScore: number;
+  sharpDropScore: number;
+  rawTotal: number;
+  finalRisk: number;
+}
+
+export interface TradePlan {
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  riskReward: number | null;
+  note: string;
+}
+
 export interface IndicatorPoint {
   time: string;
   value: number | null;
@@ -46,11 +63,38 @@ export interface TimingInfo {
   reasons: string[];
 }
 
+export interface Signals {
+  trend: {
+    closeAboveMid: boolean;
+    fastAboveMid: boolean;
+    midSlopeUp: boolean;
+    midAboveLong: boolean;
+    breakout: boolean;
+  };
+  momentum: {
+    rsi: number | null;
+    rsiBand: "HIGH" | "MID" | "LOW";
+    rsiUpN: boolean;
+    closeAboveFast: boolean;
+    returnNPositive: boolean;
+    volumeAboveMa20: boolean;
+  };
+  risk: {
+    atrPercent: number | null;
+    atrBucket: "<=2" | "2~4" | "4~6" | ">6" | "N/A";
+    bbPosition: "ABOVE_UPPER" | "INSIDE_BAND" | "BELOW_LOWER" | "N/A";
+    mddN: number | null;
+    sharpDropBar: boolean;
+    breakdown: RiskBreakdown;
+  };
+}
+
 export interface TimeframeAnalysis {
   tf: Timeframe;
   regime: Regime;
   summaryText: string;
   scores: Scores;
+  signals: Signals;
   reasons: string[];
   levels: {
     ma20: number | null;
@@ -69,6 +113,7 @@ export interface TimeframeAnalysis {
     support: number | null;
     resistance: number | null;
   };
+  tradePlan: TradePlan;
   indicators: IndicatorSeries;
   candles: Candle[];
   timing?: TimingInfo | null;

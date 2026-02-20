@@ -3,6 +3,8 @@ export interface Env {
   KIS_APP_SECRET: string;
   KIS_BASE_URL?: string;
   KIS_ENV?: "real" | "demo";
+  RATE_LIMIT_MAX_REQUESTS?: string;
+  RATE_LIMIT_WINDOW_SEC?: string;
 }
 
 export type Timeframe = "month" | "week" | "day" | "min15";
@@ -34,6 +36,23 @@ export interface IndicatorLevels {
   volumeMa20: number | null;
   support: number | null;
   resistance: number | null;
+}
+
+export interface RiskBreakdown {
+  atrScore: number;
+  bbScore: number;
+  mddScore: number;
+  sharpDropScore: number;
+  rawTotal: number;
+  finalRisk: number;
+}
+
+export interface TradePlan {
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  riskReward: number | null;
+  note: string;
 }
 
 export interface IndicatorPoint {
@@ -87,6 +106,7 @@ export interface Signals {
     bbPosition: "ABOVE_UPPER" | "INSIDE_BAND" | "BELOW_LOWER" | "N/A";
     mddN: number | null;
     sharpDropBar: boolean;
+    breakdown: RiskBreakdown;
   };
 }
 
@@ -104,6 +124,7 @@ export interface TimeframeAnalysis {
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
+  tradePlan: TradePlan;
   indicators: IndicatorSeries;
   candles: Candle[];
   timing?: TimingInfo | null;
@@ -126,6 +147,7 @@ export interface AnalysisPayload {
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
+  tradePlan: TradePlan;
   indicators: IndicatorSeries;
   candles: Candle[];
   regime: Regime;

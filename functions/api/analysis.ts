@@ -5,6 +5,7 @@ import {
   resampleDayToWeekCandles,
 } from "../lib/kis";
 import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
+import { attachMetrics, createRequestMetrics, type RequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
 import {
   analyzeTimeframe,
@@ -107,13 +108,20 @@ const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAna
 });
 
 const safeFetchTf = async (
-  context: { env: Env; cache: Cache; symbol: string },
+  context: { env: Env; cache: Cache; symbol: string; metrics: RequestMetrics },
   tf: Timeframe,
   minCount: number,
   warnings: string[],
 ): Promise<{ name: string; candles: Candle[]; cacheTtlSec: number } | null> => {
   try {
-    return await fetchTimeframeCandles(context.env, context.cache, context.symbol, tf, minCount);
+    return await fetchTimeframeCandles(
+      context.env,
+      context.cache,
+      context.symbol,
+      tf,
+      minCount,
+      context.metrics,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     warnings.push(`${tf} 조회 실패: ${message}`);
@@ -122,6 +130,9 @@ const safeFetchTf = async (
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const metrics = createRequestMetrics(context.request);
+  const finalize = (response: Response): Response => attachMetrics(response, metrics);
+
   try {
     const url = new URL(context.request.url);
     const input =
@@ -137,12 +148,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const useResampledHigherTf = higherTfSource !== "kis";
 
     if (!input) {
-      return badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.");
+      return finalize(badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.", context.request));
     }
 
     const resolved = resolveStock(input);
     if (!resolved) {
-      return badRequest(`종목명을 찾지 못했습니다: ${input}`);
+      return finalize(badRequest(`종목명을 찾지 못했습니다: ${input}`, context.request));
     }
 
     const ttlSec = analysisTtlByTf(tfParam);
@@ -154,16 +165,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     if (tfParam === "multi") {
       const cached = await getCachedJson<MultiAnalysisPayload>(cache, cacheKey);
       if (cached) {
+        metrics.apiCacheHits += 1;
         console.log(`[analysis-cache-hit] tf=multi symbol=${resolved.code}`);
-        return json(cached, 200, {
+        return finalize(json(cached, 200, {
           "x-cache": "HIT",
           "cache-control": `public, max-age=${ttlSec}`,
-        });
+        }));
       }
+      metrics.apiCacheMisses += 1;
       console.log(`[analysis-cache-miss] tf=multi symbol=${resolved.code}`);
 
       const warnings: string[] = [];
-      const fetchCtx = { env: context.env, cache, symbol: resolved.code };
+      const fetchCtx = { env: context.env, cache, symbol: resolved.code, metrics };
 
       const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
       const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
@@ -262,27 +275,36 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       };
 
       await putCachedJson(cache, cacheKey, payload, ttlSec);
-      return json(payload, 200, {
+      return finalize(json(payload, 200, {
         "x-cache": "MISS",
         "cache-control": `public, max-age=${ttlSec}`,
-      });
+      }));
     }
 
     const tf = tfParam;
     const cached = await getCachedJson<AnalysisPayload>(cache, cacheKey);
     if (cached) {
+      metrics.apiCacheHits += 1;
       console.log(`[analysis-cache-hit] tf=${tf} symbol=${resolved.code}`);
-      return json(cached, 200, {
+      return finalize(json(cached, 200, {
         "x-cache": "HIT",
         "cache-control": `public, max-age=${ttlSec}`,
-      });
+      }));
     }
+    metrics.apiCacheMisses += 1;
 
     const minCount = singleTfCount(tf, dayCount);
-    const fetched = await fetchTimeframeCandles(context.env, cache, resolved.code, tf, minCount);
+    const fetched = await fetchTimeframeCandles(
+      context.env,
+      cache,
+      resolved.code,
+      tf,
+      minCount,
+      metrics,
+    );
     const candlesForAnalysis = fetched.candles.slice(-Math.max(minCount, 140));
     if (candlesForAnalysis.length < (tf === "min15" ? 40 : 70)) {
-      return badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`);
+      return finalize(badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`, context.request));
     }
 
     const analysis = analyzeTimeframe(tf, candlesForAnalysis);
@@ -305,6 +327,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       signals: analysisForChart.signals,
       reasons: analysisForChart.reasons.slice(0, 6),
       levels: analysisForChart.levels,
+      tradePlan: analysisForChart.tradePlan,
       indicators: analysisForChart.indicators,
       candles: analysisForChart.candles,
       regime: analysisForChart.regime,
@@ -312,12 +335,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     };
 
     await putCachedJson(cache, cacheKey, payload, ttlSec);
-    return json(payload, 200, {
+    return finalize(json(payload, 200, {
       "x-cache": "MISS",
       "cache-control": `public, max-age=${ttlSec}`,
-    });
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "analysis endpoint error";
-    return serverError(message);
+    return finalize(serverError(message, context.request));
   }
 };

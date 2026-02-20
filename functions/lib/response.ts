@@ -7,19 +7,37 @@ export const json = (data: unknown, status = 200, extraHeaders?: Record<string, 
     },
   });
 
-export const badRequest = (message: string): Response =>
+const requestIdFrom = (request?: Request): string =>
+  request?.headers.get("x-request-id") ?? crypto.randomUUID();
+
+export const errorJson = (
+  status: number,
+  code: string,
+  message: string,
+  request?: Request,
+  extraHeaders?: Record<string, string>,
+): Response =>
   json(
     {
+      ok: false,
       error: message,
+      code,
+      requestId: requestIdFrom(request),
+      timestamp: new Date().toISOString(),
     },
-    400,
+    status,
+    extraHeaders,
   );
 
-export const serverError = (message: string): Response =>
-  json(
-    {
-      error: message,
-    },
-    500,
-  );
+export const badRequest = (message: string, request?: Request): Response =>
+  errorJson(400, "BAD_REQUEST", message, request);
 
+export const tooManyRequests = (
+  message: string,
+  request?: Request,
+  retryAfterSec?: number,
+): Response =>
+  errorJson(429, "RATE_LIMITED", message, request, retryAfterSec ? { "retry-after": String(retryAfterSec) } : undefined);
+
+export const serverError = (message: string, request?: Request): Response =>
+  errorJson(500, "INTERNAL_ERROR", message, request);

@@ -1,6 +1,7 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
 import { fetchTimeframeCandles } from "../lib/kis";
 import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
+import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
 import { resolveStock } from "../lib/stockResolver";
 import type { Env, OhlcvPayload, Timeframe } from "../lib/types";
@@ -27,6 +28,9 @@ const minCount = (tf: Timeframe, days: number): number => {
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const metrics = createRequestMetrics(context.request);
+  const finalize = (response: Response): Response => attachMetrics(response, metrics);
+
   try {
     const url = new URL(context.request.url);
     const input =
@@ -39,7 +43,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const tf = parseTf(url.searchParams.get("tf"));
 
     if (!input) {
-      return badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.");
+      return finalize(badRequest("query(또는 symbol/code) 파라미터를 넣어주세요.", context.request));
     }
 
     const daysParam = Number(url.searchParams.get("days") ?? "180");
@@ -49,7 +53,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const resolved = resolveStock(input);
     if (!resolved) {
-      return badRequest(`종목명을 찾지 못했습니다: ${input}`);
+      return finalize(badRequest(`종목명을 찾지 못했습니다: ${input}`, context.request));
     }
 
     const ttlSec = timeframeCacheTtlSec(tf);
@@ -60,13 +64,22 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const cached = await getCachedJson<OhlcvPayload>(cache, cacheKey);
     if (cached) {
-      return json(cached, 200, {
+      metrics.apiCacheHits += 1;
+      return finalize(json(cached, 200, {
         "x-cache": "HIT",
         "cache-control": `public, max-age=${ttlSec}`,
-      });
+      }));
     }
+    metrics.apiCacheMisses += 1;
 
-    const fetched = await fetchTimeframeCandles(context.env, cache, resolved.code, tf, minCount(tf, days));
+    const fetched = await fetchTimeframeCandles(
+      context.env,
+      cache,
+      resolved.code,
+      tf,
+      minCount(tf, days),
+      metrics,
+    );
     const candles = fetched.candles.slice(-visibleCount(tf, days));
 
     const payload: OhlcvPayload = {
@@ -85,13 +98,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     };
 
     await putCachedJson(cache, cacheKey, payload, ttlSec);
-    return json(payload, 200, {
+    return finalize(json(payload, 200, {
       "x-cache": "MISS",
       "cache-control": `public, max-age=${ttlSec}`,
-    });
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "ohlcv endpoint error";
-    return serverError(message);
+    return finalize(serverError(message, context.request));
   }
 };
-

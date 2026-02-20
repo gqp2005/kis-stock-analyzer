@@ -8,6 +8,7 @@ import type {
   Regime,
   Scores,
   Signals,
+  TradePlan,
   Timeframe,
   TimeframeAnalysis,
   TimingInfo,
@@ -197,6 +198,35 @@ const adjustSupportResistance = (
   };
 };
 
+const buildTradePlan = (
+  currentClose: number,
+  support: number,
+  resistance: number,
+  atr14: number | null,
+): TradePlan => {
+  const atrUnit = atr14 != null && atr14 > 0 ? atr14 : currentClose * 0.02;
+  let entry = currentClose;
+  let stop = Math.min(support, currentClose - atrUnit);
+  if (stop >= entry) stop = Math.max(0, entry - atrUnit);
+
+  const riskPerShare = Math.max(0.0001, entry - stop);
+  const baseTarget = Math.max(resistance, entry + atrUnit * 1.2);
+  const rrMinTarget = entry + riskPerShare * 1.5;
+  let target = Math.max(baseTarget, rrMinTarget);
+  if (target <= entry) target = entry + atrUnit * 1.5;
+
+  const rewardPerShare = Math.max(0, target - entry);
+  const riskReward = rewardPerShare / riskPerShare;
+
+  return {
+    entry: round2(entry),
+    stop: round2(stop),
+    target: round2(target),
+    riskReward: round2(riskReward),
+    note: `참고 레벨입니다. 진입은 추세 확인 후, 손절은 stop 이탈 시, 목표는 target 부근 분할 대응을 권장합니다.`,
+  };
+};
+
 const overallFromScores = (trend: number, momentum: number, risk: number): Overall => {
   if (trend >= 70 && momentum >= 55 && risk >= 45) return "GOOD";
   if (trend >= 40 && risk >= 35) return "NEUTRAL";
@@ -348,7 +378,8 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   if (volumeAboveMa20) momentum += 20;
   momentum = clamp(momentum, 0, 100);
 
-  let risk = atrScore + bbScore + mddScore + sharpDropScore;
+  const riskRaw = atrScore + bbScore + mddScore + sharpDropScore;
+  let risk = riskRaw;
   risk = clamp(risk, 0, 100);
 
   const overall = overallFromScores(trend, momentum, risk);
@@ -412,6 +443,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     support: round2(sr.support),
     resistance: round2(sr.resistance),
   };
+  const tradePlan = buildTradePlan(latest.close, sr.support, sr.resistance, atr14);
 
   const indicators: IndicatorSeries = {
     ma: {
@@ -452,6 +484,14 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
       bbPosition,
       mddN: round2(mdd20),
       sharpDropBar,
+      breakdown: {
+        atrScore,
+        bbScore,
+        mddScore,
+        sharpDropScore,
+        rawTotal: riskRaw,
+        finalRisk: risk,
+      },
     },
   };
 
@@ -463,6 +503,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     signals,
     reasons: reasons.slice(0, 6),
     levels,
+    tradePlan,
     indicators,
     candles,
   };
@@ -587,6 +628,14 @@ export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAna
       bbPosition: "N/A",
       mddN: null,
       sharpDropBar: false,
+      breakdown: {
+        atrScore: 0,
+        bbScore: 0,
+        mddScore: 0,
+        sharpDropScore: 0,
+        rawTotal: 0,
+        finalRisk: 0,
+      },
     },
   };
 
@@ -603,6 +652,13 @@ export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAna
     signals: emptySignals,
     reasons: ["15분봉은 장중/당일 데이터가 없어서 비활성"],
     levels: nullLevels,
+    tradePlan: {
+      entry: null,
+      stop: null,
+      target: null,
+      riskReward: null,
+      note: "데이터가 부족해 Entry/Stop/Target을 계산하지 않았습니다.",
+    },
     indicators: {
       ma: {
         ma1Period: 20,
