@@ -151,11 +151,13 @@ npm run cf:dev
 - 타임아웃 회피(v1.1):
   - 한 번에 500개 전량 처리하지 않고 `batch` 단위로 분할 처리
   - 진행 상태 key: `screener:v1:rebuild-progress:YYYY-MM-DD`
-  - 예: `batch=40`이면 호출 1회당 최대 40종목씩 처리
+  - 예: `batch=20`이면 호출 1회당 최대 20종목씩 처리(기본값 20)
   - 진행 중 응답은 `202` + `inProgress=true` + `progress` 필드 반환
   - 같은 엔드포인트를 재호출하면 이어서 처리, 완료 시 `200` + `inProgress=false`
+  - 이미 다른 요청이 실행 중이어도 `409` 대신 `202(inProgress=true)`를 반환
 - 동시 실행 방지:
   - lock key: `lock:rebuild-screener`
+  - lock이 비정상 종료로 남아도 5분 이상 stale이면 자동 정리 후 재시도
 - 실패 시:
   - 기존 `last_success` 캐시를 유지
 
@@ -165,10 +167,10 @@ npm run cf:dev
 curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMIN_TOKEN>"
 ```
 
-분할 처리 예시(batch 40):
+분할 처리 예시(batch 20):
 
 ```bash
-curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMIN_TOKEN>&batch=40"
+curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMIN_TOKEN>&batch=20"
 ```
 
 ### `GET /api/backtest?query=005930&count=520&holdBars=10&signal=GOOD`

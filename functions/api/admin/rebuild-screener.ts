@@ -22,9 +22,10 @@ import type { Env } from "../../lib/types";
 
 const TARGET_UNIVERSE = 500;
 const TOP_N_STORE = 50;
-const DEFAULT_BATCH_SIZE = 40;
-const MAX_BATCH_SIZE = 150;
-const PARALLEL_PER_BATCH = 4;
+const DEFAULT_BATCH_SIZE = 20;
+const MAX_BATCH_SIZE = 120;
+const PARALLEL_PER_BATCH = 2;
+const LOCK_STALE_SEC = 5 * 60;
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
@@ -66,7 +67,19 @@ const buildUnauthorized = (request: Request): Response =>
 const parseBatchSize = (url: URL): number => {
   const raw = Number(url.searchParams.get("batch") ?? DEFAULT_BATCH_SIZE);
   if (!Number.isFinite(raw)) return DEFAULT_BATCH_SIZE;
-  return Math.max(10, Math.min(MAX_BATCH_SIZE, Math.floor(raw)));
+  return Math.max(5, Math.min(MAX_BATCH_SIZE, Math.floor(raw)));
+};
+
+const parseTimeMs = (iso: string | undefined): number => {
+  if (!iso) return 0;
+  const ts = Date.parse(iso);
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+const isLockStale = (startedAt: string | undefined): boolean => {
+  const startedAtMs = parseTimeMs(startedAt);
+  if (!startedAtMs) return true;
+  return Date.now() - startedAtMs > LOCK_STALE_SEC * 1000;
 };
 
 const loadUniverseSnapshot = async (
@@ -153,35 +166,74 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const cache = await caches.open("kis-analyzer-cache-v3");
+  const date = nowIsoKst().slice(0, 10);
+  const progressKey = rebuildProgressKey(date);
   const lockKey = rebuildLockKey();
   const lockReq = new Request(lockKey);
   const existingLock = await getCachedJson<{ startedAt: string }>(cache, lockKey);
-  if (existingLock) {
+  if (existingLock && !isLockStale(existingLock.startedAt)) {
+    const progress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     return finalize(
-      errorJson(409, "REBUILD_IN_PROGRESS", "이미 rebuild가 실행 중입니다.", context.request),
+      json(
+        {
+          ok: true,
+          inProgress: true,
+          rebuiltAt: null,
+          universe: {
+            label: "거래대금 상위 500",
+            source: "KIS",
+            count: progress?.universeCount ?? TARGET_UNIVERSE,
+            cacheHit: true,
+          },
+          progress: progress
+            ? {
+                processed: progress.cursor,
+                total: progress.universeCount,
+                remaining: Math.max(0, progress.universeCount - progress.cursor),
+                batchSize: parseBatchSize(url),
+                nextCursor: progress.cursor,
+              }
+            : null,
+          summary: progress
+            ? {
+                processedCount: progress.processedCount,
+                candidateCount: progress.candidates.length,
+                durationMs: null,
+                kisCalls: metrics.kisCalls,
+              }
+            : null,
+          warnings: progress?.warnings ?? [],
+          message: "이미 rebuild가 실행 중입니다. 잠시 후 같은 엔드포인트를 다시 호출하세요.",
+        },
+        202,
+      ),
     );
   }
 
-  await putCachedJson(
-    cache,
-    lockKey,
-    {
-      startedAt: nowIsoKst(),
-      ttlSec: REBUILD_LOCK_TTL_SEC,
-    },
-    REBUILD_LOCK_TTL_SEC,
-  );
+  if (existingLock && isLockStale(existingLock.startedAt)) {
+    await cache.delete(lockReq);
+  }
 
   const startedAtMs = Date.now();
+  let lockAcquired = false;
 
   try {
-    const date = nowIsoKst().slice(0, 10);
+    await putCachedJson(
+      cache,
+      lockKey,
+      {
+        startedAt: nowIsoKst(),
+        ttlSec: REBUILD_LOCK_TTL_SEC,
+      },
+      REBUILD_LOCK_TTL_SEC,
+    );
+    lockAcquired = true;
+
     const batchSize = parseBatchSize(url);
 
     const universeLoad = await loadUniverseSnapshot(cache, date);
     const universe = universeLoad.snapshot.items.slice(0, TARGET_UNIVERSE);
 
-    const progressKey = rebuildProgressKey(date);
     const prevProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     let progress =
       prevProgress && prevProgress.universeCount === universe.length
@@ -353,7 +405,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const message = error instanceof Error ? error.message : "rebuild-screener error";
     return finalize(serverError(message, context.request));
   } finally {
-    await cache.delete(lockReq);
+    if (lockAcquired) {
+      await cache.delete(lockReq);
+    }
   }
 };
-

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candle } from "../functions/lib/types";
+import { getCachedJson } from "../functions/lib/cache";
 
 vi.mock("../functions/lib/cache", () => ({
   getCachedJson: vi.fn(async () => null),
@@ -83,6 +84,8 @@ vi.mock("../functions/lib/screener", () => ({
 
 import { onRequestPost } from "../functions/api/admin/rebuild-screener";
 
+const mockedGetCachedJson = vi.mocked(getCachedJson);
+
 const makeContext = (url: string): Parameters<typeof onRequestPost>[0] =>
   ({
     request: new Request(url, { method: "POST" }),
@@ -101,6 +104,7 @@ const makeContext = (url: string): Parameters<typeof onRequestPost>[0] =>
 describe("/api/admin/rebuild-screener", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedGetCachedJson.mockResolvedValue(null);
     (globalThis as unknown as { caches: unknown }).caches = {
       open: vi.fn(async () => ({ delete: vi.fn(async () => true) }) as unknown as Cache),
     };
@@ -123,5 +127,32 @@ describe("/api/admin/rebuild-screener", () => {
     expect(body.ok).toBe(true);
     expect(body.summary.topStored).toBeGreaterThanOrEqual(1);
   });
-});
 
+  it("returns 202 inProgress when another rebuild is running", async () => {
+    mockedGetCachedJson
+      .mockResolvedValueOnce({ startedAt: new Date().toISOString() } as never)
+      .mockResolvedValueOnce(
+        {
+          date: "2026-02-20",
+          startedAt: "2026-02-20T00:00:00+09:00",
+          updatedAt: "2026-02-20T00:05:00+09:00",
+          cursor: 40,
+          universeCount: 500,
+          processedCount: 35,
+          ohlcvFailures: 2,
+          insufficientData: 3,
+          warnings: [],
+          candidates: [],
+        } as never,
+      );
+
+    const response = await onRequestPost(
+      makeContext("http://localhost/api/admin/rebuild-screener?token=secret-token"),
+    );
+    const body = (await response.json()) as { inProgress: boolean; progress: { processed: number } };
+
+    expect(response.status).toBe(202);
+    expect(body.inProgress).toBe(true);
+    expect(body.progress.processed).toBe(40);
+  });
+});
