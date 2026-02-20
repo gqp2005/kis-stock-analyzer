@@ -27,6 +27,8 @@ export interface IndicatorLevels {
   recentHigh20: number | null;
   recentLow20: number | null;
   volumeMa20: number | null;
+  support: number | null;
+  resistance: number | null;
 }
 
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
@@ -73,6 +75,7 @@ export interface AnalysisPayload {
     source: "KIS";
     cacheTtlSec: number;
     candleCount: number;
+    summaryText: string;
   };
   scores: Scores;
   signals: Signals;
@@ -94,4 +97,3 @@ export interface OhlcvPayload {
   };
   candles: Candle[];
 }
-

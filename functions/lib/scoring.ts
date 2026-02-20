@@ -25,6 +25,115 @@ const mddPercent = (closes: number[]): number | null => {
   return mdd;
 };
 
+const pickNearestBelow = (values: number[], reference: number): number | null => {
+  const below = values.filter((value) => Number.isFinite(value) && value < reference);
+  if (below.length === 0) return null;
+  return Math.max(...below);
+};
+
+const pickNearestAbove = (values: number[], reference: number): number | null => {
+  const above = values.filter((value) => Number.isFinite(value) && value > reference);
+  if (above.length === 0) return null;
+  return Math.min(...above);
+};
+
+const pivotLevels = (prevDay: Candle): number[] => {
+  const p = (prevDay.high + prevDay.low + prevDay.close) / 3;
+  const s1 = 2 * p - prevDay.high;
+  const s2 = p - (prevDay.high - prevDay.low);
+  const r1 = 2 * p - prevDay.low;
+  const r2 = p + (prevDay.high - prevDay.low);
+
+  return [p, s1, s2, r1, r2].filter((value) => Number.isFinite(value));
+};
+
+const swingCandidates = (
+  candles: Candle[],
+  currentClose: number,
+  lookback = 60,
+  l = 3,
+): { support: number | null; resistance: number | null } => {
+  const sample = candles.slice(-lookback);
+  if (sample.length < l * 2 + 1) {
+    return { support: null, resistance: null };
+  }
+
+  const swingHighs: number[] = [];
+  const swingLows: number[] = [];
+
+  for (let i = l; i < sample.length - l; i += 1) {
+    const high = sample[i].high;
+    const low = sample[i].low;
+
+    let isHigh = true;
+    let isLow = true;
+
+    for (let j = i - l; j <= i + l; j += 1) {
+      if (j === i) continue;
+      if (sample[j].high >= high) isHigh = false;
+      if (sample[j].low <= low) isLow = false;
+      if (!isHigh && !isLow) break;
+    }
+
+    if (isHigh) swingHighs.push(high);
+    if (isLow) swingLows.push(low);
+  }
+
+  return {
+    support: pickNearestBelow(swingLows, currentClose),
+    resistance: pickNearestAbove(swingHighs, currentClose),
+  };
+};
+
+const adjustSupportResistance = (
+  support: number | null,
+  resistance: number | null,
+  currentClose: number,
+  ma20: number | null,
+): { support: number; resistance: number } => {
+  const anchor = ma20 ?? currentClose;
+  let finalSupport = support;
+  let finalResistance = resistance;
+
+  if (finalSupport == null || finalSupport >= currentClose) {
+    finalSupport = Math.min(currentClose * 0.995, anchor * 0.99);
+  }
+
+  if (finalResistance == null || finalResistance <= currentClose) {
+    finalResistance = Math.max(currentClose * 1.005, anchor * 1.01);
+  }
+
+  if (finalSupport >= finalResistance) {
+    const center = anchor > 0 ? anchor : currentClose;
+    const halfBand = Math.max(center * 0.01, currentClose * 0.005);
+    finalSupport = center - halfBand;
+    finalResistance = center + halfBand;
+  }
+
+  return {
+    support: Math.max(0, finalSupport),
+    resistance: Math.max(0, finalResistance),
+  };
+};
+
+const trendLabel = (trend: number): string => {
+  if (trend >= 70) return "상승 추세";
+  if (trend >= 40) return "혼조/횡보";
+  return "하락 추세";
+};
+
+const momentumLabel = (momentum: number): string => {
+  if (momentum >= 65) return "모멘텀 강함";
+  if (momentum >= 45) return "모멘텀 보통";
+  return "모멘텀 약함";
+};
+
+const riskLabel = (risk: number): string => {
+  if (risk >= 70) return "변동성 낮음";
+  if (risk >= 40) return "변동성 보통";
+  return "변동성 높음";
+};
+
 export const analyzeCandles = (
   candles: Candle[],
 ): {
@@ -32,6 +141,7 @@ export const analyzeCandles = (
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
+  summaryText: string;
 } => {
   const closes = candles.map((c) => c.close);
   const volumes = candles.map((c) => c.volume);
@@ -150,6 +260,8 @@ export const analyzeCandles = (
         ? "NEUTRAL"
         : "CAUTION";
 
+  const summaryText = `${trendLabel(trend)} · ${momentumLabel(momentum)} · ${riskLabel(risk)}`;
+
   const reasons: string[] = [];
   reasons.push(
     closeAboveMa60
@@ -185,7 +297,26 @@ export const analyzeCandles = (
   }
 
   const trimmedReasons = reasons.slice(0, 6);
-  const finalReasons = trimmedReasons.length >= 3 ? trimmedReasons : [...trimmedReasons, "데이터 길이를 늘려 재분석이 필요합니다."];
+  const finalReasons =
+    trimmedReasons.length >= 3
+      ? trimmedReasons
+      : [...trimmedReasons, "데이터 길이를 늘려 재분석이 필요합니다."];
+
+  const prevDay = candles[candles.length - 2] ?? latest;
+  const pivots = pivotLevels(prevDay);
+  const swings = swingCandidates(candles, latest.close, 60, 3);
+
+  const allCandidates = [
+    ...pivots,
+    ...(bbLower != null ? [bbLower] : []),
+    ...(bbUpper != null ? [bbUpper] : []),
+    ...(swings.support != null ? [swings.support] : []),
+    ...(swings.resistance != null ? [swings.resistance] : []),
+  ];
+
+  const supportCandidate = pickNearestBelow(allCandidates, latest.close);
+  const resistanceCandidate = pickNearestAbove(allCandidates, latest.close);
+  const sr = adjustSupportResistance(supportCandidate, resistanceCandidate, latest.close, ma20Latest);
 
   const levels: IndicatorLevels = {
     ma20: round2(ma20Latest),
@@ -200,6 +331,8 @@ export const analyzeCandles = (
     recentHigh20: round2(recentHigh20),
     recentLow20: round2(recentLow20),
     volumeMa20: round2(volMa20Latest),
+    support: round2(sr.support),
+    resistance: round2(sr.resistance),
   };
 
   const signals: Signals = {
@@ -232,6 +365,6 @@ export const analyzeCandles = (
     signals,
     reasons: finalReasons,
     levels,
+    summaryText,
   };
 };
-

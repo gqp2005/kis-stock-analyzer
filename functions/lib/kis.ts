@@ -19,7 +19,7 @@ interface KisDailyChartResponse extends KisResponseBase {
   output2?: Array<Record<string, string>>;
 }
 
-const TOKEN_BUFFER_MS = 5 * 60 * 1000;
+const TOKEN_BUFFER_MS = 10 * 60 * 1000;
 let memoryToken: (TokenCacheRecord & { cacheIdentity: string }) | null = null;
 
 const getBaseUrl = (env: Env): string => {
@@ -250,4 +250,3 @@ export const fetchDailyCandles = async (
     candles,
   };
 };
-

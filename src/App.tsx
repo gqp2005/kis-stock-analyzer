@@ -1,6 +1,17 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ColorType, createChart, type Time } from "lightweight-charts";
+import { ColorType, LineStyle, createChart, type Time } from "lightweight-charts";
 import type { AnalysisResponse } from "./types";
+import stockMap from "../data/kr-stocks.json";
+
+interface StockLookup {
+  code: string;
+  name: string;
+  market: string;
+}
+
+const stocks = stockMap as StockLookup[];
+
+const normalizeSearch = (value: string): string => value.replace(/\s+/g, "").toUpperCase();
 
 const scoreClass = (score: number): string => {
   if (score >= 70) return "score good";
@@ -20,8 +31,38 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const chartRef = useRef<HTMLDivElement | null>(null);
+  const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
+  const suggestions = useMemo(() => {
+    const raw = query.trim();
+    if (!raw) return [];
+
+    const qCode = raw.toUpperCase();
+    const qName = normalizeSearch(raw);
+
+    const ranked = stocks
+      .map((stock) => {
+        const code = stock.code.toUpperCase();
+        const name = normalizeSearch(stock.name);
+        let rank = Number.MAX_SAFE_INTEGER;
+
+        if (code === qCode) rank = 0;
+        else if (name === qName) rank = 1;
+        else if (code.startsWith(qCode)) rank = 2;
+        else if (name.startsWith(qName)) rank = 3;
+        else if (code.includes(qCode)) rank = 4;
+        else if (name.includes(qName)) rank = 5;
+        else return null;
+
+        return { ...stock, rank };
+      })
+      .filter((item): item is StockLookup & { rank: number } => item !== null)
+      .sort((a, b) => a.rank - b.rank || a.name.length - b.name.length || a.code.localeCompare(b.code));
+
+    return ranked.slice(0, 8);
+  }, [query]);
 
   const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
@@ -46,12 +87,31 @@ export default function App() {
     event.preventDefault();
     const normalized = query.trim();
     if (!normalized) return;
+    setShowSuggestions(false);
     fetchAnalysis(normalized, days);
+  };
+
+  const onSelectSuggestion = (stock: StockLookup) => {
+    setQuery(stock.code);
+    setShowSuggestions(false);
+    fetchAnalysis(stock.code, days);
   };
 
   useEffect(() => {
     fetchAnalysis("005930", 180);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onClickOutside = (event: MouseEvent) => {
+      if (!searchWrapRef.current) return;
+      if (!searchWrapRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
   useEffect(() => {
@@ -98,6 +158,28 @@ export default function App() {
       })),
     );
 
+    if (result.levels.support != null) {
+      candleSeries.createPriceLine({
+        price: result.levels.support,
+        color: "rgba(0, 179, 134, 0.95)",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "Support",
+      });
+    }
+
+    if (result.levels.resistance != null) {
+      candleSeries.createPriceLine({
+        price: result.levels.resistance,
+        color: "rgba(255, 90, 118, 0.95)",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "Resistance",
+      });
+    }
+
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "",
@@ -142,12 +224,38 @@ export default function App() {
         </header>
 
         <form className="search" onSubmit={onSubmit}>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="005930 또는 삼성전자"
-            aria-label="종목 코드 또는 종목명"
-          />
+          <div className="search-input-wrap" ref={searchWrapRef}>
+            <input
+              value={query}
+              onFocus={() => setShowSuggestions(true)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setShowSuggestions(true);
+              }}
+              placeholder="005930 또는 삼성전자"
+              aria-label="종목 코드 또는 종목명"
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <ul className="suggestions" role="listbox" aria-label="종목 추천 목록">
+                {suggestions.map((stock) => (
+                  <li key={`${stock.market}-${stock.code}`}>
+                    <button
+                      type="button"
+                      className="suggestion-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onSelectSuggestion(stock)}
+                    >
+                      <span className="suggestion-main">
+                        <strong>{stock.code}</strong>
+                        <em>{stock.name}</em>
+                      </span>
+                      <small>{stock.market}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="조회 기간">
             <option value={120}>최근 120봉</option>
             <option value={180}>최근 180봉</option>
@@ -171,7 +279,10 @@ export default function App() {
                   {result.meta.market} · {result.meta.asOf} · candles {result.meta.candleCount}
                 </p>
               </div>
-              <span className={overallClass(result.scores.overall)}>{result.scores.overall}</span>
+              <div className="summary-right">
+                <span className={overallClass(result.scores.overall)}>{result.scores.overall}</span>
+                <p className="summary-text">{result.meta.summaryText || "요약 없음"}</p>
+              </div>
             </div>
 
             <div className="score-grid">
@@ -208,4 +319,3 @@ export default function App() {
     </div>
   );
 }
-

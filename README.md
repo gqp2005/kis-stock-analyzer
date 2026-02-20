@@ -121,6 +121,9 @@ Functions는 `functions/` 폴더를 자동 인식합니다.
 }
 ```
 
+- `meta.summaryText`: 점수 기반 한줄 요약 (`상승 추세 · 모멘텀 강함 · 변동성 보통` 형식)
+- `levels.support` / `levels.resistance`: Pivot + Swing + BB 후보에서 추출한 핵심 지지/저항
+
 ## 스코어 카드 v1 구현 내용
 
 - Trend(0~100)
@@ -154,7 +157,7 @@ Functions는 `functions/` 폴더를 자동 인식합니다.
 2. 종목명 입력이면 로컬 `kr-stocks.json`으로 코드 해석
 3. Cache API에서 분석 캐시 확인
 4. KIS access token 캐시 확인 (메모리 + Cache API)
-5. 토큰 만료 5분 전이면 `/oauth2/tokenP` 재발급
+5. 토큰 만료 10분 전이면 `/oauth2/tokenP` 재발급
 6. `/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice` 호출
 7. 지표/점수 계산 후 결과 캐시 저장 및 응답
 
@@ -183,4 +186,3 @@ git init
 git add .
 git commit -m "feat: KIS stock analysis web service on Cloudflare Pages"
 ```
-

@@ -69,6 +69,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         source: "KIS",
         cacheTtlSec: ttlSec,
         candleCount: candlesForChart.length,
+        summaryText: analysis.summaryText,
       },
       scores: analysis.scores,
       signals: analysis.signals,
