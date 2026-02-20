@@ -9,6 +9,7 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import type {
+  BacktestResponse,
   IndicatorPoint,
   MultiAnalysisResponse,
   Overall,
@@ -90,6 +91,12 @@ const formatPrice = (value: number | null): string =>
 const formatSigned = (value: number): string => `${value > 0 ? "+" : ""}${value}`;
 const formatRiskReward = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value)}대1`;
+const formatPercent = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(2)}%`;
+const formatR = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(2)}R`;
+const formatFactor = (value: number | null): string =>
+  value == null ? "-" : value.toFixed(2);
 
 type ReasonTone = "positive" | "negative";
 
@@ -131,6 +138,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
+  const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestError, setBacktestError] = useState("");
+  const [backtestSignal, setBacktestSignal] = useState<Overall>("GOOD");
+  const [backtestHoldBars, setBacktestHoldBars] = useState(10);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<StockLookup[]>([]);
@@ -163,18 +175,51 @@ export default function App() {
     }
   };
 
+  const fetchBacktest = async (
+    value: string,
+    lookback: number,
+    holdBars: number,
+    signalOverall: Overall,
+  ) => {
+    setBacktestLoading(true);
+    setBacktestError("");
+    setBacktest(null);
+    try {
+      const url = `${apiBase}/api/backtest?query=${encodeURIComponent(value)}&count=${Math.max(lookback, 420)}&holdBars=${holdBars}&signal=${signalOverall}`;
+      const response = await fetch(url);
+      const data = (await response.json()) as BacktestResponse | { error: string };
+      if (!response.ok) throw new Error("error" in data ? data.error : "백테스트 요청 실패");
+      setBacktest(data as BacktestResponse);
+    } catch (e) {
+      setBacktestError(e instanceof Error ? e.message : "알 수 없는 오류");
+      setBacktest(null);
+    } finally {
+      setBacktestLoading(false);
+    }
+  };
+
+  const fetchDashboard = (
+    value: string,
+    lookback: number,
+    holdBars: number,
+    signalOverall: Overall,
+  ) => {
+    void fetchAnalysis(value, lookback);
+    void fetchBacktest(value, lookback, holdBars, signalOverall);
+  };
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalized = query.trim();
     if (!normalized) return;
     setShowSuggestions(false);
-    fetchAnalysis(normalized, days);
+    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal);
   };
 
   const onSelectSuggestion = (stock: StockLookup) => {
     setQuery(stock.code);
     setShowSuggestions(false);
-    fetchAnalysis(stock.code, days);
+    fetchDashboard(stock.code, days, backtestHoldBars, backtestSignal);
   };
 
   const clearQuery = () => {
@@ -185,7 +230,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchAnalysis("005930", 180);
+    fetchDashboard("005930", 180, 10, "GOOD");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -465,6 +510,7 @@ export default function App() {
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const tradePlan = activeAnalysis?.tradePlan ?? null;
+  const backtestSummary = backtest?.summary ?? null;
   const rsiDisabledMessage =
     activeTf === "min15"
       ? "15분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
@@ -529,10 +575,38 @@ export default function App() {
             <option value={180}>최근 180봉</option>
             <option value={240}>최근 240봉</option>
           </select>
-          <button type="submit" disabled={loading}>
+          <button type="submit" disabled={loading || backtestLoading}>
             {loading ? "조회 중..." : "조회"}
           </button>
         </form>
+        <div className="backtest-controls">
+          <label>
+            백테스트 진입 신호
+            <select
+              value={backtestSignal}
+              onChange={(e) => setBacktestSignal(e.target.value as Overall)}
+              aria-label="백테스트 진입 신호"
+            >
+              <option value="GOOD">GOOD</option>
+              <option value="NEUTRAL">NEUTRAL</option>
+              <option value="CAUTION">CAUTION</option>
+            </select>
+          </label>
+          <label>
+            최대 보유 봉
+            <select
+              value={backtestHoldBars}
+              onChange={(e) => setBacktestHoldBars(Number(e.target.value))}
+              aria-label="최대 보유 봉"
+            >
+              <option value={5}>5봉</option>
+              <option value={10}>10봉</option>
+              <option value={15}>15봉</option>
+              <option value={20}>20봉</option>
+            </select>
+          </label>
+          <p>값을 바꾼 뒤 조회를 누르면 백테스트 조건이 적용됩니다.</p>
+        </div>
 
         {error && <p className="error">{error}</p>}
 
@@ -657,6 +731,77 @@ export default function App() {
                     <p className="plan-note">{tradePlan.note}</p>
                   </div>
                 )}
+
+                <div className="card">
+                  <div className="backtest-head">
+                    <h3>일봉 백테스트 (시그널: {backtest?.meta.signalOverall ?? "GOOD"})</h3>
+                    {backtestLoading && <span className="backtest-state">계산 중...</span>}
+                  </div>
+                  {backtestError && <p className="backtest-error">{backtestError}</p>}
+                  {backtestSummary ? (
+                    <>
+                      <div className="backtest-summary-grid">
+                        <div className="plan-item">
+                          <span>총 거래 수</span>
+                          <strong>{backtestSummary.tradeCount}건</strong>
+                        </div>
+                        <div className="plan-item">
+                          <span>승률</span>
+                          <strong>{formatPercent(backtestSummary.winRate)}</strong>
+                        </div>
+                        <div className="plan-item">
+                          <span>평균 손익률</span>
+                          <strong>{formatPercent(backtestSummary.avgReturnPercent)}</strong>
+                        </div>
+                        <div className="plan-item">
+                          <span>최대 낙폭(MDD)</span>
+                          <strong>{formatPercent(backtestSummary.maxDrawdownPercent)}</strong>
+                        </div>
+                      </div>
+                      <div className="backtest-table-wrap">
+                        <table className="backtest-table">
+                          <thead>
+                            <tr>
+                              <th>기간</th>
+                              <th>거래수</th>
+                              <th>승률</th>
+                              <th>평균손익</th>
+                              <th>평균 R</th>
+                              <th>PF</th>
+                              <th>MDD</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {backtest.periods.map((period) => (
+                              <tr key={period.label}>
+                                <td>{period.label}</td>
+                                <td>{period.tradeCount}</td>
+                                <td>{formatPercent(period.winRate)}</td>
+                                <td>{formatPercent(period.avgReturnPercent)}</td>
+                                <td>{formatR(period.avgRMultiple)}</td>
+                                <td>{formatFactor(period.profitFactor)}</td>
+                                <td>{formatPercent(period.maxDrawdownPercent)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="plan-note">
+                        신호 발생 다음 봉 시가 진입, 목표/손절/보유기간(10봉) 기준 시뮬레이션입니다.
+                      </p>
+                      <p className="plan-note">
+                        전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
+                      </p>
+                      {backtest.warnings.length > 0 && (
+                        <p className="plan-note">{backtest.warnings.join(" · ")}</p>
+                      )}
+                    </>
+                  ) : (
+                    !backtestLoading && !backtestError && (
+                      <p className="plan-note">백테스트 결과가 없습니다.</p>
+                    )
+                  )}
+                </div>
 
                 {activeTf === "min15" && (
                   <div className="timing-box">

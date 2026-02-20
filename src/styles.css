@@ -75,6 +75,28 @@ h1 {
   margin: 18px 0 20px;
 }
 
+.backtest-controls {
+  margin: -10px 0 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px)) 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.backtest-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #b8cce2;
+  font-size: 13px;
+}
+
+.backtest-controls p {
+  margin: 0 0 10px;
+  color: #8fa5bc;
+  font-size: 12px;
+}
+
 .search-input-wrap {
   position: relative;
 }
@@ -505,6 +527,72 @@ h2 {
   line-height: 1.45;
 }
 
+.backtest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.backtest-state {
+  border-radius: 999px;
+  border: 1px solid rgba(87, 163, 255, 0.55);
+  background: rgba(87, 163, 255, 0.15);
+  color: #cde6ff;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.backtest-error {
+  margin: 0 0 10px;
+  color: #ffd2dc;
+  background: rgba(255, 90, 118, 0.2);
+  border: 1px solid rgba(255, 90, 118, 0.45);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.backtest-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.backtest-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(87, 163, 255, 0.25);
+  border-radius: 10px;
+}
+
+.backtest-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.backtest-table th,
+.backtest-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(87, 163, 255, 0.2);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.backtest-table thead th {
+  color: #9fb5cc;
+  font-weight: 600;
+  background: rgba(16, 31, 47, 0.82);
+}
+
+.backtest-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .timing-box {
   border: 1px solid rgba(87, 163, 255, 0.4);
   background: rgba(18, 39, 59, 0.7);
@@ -583,6 +671,15 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .backtest-controls {
+    margin-top: -4px;
+    grid-template-columns: 1fr;
+  }
+
+  .backtest-controls p {
+    margin: 0;
+  }
+
   .score-grid {
     grid-template-columns: 1fr;
   }
@@ -609,6 +706,10 @@ h2 {
   }
 
   .plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .backtest-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

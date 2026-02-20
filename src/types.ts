@@ -142,3 +142,61 @@ export interface MultiAnalysisResponse {
   };
   warnings: string[];
 }
+
+export type BacktestOutcome = "WIN" | "LOSS" | "FLAT";
+export type BacktestExitReason = "TARGET" | "STOP" | "TIMEOUT";
+
+export interface BacktestTrade {
+  entryTime: string;
+  exitTime: string;
+  entryPrice: number;
+  exitPrice: number;
+  stopPrice: number;
+  targetPrice: number;
+  holdBars: number;
+  returnPercent: number;
+  rMultiple: number;
+  outcome: BacktestOutcome;
+  exitReason: BacktestExitReason;
+}
+
+export interface BacktestPeriodMetrics {
+  label: string;
+  bars: number;
+  tradeCount: number;
+  winRate: number | null;
+  avgReturnPercent: number | null;
+  avgRMultiple: number | null;
+  profitFactor: number | null;
+  expectancyR: number | null;
+  maxDrawdownPercent: number | null;
+}
+
+export interface BacktestSummary {
+  tradeCount: number;
+  winRate: number | null;
+  avgReturnPercent: number | null;
+  avgRMultiple: number | null;
+  profitFactor: number | null;
+  expectancyR: number | null;
+  maxDrawdownPercent: number | null;
+}
+
+export interface BacktestResponse {
+  meta: {
+    input: string;
+    symbol: string;
+    name: string;
+    market: string;
+    asOf: string;
+    source: "KIS";
+    cacheTtlSec: number;
+    candleCount: number;
+    holdBars: number;
+    signalOverall: Overall;
+  };
+  summary: BacktestSummary;
+  periods: BacktestPeriodMetrics[];
+  trades: BacktestTrade[];
+  warnings: string[];
+}
