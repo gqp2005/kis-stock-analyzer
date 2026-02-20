@@ -87,6 +87,25 @@ const ensureMinCandles = (
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
+const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAnalysis => ({
+  ...analysis,
+  candles: analysis.candles.slice(-count),
+  indicators: {
+    ma: {
+      ...analysis.indicators.ma,
+      ma1: analysis.indicators.ma.ma1.slice(-count),
+      ma2: analysis.indicators.ma.ma2.slice(-count),
+      ma3: analysis.indicators.ma.ma3.slice(-count),
+    },
+    rsi14: analysis.indicators.rsi14.slice(-count),
+    bb: {
+      upper: analysis.indicators.bb.upper.slice(-count),
+      mid: analysis.indicators.bb.mid.slice(-count),
+      lower: analysis.indicators.bb.lower.slice(-count),
+    },
+  },
+});
+
 const safeFetchTf = async (
   context: { env: Env; cache: Cache; symbol: string },
   tf: Timeframe,
@@ -128,7 +147,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const ttlSec = analysisTtlByTf(tfParam);
     const cache = await caches.open("kis-analyzer-cache-v3");
-    const cacheKey = `https://cache.local/analysis/v4?code=${encodeURIComponent(
+    const cacheKey = `https://cache.local/analysis/v5?code=${encodeURIComponent(
       resolved.code,
     )}&tf=${tfParam}&count=${dayCount}&src=${useResampledHigherTf ? "resample" : "kis"}`;
 
@@ -196,28 +215,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const timeframes: MultiAnalysisPayload["timeframes"] = {
         month: monthAnalysis
-          ? {
-              ...monthAnalysis,
-              candles: monthAnalysis.candles.slice(-visibleCount("month", dayCount)),
-            }
+          ? sliceAnalysis(monthAnalysis, visibleCount("month", dayCount))
           : null,
         week: weekAnalysis
-          ? {
-              ...weekAnalysis,
-              candles: weekAnalysis.candles.slice(-visibleCount("week", dayCount)),
-            }
+          ? sliceAnalysis(weekAnalysis, visibleCount("week", dayCount))
           : null,
         day: dayAnalysis
-          ? {
-              ...dayAnalysis,
-              candles: dayAnalysis.candles.slice(-visibleCount("day", dayCount)),
-            }
+          ? sliceAnalysis(dayAnalysis, visibleCount("day", dayCount))
           : null,
         min15: min15Analysis
-          ? {
-              ...min15Analysis,
-              candles: min15Analysis.candles.slice(-visibleCount("min15", dayCount)),
-            }
+          ? sliceAnalysis(min15Analysis, visibleCount("min15", dayCount))
           : null,
       };
       warnings.push(
@@ -274,12 +281,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const minCount = singleTfCount(tf, dayCount);
     const fetched = await fetchTimeframeCandles(context.env, cache, resolved.code, tf, minCount);
     const candlesForAnalysis = fetched.candles.slice(-Math.max(minCount, 140));
-    const candlesForChart = candlesForAnalysis.slice(-visibleCount(tf, dayCount));
     if (candlesForAnalysis.length < (tf === "min15" ? 40 : 70)) {
       return badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`);
     }
 
     const analysis = analyzeTimeframe(tf, candlesForAnalysis);
+    const chartCount = visibleCount(tf, dayCount);
+    const analysisForChart = sliceAnalysis(analysis, chartCount);
     const payload: AnalysisPayload = {
       meta: {
         input,
@@ -289,17 +297,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         asOf: nowIsoKst(),
         source: "KIS",
         cacheTtlSec: ttlSec,
-        candleCount: candlesForChart.length,
-        summaryText: analysis.summaryText,
+        candleCount: analysisForChart.candles.length,
+        summaryText: analysisForChart.summaryText,
         tf,
       },
-      scores: analysis.scores,
-      signals: analysis.signals,
-      reasons: analysis.reasons.slice(0, 6),
-      levels: analysis.levels,
-      candles: candlesForChart,
-      regime: analysis.regime,
-      timing: analysis.timing ?? null,
+      scores: analysisForChart.scores,
+      signals: analysisForChart.signals,
+      reasons: analysisForChart.reasons.slice(0, 6),
+      levels: analysisForChart.levels,
+      indicators: analysisForChart.indicators,
+      candles: analysisForChart.candles,
+      regime: analysisForChart.regime,
+      timing: analysisForChart.timing ?? null,
     };
 
     await putCachedJson(cache, cacheKey, payload, ttlSec);

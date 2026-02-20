@@ -1,7 +1,21 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ColorType, LineStyle, createChart, type Time } from "lightweight-charts";
+import {
+  ColorType,
+  LineStyle,
+  createChart,
+  type LineData,
+  type LogicalRange,
+  type Time,
+  type WhitespaceData,
+} from "lightweight-charts";
 import stockMap from "../data/kr-stocks.json";
-import type { MultiAnalysisResponse, Overall, Timeframe, TimeframeAnalysis } from "./types";
+import type {
+  IndicatorPoint,
+  MultiAnalysisResponse,
+  Overall,
+  Timeframe,
+  TimeframeAnalysis,
+} from "./types";
 
 interface StockLookup {
   code: string;
@@ -23,6 +37,12 @@ const overallClass = (overall: Overall): string => {
   if (overall === "GOOD") return "badge good";
   if (overall === "NEUTRAL") return "badge neutral";
   return "badge caution";
+};
+
+const overallLabel = (overall: Overall): string => {
+  if (overall === "GOOD") return "양호";
+  if (overall === "NEUTRAL") return "중립";
+  return "주의";
 };
 
 const confidenceClass = (confidence: number): string => {
@@ -51,6 +71,18 @@ const toChartTime = (value: string): Time => {
 const pickDefaultTf = (payload: MultiAnalysisResponse): Timeframe =>
   TF_FALLBACK_ORDER.find((tf) => payload.timeframes[tf] !== null) ?? "day";
 
+const toLineData = (points: IndicatorPoint[]): Array<LineData<Time> | WhitespaceData<Time>> =>
+  points.map((point) =>
+    point.value == null ? { time: toChartTime(point.time) } : { time: toChartTime(point.time), value: point.value },
+  );
+
+const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null => {
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    if (points[i].value != null) return points[i];
+  }
+  return null;
+};
+
 export default function App() {
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
@@ -59,8 +91,12 @@ export default function App() {
   const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showMa1, setShowMa1] = useState(true);
+  const [showMa2, setShowMa2] = useState(true);
+  const [showMa3, setShowMa3] = useState(false);
 
-  const chartRef = useRef<HTMLDivElement | null>(null);
+  const priceChartRef = useRef<HTMLDivElement | null>(null);
+  const rsiChartRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
@@ -139,13 +175,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!chartRef.current || !result) return;
+    if (!priceChartRef.current || !result) return;
     const active = result.timeframes[activeTf];
     if (!active || active.candles.length === 0) return;
 
-    const container = chartRef.current;
-    const chart = createChart(container, {
-      width: container.clientWidth,
+    const mainContainer = priceChartRef.current;
+    const mainChart = createChart(mainContainer, {
+      width: mainContainer.clientWidth,
       height: 420,
       layout: {
         background: { type: ColorType.Solid, color: "#0f1722" },
@@ -165,14 +201,13 @@ export default function App() {
       },
     });
 
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = mainChart.addCandlestickSeries({
       upColor: "#00b386",
       downColor: "#ff5a76",
       borderVisible: false,
       wickUpColor: "#00b386",
       wickDownColor: "#ff5a76",
     });
-
     candleSeries.setData(
       active.candles.map((c) => ({
         time: toChartTime(c.time),
@@ -182,6 +217,52 @@ export default function App() {
         close: c.close,
       })),
     );
+
+    const showMaOverlay = activeTf !== "min15";
+    if (showMaOverlay) {
+      const maDefs = [
+        {
+          enabled: showMa1,
+          series: active.indicators.ma.ma1,
+          period: active.indicators.ma.ma1Period,
+          color: "#ffcc66",
+        },
+        {
+          enabled: showMa2,
+          series: active.indicators.ma.ma2,
+          period: active.indicators.ma.ma2Period,
+          color: "#57a3ff",
+        },
+        {
+          enabled: showMa3 && active.indicators.ma.ma3Period != null,
+          series: active.indicators.ma.ma3,
+          period: active.indicators.ma.ma3Period ?? 0,
+          color: "#c792ea",
+        },
+      ];
+
+      for (const ma of maDefs) {
+        if (!ma.enabled) continue;
+        const maSeries = mainChart.addLineSeries({
+          color: ma.color,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        maSeries.setData(toLineData(ma.series));
+        const last = findLastIndicatorPoint(ma.series);
+        if (last?.value != null) {
+          maSeries.createPriceLine({
+            price: last.value,
+            color: ma.color,
+            lineStyle: LineStyle.Solid,
+            lineVisible: false,
+            axisLabelVisible: true,
+            title: `MA${ma.period} ${last.value.toFixed(2)}`,
+          });
+        }
+      }
+    }
 
     if (active.levels.support != null) {
       candleSeries.createPriceLine({
@@ -204,7 +285,7 @@ export default function App() {
       });
     }
 
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = mainChart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "",
       lastValueVisible: false,
@@ -221,15 +302,114 @@ export default function App() {
       })),
     );
 
-    const onResize = () => chart.applyOptions({ width: container.clientWidth });
+    const rsiPoints = active.indicators.rsi14;
+    const hasRsi = rsiPoints.some((point) => point.value != null);
+    let rsiChart: ReturnType<typeof createChart> | null = null;
+    let onMainRangeChange: ((range: LogicalRange | null) => void) | null = null;
+
+    if (hasRsi && rsiChartRef.current) {
+      const rsiContainer = rsiChartRef.current;
+      rsiChart = createChart(rsiContainer, {
+        width: rsiContainer.clientWidth,
+        height: 180,
+        layout: {
+          background: { type: ColorType.Solid, color: "#0f1722" },
+          textColor: "#9fb2c7",
+        },
+        grid: {
+          vertLines: { color: "#1e2d3f" },
+          horzLines: { color: "#1e2d3f" },
+        },
+        rightPriceScale: {
+          borderColor: "#30445a",
+        },
+        timeScale: {
+          borderColor: "#30445a",
+          timeVisible: activeTf === "min15",
+          secondsVisible: false,
+        },
+      });
+
+      const rsiSeries = rsiChart.addLineSeries({
+        color: "#7ee787",
+        lineWidth: 2,
+      });
+      rsiSeries.setData(toLineData(rsiPoints));
+      rsiSeries.createPriceLine({
+        price: 70,
+        color: "rgba(255,90,118,0.7)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "70",
+      });
+      rsiSeries.createPriceLine({
+        price: 50,
+        color: "rgba(159,178,199,0.75)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: "50",
+      });
+      rsiSeries.createPriceLine({
+        price: 30,
+        color: "rgba(87,163,255,0.75)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "30",
+      });
+
+      const lastRsi = findLastIndicatorPoint(rsiPoints);
+      if (lastRsi?.value != null) {
+        rsiSeries.createPriceLine({
+          price: lastRsi.value,
+          color: "#7ee787",
+          lineStyle: LineStyle.Solid,
+          lineVisible: false,
+          axisLabelVisible: true,
+          title: `RSI ${lastRsi.value.toFixed(2)}`,
+        });
+      }
+
+      onMainRangeChange = (range) => {
+        if (!range) return;
+        rsiChart?.timeScale().setVisibleLogicalRange(range);
+      };
+      mainChart.timeScale().subscribeVisibleLogicalRangeChange(onMainRangeChange);
+      mainChart.timeScale().fitContent();
+      rsiChart.timeScale().fitContent();
+    } else if (rsiChartRef.current) {
+      rsiChartRef.current.innerHTML = "";
+    }
+
+    const onResize = () => {
+      mainChart.applyOptions({ width: mainContainer.clientWidth });
+      if (rsiChart && rsiChartRef.current) {
+        rsiChart.applyOptions({ width: rsiChartRef.current.clientWidth });
+      }
+    };
     window.addEventListener("resize", onResize);
+
     return () => {
       window.removeEventListener("resize", onResize);
-      chart.remove();
+      if (onMainRangeChange) {
+        mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRangeChange);
+      }
+      rsiChart?.remove();
+      mainChart.remove();
     };
-  }, [result, activeTf]);
+  }, [result, activeTf, showMa1, showMa2, showMa3]);
 
   const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
+  const maInfo = activeAnalysis?.indicators.ma ?? null;
+  const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
+  const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
+  const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
+  const rsiDisabledMessage =
+    activeTf === "min15"
+      ? "15분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
+      : "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
 
   return (
     <div className="page">
@@ -298,9 +478,11 @@ export default function App() {
               </div>
               <div className="summary-right">
                 <div className="final-badges">
-                  <span className={overallClass(result.final.overall)}>{result.final.overall}</span>
+                  <span className={overallClass(result.final.overall)}>
+                    {overallLabel(result.final.overall)}
+                  </span>
                   <span className={confidenceClass(result.final.confidence)}>
-                    confidence {result.final.confidence}
+                    신뢰도 {result.final.confidence}
                   </span>
                 </div>
                 <p className="summary-text">{result.final.summary}</p>
@@ -336,15 +518,15 @@ export default function App() {
               <>
                 <div className="score-grid">
                   <article className={scoreClass(activeAnalysis.scores.trend)}>
-                    <h3>Trend</h3>
+                    <h3>추세</h3>
                     <strong>{activeAnalysis.scores.trend}</strong>
                   </article>
                   <article className={scoreClass(activeAnalysis.scores.momentum)}>
-                    <h3>Momentum</h3>
+                    <h3>모멘텀</h3>
                     <strong>{activeAnalysis.scores.momentum}</strong>
                   </article>
                   <article className={scoreClass(activeAnalysis.scores.risk)}>
-                    <h3>Risk</h3>
+                    <h3>위험도</h3>
                     <strong>{activeAnalysis.scores.risk}</strong>
                   </article>
                 </div>
@@ -379,7 +561,51 @@ export default function App() {
 
                 <div className="card">
                   <h3>OHLCV Chart ({TF_LABEL[activeTf]})</h3>
-                  <div ref={chartRef} className="chart" />
+                  {maInfo && activeTf !== "min15" && (
+                    <div className="indicator-controls">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showMa1}
+                          onChange={(e) => setShowMa1(e.target.checked)}
+                        />
+                        MA{maInfo.ma1Period}
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showMa2}
+                          onChange={(e) => setShowMa2(e.target.checked)}
+                        />
+                        MA{maInfo.ma2Period}
+                      </label>
+                      {maInfo.ma3Period != null && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={showMa3}
+                            onChange={(e) => setShowMa3(e.target.checked)}
+                          />
+                          MA{maInfo.ma3Period}
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  <div ref={priceChartRef} className="chart" />
+                </div>
+
+                <div className="card">
+                  <div className="rsi-header">
+                    <h3>RSI(14) 패널</h3>
+                    <span className="rsi-badge">
+                      RSI {activeRsiLast?.value != null ? activeRsiLast.value.toFixed(2) : "-"}
+                    </span>
+                  </div>
+                  {hasRsiPanel ? (
+                    <div ref={rsiChartRef} className="rsi-chart" />
+                  ) : (
+                    <p className="rsi-empty">{rsiDisabledMessage}</p>
+                  )}
                 </div>
               </>
             )}

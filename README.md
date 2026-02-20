@@ -104,6 +104,8 @@ npm run cf:dev
   - `day`만 가능하면 final은 day 기반으로 계산
   - `min15`가 없으면 `timing=null` + warnings에 비활성 안내 추가
 - `timeframes.month/week/day/min15`는 데이터 부족 시 `null`일 수 있음
+- 각 TF 결과에는 `indicators`(MA/RSI/BB 시계열) 포함:
+  - `indicators.ma`(기간/시계열), `indicators.rsi14`, `indicators.bb`
 - `tf=day|week|month|min15`는 단일 TF 분석 응답(기존 day 응답 호환) 반환
 
 ## 데이터 수집 로직

@@ -1,6 +1,8 @@
 import { atr, bollingerBands, rsi, sma } from "./indicators";
 import type {
   Candle,
+  IndicatorPoint,
+  IndicatorSeries,
   IndicatorLevels,
   Overall,
   Regime,
@@ -225,6 +227,12 @@ const regimeFromTrend = (trend: number): Regime => {
   return "DOWN";
 };
 
+const toIndicatorPoints = (candles: Candle[], values: Array<number | null>): IndicatorPoint[] =>
+  candles.map((candle, index) => ({
+    time: candle.time,
+    value: round2(values[index] ?? null),
+  }));
+
 const downgradeOverall = (overall: Overall): Overall => {
   if (overall === "GOOD") return "NEUTRAL";
   if (overall === "NEUTRAL") return "CAUTION";
@@ -405,6 +413,23 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     resistance: round2(sr.resistance),
   };
 
+  const indicators: IndicatorSeries = {
+    ma: {
+      ma1Period: config.maFast,
+      ma2Period: config.maMid,
+      ma3Period: config.maLong ?? null,
+      ma1: toIndicatorPoints(candles, maFastSeries),
+      ma2: toIndicatorPoints(candles, maMidSeries),
+      ma3: toIndicatorPoints(candles, maLongSeries),
+    },
+    rsi14: toIndicatorPoints(candles, rsi14Series),
+    bb: {
+      upper: toIndicatorPoints(candles, bb.upper),
+      mid: toIndicatorPoints(candles, bb.mid),
+      lower: toIndicatorPoints(candles, bb.lower),
+    },
+  };
+
   const signals: Signals = {
     trend: {
       closeAboveMid,
@@ -438,6 +463,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     signals,
     reasons: reasons.slice(0, 6),
     levels,
+    indicators,
     candles,
   };
 };
@@ -519,6 +545,8 @@ export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAna
 };
 
 export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAnalysis => {
+  const nullPoints = candles.map((candle) => ({ time: candle.time, value: null }));
+
   const nullLevels: IndicatorLevels = {
     ma20: null,
     maFast: null,
@@ -575,6 +603,22 @@ export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAna
     signals: emptySignals,
     reasons: ["15분봉은 장중/당일 데이터가 없어서 비활성"],
     levels: nullLevels,
+    indicators: {
+      ma: {
+        ma1Period: 20,
+        ma2Period: 60,
+        ma3Period: null,
+        ma1: [...nullPoints],
+        ma2: [...nullPoints],
+        ma3: [...nullPoints],
+      },
+      rsi14: [...nullPoints],
+      bb: {
+        upper: [...nullPoints],
+        mid: [...nullPoints],
+        lower: [...nullPoints],
+      },
+    },
     candles,
     timing: null,
   };

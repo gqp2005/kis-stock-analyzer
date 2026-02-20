@@ -18,6 +18,28 @@ export interface Scores {
   overall: Overall;
 }
 
+export interface IndicatorPoint {
+  time: string;
+  value: number | null;
+}
+
+export interface IndicatorSeries {
+  ma: {
+    ma1Period: number;
+    ma2Period: number;
+    ma3Period: number | null;
+    ma1: IndicatorPoint[];
+    ma2: IndicatorPoint[];
+    ma3: IndicatorPoint[];
+  };
+  rsi14: IndicatorPoint[];
+  bb: {
+    upper: IndicatorPoint[];
+    mid: IndicatorPoint[];
+    lower: IndicatorPoint[];
+  };
+}
+
 export interface TimingInfo {
   timingScore: number;
   timingLabel: "타이밍 양호" | "관망/조건부" | "진입 비추";
@@ -47,6 +69,7 @@ export interface TimeframeAnalysis {
     support: number | null;
     resistance: number | null;
   };
+  indicators: IndicatorSeries;
   candles: Candle[];
   timing?: TimingInfo | null;
 }

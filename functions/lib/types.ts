@@ -36,6 +36,28 @@ export interface IndicatorLevels {
   resistance: number | null;
 }
 
+export interface IndicatorPoint {
+  time: string;
+  value: number | null;
+}
+
+export interface IndicatorSeries {
+  ma: {
+    ma1Period: number;
+    ma2Period: number;
+    ma3Period: number | null;
+    ma1: IndicatorPoint[];
+    ma2: IndicatorPoint[];
+    ma3: IndicatorPoint[];
+  };
+  rsi14: IndicatorPoint[];
+  bb: {
+    upper: IndicatorPoint[];
+    mid: IndicatorPoint[];
+    lower: IndicatorPoint[];
+  };
+}
+
 export interface Scores {
   trend: number;
   momentum: number;
@@ -82,6 +104,7 @@ export interface TimeframeAnalysis {
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
+  indicators: IndicatorSeries;
   candles: Candle[];
   timing?: TimingInfo | null;
 }
@@ -103,6 +126,7 @@ export interface AnalysisPayload {
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
+  indicators: IndicatorSeries;
   candles: Candle[];
   regime: Regime;
   timing?: TimingInfo | null;
