@@ -109,7 +109,14 @@ describe("/api/analysis multi fallback", () => {
     expect(body.timeframes.day).not.toBeNull();
     expect(body.timeframes.min15).not.toBeNull();
     expect(body.timeframes.min15?.timing ?? null).toBeNull();
-    expect(body.warnings.some((w) => w.includes("15분봉은 장중/당일 데이터가 없어서 비활성"))).toBe(true);
+    expect(
+      body.warnings.some(
+        (w) =>
+          w.includes("15분봉은 장중/당일 데이터가 없어서 비활성") ||
+          w.includes("15분봉은 장중 데이터 기반이라 현재 시간에는 비활성") ||
+          w.includes("15분봉은 API 제약/당일 데이터 부족으로 비활성"),
+      ),
+    ).toBe(true);
     expect(typeof body.final.overall).toBe("string");
   });
 

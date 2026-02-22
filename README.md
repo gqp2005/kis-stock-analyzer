@@ -257,6 +257,8 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - `min15`:
   - KIS `inquire-time-itemchartprice`(주식당일분봉조회)로 당일 분봉 수집
   - 서버에서 15분봉으로 리샘플링(OHLCV/Volume 집계)
+  - 정규장 외 시간에는 분봉 호출을 생략하고 비활성 처리
+  - KIS 분봉 호출 제한(EGW00201) 발생 시 전체 분석 실패 없이 비활성 처리
 
 제약:
 - `min15`는 KIS 제약상 **당일 분봉 기반**입니다.

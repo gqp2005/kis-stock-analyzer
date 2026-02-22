@@ -4,7 +4,7 @@ import {
   resampleDayToMonthCandles,
   resampleDayToWeekCandles,
 } from "../lib/kis";
-import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
+import { isKrxRegularSession, nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { attachMetrics, createRequestMetrics, type RequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
 import {
@@ -87,6 +87,15 @@ const ensureMinCandles = (
 };
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
+
+const isMin15SoftFail = (message: string): boolean => {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("egw00201") ||
+    lower.includes("초당 거래건수") ||
+    lower.includes("당일 분봉 데이터를 받지 못했습니다")
+  );
+};
 
 const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAnalysis => ({
   ...analysis,
@@ -180,7 +189,30 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
       const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
-      const min15Raw = await safeFetchTf(fetchCtx, "min15", TARGET_MULTI.min15, warnings);
+      let min15Raw: { name: string; candles: Candle[]; cacheTtlSec: number } | null = null;
+      let min15DisabledReason: string | null = null;
+
+      if (!isKrxRegularSession()) {
+        min15DisabledReason = "15분봉은 장중 데이터 기반이라 현재 시간에는 비활성입니다.";
+      } else {
+        try {
+          min15Raw = await fetchTimeframeCandles(
+            fetchCtx.env,
+            fetchCtx.cache,
+            fetchCtx.symbol,
+            "min15",
+            TARGET_MULTI.min15,
+            fetchCtx.metrics,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          if (isMin15SoftFail(message)) {
+            min15DisabledReason = "15분봉은 API 제약/당일 데이터 부족으로 비활성입니다.";
+          } else {
+            warnings.push(`min15 조회 실패: ${message}`);
+          }
+        }
+      }
 
       let weekCandlesRaw: Candle[] | null = null;
       let monthCandlesRaw: Candle[] | null = null;
@@ -216,7 +248,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       const monthAnalysis = monthCandles ? analyzeTimeframe("month", monthCandles.slice(-120)) : null;
 
       let min15Analysis: TimeframeAnalysis | null = null;
-      if (!min15Raw || min15Raw.candles.length === 0) {
+      if (min15DisabledReason) {
+        warnings.push(min15DisabledReason);
+        min15Analysis = buildDisabledMin15Analysis([]);
+      } else if (!min15Raw || min15Raw.candles.length === 0) {
         warnings.push("15분봉은 장중/당일 데이터가 없어서 비활성");
         min15Analysis = buildDisabledMin15Analysis([]);
       } else if (min15Raw.candles.length < MIN_MULTI.min15) {
