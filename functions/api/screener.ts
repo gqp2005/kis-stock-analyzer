@@ -49,6 +49,59 @@ const parseCount = (raw: string | null): number => {
   return Math.max(5, Math.min(100, Math.floor(parsed)));
 };
 
+const DEFAULT_AUTO_BOOTSTRAP_BATCH = 20;
+
+const parseBooleanEnv = (raw: string | undefined, fallback: boolean): boolean => {
+  if (raw == null || raw.trim() === "") return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+};
+
+const parseBatchSizeEnv = (raw: string | undefined, fallback: number): number => {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(5, Math.min(120, Math.floor(parsed)));
+};
+
+const kstHourNow = (): number => {
+  const hourText = nowIsoKst().slice(11, 13);
+  const hour = Number(hourText);
+  return Number.isFinite(hour) ? hour : 0;
+};
+
+const triggerAutoBootstrap = async (
+  requestUrl: URL,
+  adminToken: string,
+  batchSize: number,
+): Promise<void> => {
+  try {
+    const adminUrl = new URL(requestUrl.toString());
+    adminUrl.pathname = "/api/admin/rebuild-screener";
+    adminUrl.search = "";
+    adminUrl.searchParams.set("batch", String(batchSize));
+
+    const response = await fetch(adminUrl.toString(), {
+      method: "POST",
+      headers: {
+        "x-admin-token": adminToken,
+      },
+    });
+    const bodyText = await response.text();
+    if (!response.ok && response.status !== 202) {
+      console.log(
+        `[screener-auto-bootstrap-fail] status=${response.status} body=${bodyText.slice(0, 200)}`,
+      );
+      return;
+    }
+    console.log(`[screener-auto-bootstrap] status=${response.status}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    console.log(`[screener-auto-bootstrap-error] ${message}`);
+  }
+};
+
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
 const normalizeProgress = (
@@ -76,6 +129,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const market = parseMarket(url.searchParams.get("market"));
     const strategy = parseStrategy(url.searchParams.get("strategy"));
     const count = parseCount(url.searchParams.get("count"));
+    const autoBootstrapEnabled = parseBooleanEnv(
+      context.env.SCREENER_AUTO_BOOTSTRAP,
+      true,
+    );
+    const autoBootstrapBatch = parseBatchSizeEnv(
+      context.env.SCREENER_AUTO_BOOTSTRAP_BATCH,
+      DEFAULT_AUTO_BOOTSTRAP_BATCH,
+    );
 
     const cache = await caches.open("kis-analyzer-cache-v3");
     const today = nowIsoKst().slice(0, 10);
@@ -89,6 +150,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
     let servedFromPersist = false;
     let rebuildRequired = false;
+    let autoBootstrapTriggered = false;
     const warnings: string[] = [];
 
     if (snapshot) {
@@ -131,6 +193,49 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       if (backend === "none") {
         warnings.push("영속 저장소(KV/D1)가 비활성화되어 캐시 소실 시 결과 복원이 제한됩니다.");
       }
+
+      const progressInProgress =
+        !!progress && progress.universeCount > 0 && progress.cursor < progress.universeCount;
+      const firstBootstrap = !snapshot;
+      const dailyRefreshNeeded = !!snapshot && snapshot.date !== today;
+      const afterDailyRefreshHour = kstHourNow() >= 6;
+      const canTriggerByTime = firstBootstrap || (dailyRefreshNeeded && afterDailyRefreshHour);
+      const canUseAutoBootstrap =
+        autoBootstrapEnabled &&
+        !!context.env.ADMIN_TOKEN &&
+        url.protocol === "https:";
+
+      if (rebuildRequired && !progressInProgress && canTriggerByTime && canUseAutoBootstrap) {
+        autoBootstrapTriggered = true;
+        warnings.push(
+          `오늘 스크리너 스냅샷이 없어 자동 rebuild를 시작했습니다(batch=${autoBootstrapBatch}). 잠시 후 다시 조회해 주세요.`,
+        );
+        context.waitUntil(
+          triggerAutoBootstrap(url, context.env.ADMIN_TOKEN as string, autoBootstrapBatch),
+        );
+      } else if (
+        rebuildRequired &&
+        !progressInProgress &&
+        autoBootstrapEnabled &&
+        !context.env.ADMIN_TOKEN
+      ) {
+        warnings.push("ADMIN_TOKEN이 없어 자동 rebuild를 시작할 수 없습니다.");
+      } else if (
+        rebuildRequired &&
+        !progressInProgress &&
+        autoBootstrapEnabled &&
+        url.protocol !== "https:"
+      ) {
+        warnings.push("HTTP(local) 환경에서는 자동 rebuild가 비활성화됩니다.");
+      } else if (
+        rebuildRequired &&
+        !progressInProgress &&
+        autoBootstrapEnabled &&
+        dailyRefreshNeeded &&
+        !afterDailyRefreshHour
+      ) {
+        warnings.push("06:00 KST 이전이라 자동 daily rebuild를 대기 중입니다.");
+      }
     }
 
     if (!snapshot) {
@@ -171,7 +276,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       };
       return finalize(
         json(emptyPayload, 200, {
-          "x-cache": "MISS",
+          "x-cache": autoBootstrapTriggered ? "MISS-AUTO" : "MISS",
           "cache-control": "public, max-age=30",
         }),
       );
@@ -265,6 +370,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       json(payload, 200, {
         "x-cache": servedFromPersist
           ? "PERSIST"
+          : autoBootstrapTriggered
+            ? "STALE-AUTO"
           : snapshot.date === today
             ? "HIT"
             : "STALE",

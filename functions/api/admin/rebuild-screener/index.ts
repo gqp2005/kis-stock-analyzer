@@ -548,7 +548,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const url = new URL(context.request.url);
   const alertOptions = parseAlertOptions(url);
-  const token = url.searchParams.get("token") ?? context.request.headers.get("x-admin-token");
+  const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
   }

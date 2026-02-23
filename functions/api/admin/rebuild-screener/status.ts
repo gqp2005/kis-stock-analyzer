@@ -55,7 +55,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const finalize = (response: Response): Response => attachMetrics(response, metrics);
 
   const url = new URL(context.request.url);
-  const token = url.searchParams.get("token") ?? context.request.headers.get("x-admin-token");
+  const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
   }

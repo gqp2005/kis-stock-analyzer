@@ -97,6 +97,8 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `RATE_LIMIT_MAX_REQUESTS` (선택, 기본 `120`)
 - `RATE_LIMIT_WINDOW_SEC` (선택, 기본 `60`)
 - `ADMIN_TOKEN` (선택, `/api/admin/rebuild-screener` 보호용)
+- `SCREENER_AUTO_BOOTSTRAP` (선택, 기본 `true`)
+- `SCREENER_AUTO_BOOTSTRAP_BATCH` (선택, 기본 `20`)
 - `SCREENER_KV` (선택, KV 바인딩명)
 - `SCREENER_DB` (선택, D1 바인딩명)
 
@@ -106,6 +108,10 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `KIS_BASE_URL`은 KIS 도메인(`openapi*.koreainvestment.com`)만 사용하세요. 잘못된 값이면 서버가 기본 KIS URL로 폴백합니다.
 - `SCREENER_KV`/`SCREENER_DB`는 문자열 env가 아니라 Cloudflare Pages의 Binding으로 연결합니다.
   - 둘 다 없으면 스크리너는 Cache API만 사용하며, 캐시 소실 시 히스토리/마지막 성공 복원이 제한됩니다.
+- 자동 부트스트랩 동작:
+  - `SCREENER_AUTO_BOOTSTRAP=true` + `ADMIN_TOKEN` 설정 시
+  - `/api/screener`가 오늘 스냅샷 미존재를 감지하면 백그라운드로 자동 rebuild를 시작합니다.
+  - 일일 갱신은 기본적으로 GitHub Actions `06:00 KST` 스케줄이 담당합니다.
 
 ## 로컬 실행
 
@@ -167,6 +173,10 @@ npm run cf:dev
   1. Cache API `last_success`
   2. 영속 저장소(KV/D1) `snapshot:date:YYYY-MM-DD`
   3. 영속 저장소(KV/D1) `snapshot:last_success`
+- 자동 실행:
+  - 첫 기동/초기 빈 상태에서 `/api/screener` 조회 시 자동 1회 bootstrap 실행 가능
+  - 조건: `SCREENER_AUTO_BOOTSTRAP=true`, `ADMIN_TOKEN` 설정, HTTPS 환경
+  - 일일 갱신 누락 시(오늘 스냅샷 없음) 06:00 KST 이후 첫 조회에서 자동 재시도
 - 주의:
   - UI/문구는 후보/시그널 참고용이며 매수 추천/수익 보장을 의미하지 않습니다.
 
