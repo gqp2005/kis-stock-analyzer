@@ -12,6 +12,7 @@ import {
   REBUILD_LOCK_TTL_SEC,
   SCREENER_CACHE_TTL_SEC,
   type RebuildFailureItem,
+  type AlertStateSnapshot,
   type RebuildProgressSnapshot,
   type ScreenerChangeSummary,
   type ScreenerSnapshot,
@@ -20,11 +21,21 @@ import {
   type UniverseSnapshot,
   rebuildLockKey,
   rebuildProgressKey,
+  persistAlertStateKey,
+  persistChangeHistoryKey,
+  persistFailureHistoryKey,
+  persistScreenerDateKey,
+  persistScreenerLastSuccessKey,
   screenerDateKey,
   screenerLastSuccessKey,
   universeDateKey,
   universeLastSuccessKey,
 } from "../../../lib/screenerStore";
+import {
+  getPersistedJson,
+  persistenceBackend,
+  putPersistedJson,
+} from "../../../lib/screenerPersistence";
 import { ExternalProvider, StaticProvider } from "../../../lib/universe";
 import type { Env } from "../../../lib/types";
 
@@ -37,6 +48,12 @@ const ITEM_MAX_RETRIES = 2;
 const LOCK_STALE_SEC = 5 * 60;
 const MAX_FAILED_ITEMS_KEEP = 40;
 const CHANGE_BASIS_TOP_N = 30;
+const PERSIST_HISTORY_TTL_SEC = 180 * 24 * 60 * 60; // 180d
+const ALERT_STATE_TTL_SEC = 365 * 24 * 60 * 60; // 365d
+const ALERT_DEFAULT_TOP_N = 5;
+const ALERT_DEFAULT_MIN_SCORE = 80;
+const ALERT_DEFAULT_MIN_DELTA = 5;
+const ALERT_DEFAULT_COOLDOWN_DAYS = 2;
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
@@ -80,6 +97,31 @@ const parseBatchSize = (url: URL): number => {
   if (!Number.isFinite(raw)) return DEFAULT_BATCH_SIZE;
   return Math.max(5, Math.min(MAX_BATCH_SIZE, Math.floor(raw)));
 };
+
+const parsePositiveInt = (raw: string | null, fallback: number, min: number, max: number): number => {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+interface AlertOptions {
+  topN: number;
+  minScore: number;
+  minRankDelta: number;
+  cooldownDays: number;
+}
+
+const parseAlertOptions = (url: URL): AlertOptions => ({
+  topN: parsePositiveInt(url.searchParams.get("alertTopN"), ALERT_DEFAULT_TOP_N, 1, 20),
+  minScore: parsePositiveInt(url.searchParams.get("alertMinScore"), ALERT_DEFAULT_MIN_SCORE, 40, 100),
+  minRankDelta: parsePositiveInt(url.searchParams.get("alertMinDelta"), ALERT_DEFAULT_MIN_DELTA, 1, 30),
+  cooldownDays: parsePositiveInt(
+    url.searchParams.get("alertCooldownDays"),
+    ALERT_DEFAULT_COOLDOWN_DAYS,
+    1,
+    14,
+  ),
+});
 
 const parseTimeMs = (iso: string | undefined): number => {
   if (!iso) return 0;
@@ -340,11 +382,172 @@ const buildTuningSummary = (candidates: ScreenerStoredCandidate[]): ScreenerTuni
   };
 };
 
+type AlertKind = "added" | "riser" | "faller";
+
+interface AlertItem {
+  kind: AlertKind;
+  code: string;
+  name: string;
+  market: string;
+  score: number;
+  confidence: number;
+  prevRank: number | null;
+  currRank: number | null;
+  deltaRank: number | null;
+}
+
+interface AlertPayload {
+  generatedAt: string;
+  options: AlertOptions;
+  backend: "kv" | "d1" | "none";
+  eligible: {
+    added: AlertItem[];
+    risers: AlertItem[];
+    fallers: AlertItem[];
+  };
+  skippedRecent: AlertItem[];
+  sentCount: number;
+  skippedCount: number;
+}
+
+const toAlertItems = (
+  kind: AlertKind,
+  items: Array<{
+    code: string;
+    name: string;
+    market: string;
+    score: number;
+    confidence: number;
+    prevRank: number | null;
+    currRank: number | null;
+    deltaRank: number | null;
+  }>,
+): AlertItem[] =>
+  items.map((item) => ({
+    kind,
+    code: item.code,
+    name: item.name,
+    market: item.market,
+    score: item.score,
+    confidence: item.confidence,
+    prevRank: item.prevRank,
+    currRank: item.currRank,
+    deltaRank: item.deltaRank,
+  }));
+
+const cooldownMs = (days: number): number => days * 24 * 60 * 60 * 1000;
+
+const isRecentAlert = (
+  sentAt: string | undefined,
+  cooldownDays: number,
+): boolean => {
+  if (!sentAt) return false;
+  const ts = Date.parse(sentAt);
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts < cooldownMs(cooldownDays);
+};
+
+const buildAlertCandidates = (
+  changeSummary: ScreenerChangeSummary | null,
+  options: AlertOptions,
+): AlertItem[] => {
+  if (!changeSummary) return [];
+
+  const added = toAlertItems(
+    "added",
+    changeSummary.added
+      .filter((item) => item.score >= options.minScore)
+      .slice(0, options.topN),
+  );
+
+  const risers = toAlertItems(
+    "riser",
+    changeSummary.risers
+      .filter(
+        (item) =>
+          item.score >= options.minScore &&
+          Math.abs(item.deltaRank ?? 0) >= options.minRankDelta,
+      )
+      .slice(0, options.topN),
+  );
+
+  const fallers = toAlertItems(
+    "faller",
+    changeSummary.fallers
+      .filter(
+        (item) =>
+          item.score >= options.minScore &&
+          Math.abs(item.deltaRank ?? 0) >= options.minRankDelta,
+      )
+      .slice(0, options.topN),
+  );
+
+  return [...added, ...risers, ...fallers];
+};
+
+const applyAlertCooldown = async (
+  env: Env,
+  options: AlertOptions,
+  candidates: AlertItem[],
+): Promise<AlertPayload> => {
+  const backend = persistenceBackend(env);
+  const state = (await getPersistedJson<AlertStateSnapshot>(
+    env,
+    persistAlertStateKey(),
+  )) ?? {
+    updatedAt: nowIsoKst(),
+    sent: {},
+  };
+
+  const eligible: AlertItem[] = [];
+  const skippedRecent: AlertItem[] = [];
+  const sentState = { ...state.sent };
+  const sentAt = nowIsoKst();
+
+  for (const item of candidates) {
+    const stateKey = `${item.kind}:${item.code}`;
+    const lastSent = sentState[stateKey]?.sentAt;
+    if (isRecentAlert(lastSent, options.cooldownDays)) {
+      skippedRecent.push(item);
+      continue;
+    }
+    eligible.push(item);
+    sentState[stateKey] = { sentAt };
+  }
+
+  if (backend !== "none") {
+    await putPersistedJson(
+      env,
+      persistAlertStateKey(),
+      {
+        updatedAt: sentAt,
+        sent: sentState,
+      } satisfies AlertStateSnapshot,
+      ALERT_STATE_TTL_SEC,
+    );
+  }
+
+  return {
+    generatedAt: sentAt,
+    options,
+    backend,
+    eligible: {
+      added: eligible.filter((item) => item.kind === "added"),
+      risers: eligible.filter((item) => item.kind === "riser"),
+      fallers: eligible.filter((item) => item.kind === "faller"),
+    },
+    skippedRecent,
+    sentCount: eligible.length,
+    skippedCount: skippedRecent.length,
+  };
+};
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const metrics = createRequestMetrics(context.request);
   const finalize = (response: Response): Response => attachMetrics(response, metrics);
 
   const url = new URL(context.request.url);
+  const alertOptions = parseAlertOptions(url);
   const token = url.searchParams.get("token") ?? context.request.headers.get("x-admin-token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
@@ -352,6 +555,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const cache = await caches.open("kis-analyzer-cache-v3");
   const date = nowIsoKst().slice(0, 10);
+  const persistBackend = persistenceBackend(context.env);
   const progressKey = rebuildProgressKey(date);
   const lockKey = rebuildLockKey();
   const lockReq = new Request(lockKey);
@@ -371,6 +575,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             count: progress?.universeCount ?? TARGET_UNIVERSE,
             cacheHit: true,
           },
+          storage: {
+            backend: persistBackend,
+            enabled: persistBackend !== "none",
+          },
+          alertOptions,
           progress: progress
             ? {
                 processed: progress.cursor,
@@ -452,6 +661,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             ...universeLoad.providerWarnings,
             ...universeLoad.snapshot.warnings,
             ...benchmarkWarnings,
+            persistBackend === "none"
+              ? "영속 저장소(KV/D1)가 없어 Cache API만 사용합니다."
+              : "",
           ]);
 
     const start = Math.max(0, Math.min(progress.cursor, universe.length));
@@ -603,6 +815,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
               count: universe.length,
               cacheHit: universeLoad.cacheHit,
             },
+            storage: {
+              backend: persistBackend,
+              enabled: persistBackend !== "none",
+            },
+            alertOptions,
             progress: {
               processed: progress.cursor,
               total: universe.length,
@@ -631,13 +848,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     const candidates = sortByAllScore(progress.candidates);
-    const previousSnapshot = await getCachedJson<ScreenerSnapshot>(
-      cache,
-      screenerLastSuccessKey(),
-    );
+    const previousSnapshot =
+      (await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey())) ??
+      (await getPersistedJson<ScreenerSnapshot>(context.env, persistScreenerLastSuccessKey()));
     const changeSummary = buildChangeSummary(previousSnapshot ?? null, candidates);
     const rsSummary = buildRsSummary(candidates);
     const tuningSummary = buildTuningSummary(candidates);
+    const alertCandidates = buildAlertCandidates(changeSummary, alertOptions);
+    const alerts = await applyAlertCooldown(context.env, alertOptions, alertCandidates);
     const durationMs = Date.now() - startedAtMs;
 
     const snapshot: ScreenerSnapshot = {
@@ -662,10 +880,53 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         failedItems: progress.failedItems.slice(-MAX_FAILED_ITEMS_KEEP),
         retryStats: progress.retryStats,
       },
+      alertsMeta: {
+        cooldownDays: alertOptions.cooldownDays,
+        minScore: alertOptions.minScore,
+        minRankDelta: alertOptions.minRankDelta,
+        topN: alertOptions.topN,
+        sentCount: alerts.sentCount,
+        skippedCount: alerts.skippedCount,
+      },
     };
 
     await putCachedJson(cache, screenerDateKey(date), snapshot, SCREENER_CACHE_TTL_SEC);
     await putCachedJson(cache, screenerLastSuccessKey(), snapshot, SCREENER_CACHE_TTL_SEC);
+    if (persistBackend !== "none") {
+      await Promise.all([
+        putPersistedJson(context.env, persistScreenerDateKey(date), snapshot, PERSIST_HISTORY_TTL_SEC),
+        putPersistedJson(
+          context.env,
+          persistScreenerLastSuccessKey(),
+          snapshot,
+          PERSIST_HISTORY_TTL_SEC,
+        ),
+        putPersistedJson(
+          context.env,
+          persistFailureHistoryKey(date),
+          {
+            date,
+            updatedAt: snapshot.updatedAt,
+            ohlcvFailures: progress.ohlcvFailures,
+            insufficientData: progress.insufficientData,
+            failedItems: progress.failedItems.slice(-MAX_FAILED_ITEMS_KEEP),
+            retryStats: progress.retryStats,
+          },
+          PERSIST_HISTORY_TTL_SEC,
+        ),
+        putPersistedJson(
+          context.env,
+          persistChangeHistoryKey(date),
+          {
+            date,
+            updatedAt: snapshot.updatedAt,
+            changeSummary,
+            alertsMeta: snapshot.alertsMeta ?? null,
+          },
+          PERSIST_HISTORY_TTL_SEC,
+        ),
+      ]);
+    }
     await cache.delete(new Request(progressKey));
 
     console.log(
@@ -698,6 +959,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             count: universe.length,
             cacheHit: universeLoad.cacheHit,
           },
+          storage: {
+            backend: persistBackend,
+            enabled: persistBackend !== "none",
+          },
+          alertOptions,
           summary: {
             processedCount: progress.processedCount,
             candidateCount: candidates.length,
@@ -711,6 +977,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           changes: changeSummary,
           rsSummary,
           tuningSummary,
+          alerts,
           warnings: snapshot.warnings,
         },
         200,

@@ -26,6 +26,9 @@ jobs:
           MAX_ATTEMPTS: "90"
           SLEEP_SEC: "5"
           NOTIFY_TOPN: "5"
+          ALERT_MIN_SCORE: "80"
+          ALERT_MIN_DELTA: "5"
+          ALERT_COOLDOWN_DAYS: "2"
         run: |
           set -euo pipefail
 
@@ -40,9 +43,9 @@ jobs:
           echo "Batch size: ${BATCH_SIZE}"
 
           if [[ "${REBUILD_URL}" == *\?* ]]; then
-            TARGET_URL="${REBUILD_URL}&batch=${BATCH_SIZE}"
+            TARGET_URL="${REBUILD_URL}&batch=${BATCH_SIZE}&alertTopN=${NOTIFY_TOPN}&alertMinScore=${ALERT_MIN_SCORE}&alertMinDelta=${ALERT_MIN_DELTA}&alertCooldownDays=${ALERT_COOLDOWN_DAYS}"
           else
-            TARGET_URL="${REBUILD_URL}?batch=${BATCH_SIZE}"
+            TARGET_URL="${REBUILD_URL}?batch=${BATCH_SIZE}&alertTopN=${NOTIFY_TOPN}&alertMinScore=${ALERT_MIN_SCORE}&alertMinDelta=${ALERT_MIN_DELTA}&alertCooldownDays=${ALERT_COOLDOWN_DAYS}"
           fi
 
           attempt=1
@@ -122,21 +125,24 @@ jobs:
           candidate_count="$(echo "${final_body}" | jq -r '.summary.candidateCount // 0')"
           failed_count="$(echo "${final_body}" | jq -r '.summary.failedCount // 0')"
           retry_count="$(echo "${final_body}" | jq -r '.summary.retryStats.totalRetries // 0')"
+          alert_sent_count="$(echo "${final_body}" | jq -r '.alerts.sentCount // 0')"
+          alert_skipped_count="$(echo "${final_body}" | jq -r '.alerts.skippedCount // 0')"
 
           top_added="$(echo "${final_body}" | jq -r --argjson n "${NOTIFY_TOPN}" '
-            [.changes.added[0:$n][]? | "신규: \(.name)(\(.code)) #\(.currRank // "-")"] | .[]
+            [.alerts.eligible.added[0:$n][]? | "신규: \(.name)(\(.code)) #\(.currRank // "-")"] | .[]
           ')"
           top_risers="$(echo "${final_body}" | jq -r --argjson n "${NOTIFY_TOPN}" '
-            [.changes.risers[0:$n][]? | "상승: \(.name)(\(.code)) #\(.prevRank // "-") -> #\(.currRank // "-")"] | .[]
+            [.alerts.eligible.risers[0:$n][]? | "상승: \(.name)(\(.code)) #\(.prevRank // "-") -> #\(.currRank // "-")"] | .[]
           ')"
           top_fallers="$(echo "${final_body}" | jq -r --argjson n "${NOTIFY_TOPN}" '
-            [.changes.fallers[0:$n][]? | "하락: \(.name)(\(.code)) #\(.prevRank // "-") -> #\(.currRank // "-")"] | .[]
+            [.alerts.eligible.fallers[0:$n][]? | "하락: \(.name)(\(.code)) #\(.prevRank // "-") -> #\(.currRank // "-")"] | .[]
           ')"
 
           message="✅ [스크리너 리빌드 완료]
           시각: ${as_of}
           처리: ${processed_count}개 · 후보: ${candidate_count}개
-          실패: ${failed_count}개 · 재시도: ${retry_count}회"
+          실패: ${failed_count}개 · 재시도: ${retry_count}회
+          알림: 전송 ${alert_sent_count}건 · 쿨다운 스킵 ${alert_skipped_count}건"
 
           if [ -n "${top_added}" ]; then
             message="${message}

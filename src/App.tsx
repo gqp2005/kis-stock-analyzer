@@ -22,6 +22,7 @@ import type {
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
+import AdminOpsPanel from "./AdminOpsPanel";
 import ScreenerPanel from "./ScreenerPanel";
 
 interface StockLookup {
@@ -274,7 +275,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<"analysis" | "screener">("analysis");
+  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "admin">("analysis");
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -878,6 +879,13 @@ export default function App() {
             onClick={() => setPageMode("screener")}
           >
             종목 추천(스크리너)
+          </button>
+          <button
+            type="button"
+            className={pageMode === "admin" ? "tab active" : "tab"}
+            onClick={() => setPageMode("admin")}
+          >
+            운영(관리자)
           </button>
         </div>
 
@@ -1640,8 +1648,10 @@ export default function App() {
           </section>
         )}
           </>
-        ) : (
+        ) : pageMode === "screener" ? (
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : (
+          <AdminOpsPanel apiBase={apiBase} />
         )}
       </main>
     </div>

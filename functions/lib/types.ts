@@ -6,6 +6,8 @@ export interface Env {
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
   ADMIN_TOKEN?: string;
+  SCREENER_KV?: KVNamespace;
+  SCREENER_DB?: D1Database;
 }
 
 export type Timeframe = "month" | "week" | "day";
@@ -522,6 +524,14 @@ export interface ScreenerPayload {
         ihs: number;
         vcp: number;
       } | null;
+    } | null;
+    alertsMeta?: {
+      cooldownDays: number;
+      minScore: number;
+      minRankDelta: number;
+      topN: number;
+      sentCount: number;
+      skippedCount: number;
     } | null;
     lastRebuildStatus?: {
       inProgress: boolean;

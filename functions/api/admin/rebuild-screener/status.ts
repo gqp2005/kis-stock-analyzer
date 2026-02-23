@@ -1,11 +1,14 @@
 import { getCachedJson } from "../../../lib/cache";
 import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
+import { getPersistedJson, persistenceBackend } from "../../../lib/screenerPersistence";
 import { errorJson, json, serverError } from "../../../lib/response";
 import {
   REBUILD_LOCK_TTL_SEC,
   type RebuildProgressSnapshot,
   type ScreenerSnapshot,
+  persistScreenerDateKey,
+  persistScreenerLastSuccessKey,
   rebuildLockKey,
   rebuildProgressKey,
   screenerDateKey,
@@ -60,6 +63,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   try {
     const cache = await caches.open("kis-analyzer-cache-v3");
     const date = nowIsoKst().slice(0, 10);
+    const backend = persistenceBackend(context.env);
 
     const lock = await getCachedJson<{ startedAt?: string }>(cache, rebuildLockKey());
     const lockState = computeLockState(lock?.startedAt);
@@ -67,8 +71,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date)),
     );
     const todaySnapshot = await getCachedJson<ScreenerSnapshot>(cache, screenerDateKey(date));
-    const lastSuccessSnapshot =
-      todaySnapshot ?? (await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey()));
+    const cacheLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey());
+    const persistedToday = await getPersistedJson<ScreenerSnapshot>(
+      context.env,
+      persistScreenerDateKey(date),
+    );
+    const persistedLastSuccess = await getPersistedJson<ScreenerSnapshot>(
+      context.env,
+      persistScreenerLastSuccessKey(),
+    );
+    const lastSuccessSnapshot = todaySnapshot ?? cacheLastSuccess ?? persistedToday ?? persistedLastSuccess;
+    const snapshotSource = todaySnapshot || cacheLastSuccess
+      ? "cache"
+      : persistedToday || persistedLastSuccess
+        ? backend
+        : "none";
     const inProgress =
       (!!lock && !lockState.stale) ||
       (!!progress && progress.cursor < progress.universeCount);
@@ -78,6 +95,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         ok: true,
         inProgress,
         date,
+        storage: {
+          backend,
+          enabled: backend !== "none",
+          snapshotSource,
+        },
         lock: {
           exists: !!lock,
           startedAt: lock?.startedAt ?? null,

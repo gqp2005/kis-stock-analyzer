@@ -24,6 +24,27 @@ export const rebuildLockKey = (): string =>
 export const rebuildProgressKey = (date: string): string =>
   toCacheUrl(`screener:v1:rebuild-progress:${date}`);
 
+export const persistScreenerDateKey = (date: string): string =>
+  `snapshot:date:${date}`;
+
+export const persistScreenerLastSuccessKey = (): string =>
+  "snapshot:last_success";
+
+export const persistChangeHistoryKey = (date: string): string =>
+  `history:changes:${date}`;
+
+export const persistChangeHistoryPrefix = (): string =>
+  "history:changes:";
+
+export const persistFailureHistoryKey = (date: string): string =>
+  `history:failures:${date}`;
+
+export const persistFailureHistoryPrefix = (): string =>
+  "history:failures:";
+
+export const persistAlertStateKey = (): string =>
+  "alerts:last_sent";
+
 export interface RebuildFailureItem {
   code: string;
   name: string;
@@ -37,6 +58,15 @@ export interface RebuildRetryStats {
   totalRetries: number;
   retriedSymbols: number;
   maxRetryPerSymbol: number;
+}
+
+export interface AlertSentState {
+  sentAt: string;
+}
+
+export interface AlertStateSnapshot {
+  updatedAt: string;
+  sent: Record<string, AlertSentState>;
 }
 
 export interface ScreenerRankChangeItem {
@@ -108,6 +138,14 @@ export interface ScreenerSnapshot {
     failedItems: RebuildFailureItem[];
     retryStats: RebuildRetryStats;
   };
+  alertsMeta?: {
+    cooldownDays: number;
+    minScore: number;
+    minRankDelta: number;
+    topN: number;
+    sentCount: number;
+    skippedCount: number;
+  } | null;
 }
 
 export interface RebuildProgressSnapshot {

@@ -3,10 +3,13 @@ import { nowIsoKst } from "../lib/market";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import { json, serverError } from "../lib/response";
 import { buildScreenerView } from "../lib/screener";
+import { getPersistedJson, persistenceBackend } from "../lib/screenerPersistence";
 import {
   SCREENER_CACHE_TTL_SEC,
   type RebuildProgressSnapshot,
   type ScreenerSnapshot,
+  persistScreenerDateKey,
+  persistScreenerLastSuccessKey,
   rebuildProgressKey,
   screenerDateKey,
   screenerLastSuccessKey,
@@ -76,6 +79,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const cache = await caches.open("kis-analyzer-cache-v3");
     const today = nowIsoKst().slice(0, 10);
+    const backend = persistenceBackend(context.env);
     const todayKey = screenerDateKey(today);
     const lastSuccessKey = screenerLastSuccessKey();
     const progress = normalizeProgress(
@@ -83,6 +87,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     );
 
     let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
+    let servedFromPersist = false;
     let rebuildRequired = false;
     const warnings: string[] = [];
 
@@ -93,9 +98,23 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       metrics.apiCacheMisses += 1;
       rebuildRequired = true;
       console.log(`[screener-cache-miss] date=${today}`);
-      snapshot = await getCachedJson<ScreenerSnapshot>(cache, lastSuccessKey);
+      const cachedLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, lastSuccessKey);
+      const persistedToday = await getPersistedJson<ScreenerSnapshot>(
+        context.env,
+        persistScreenerDateKey(today),
+      );
+      const persistedLastSuccess = await getPersistedJson<ScreenerSnapshot>(
+        context.env,
+        persistScreenerLastSuccessKey(),
+      );
+      snapshot = cachedLastSuccess ?? persistedToday ?? persistedLastSuccess;
+      servedFromPersist = !cachedLastSuccess && !!snapshot;
       if (snapshot) {
-        warnings.push("오늘 스크리너 캐시가 없어 마지막 성공 결과를 반환합니다. 재빌드가 필요합니다.");
+        warnings.push(
+          servedFromPersist
+            ? "Cache API miss로 영속 저장소(KV/D1) 결과를 반환합니다."
+            : "오늘 스크리너 캐시가 없어 마지막 성공 결과를 반환합니다. 재빌드가 필요합니다.",
+        );
       } else {
         warnings.push("스크리너 결과 캐시가 없습니다. /api/admin/rebuild-screener 실행이 필요합니다.");
       }
@@ -108,6 +127,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             `진행 중 실패 ${progress.failedItems.length}종목, 재시도 ${progress.retryStats.totalRetries}회`,
           );
         }
+      }
+      if (backend === "none") {
+        warnings.push("영속 저장소(KV/D1)가 비활성화되어 캐시 소실 시 결과 복원이 제한됩니다.");
       }
     }
 
@@ -130,6 +152,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           changeSummary: null,
           rsSummary: null,
           tuningSummary: null,
+          alertsMeta: null,
           lastRebuildStatus: progress
             ? {
                 inProgress: true,
@@ -203,6 +226,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           : null,
         rsSummary: snapshot.rsSummary ?? null,
         tuningSummary: snapshot.tuningSummary ?? null,
+        alertsMeta: snapshot.alertsMeta ?? null,
         lastRebuildStatus: progress
           ? {
               inProgress: true,
@@ -239,7 +263,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     return finalize(
       json(payload, 200, {
-        "x-cache": snapshot.date === today ? "HIT" : "STALE",
+        "x-cache": servedFromPersist
+          ? "PERSIST"
+          : snapshot.date === today
+            ? "HIT"
+            : "STALE",
         "cache-control": "public, max-age=30",
       }),
     );

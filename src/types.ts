@@ -483,6 +483,14 @@ export interface ScreenerResponse {
         vcp: number;
       } | null;
     } | null;
+    alertsMeta?: {
+      cooldownDays: number;
+      minScore: number;
+      minRankDelta: number;
+      topN: number;
+      sentCount: number;
+      skippedCount: number;
+    } | null;
     lastRebuildStatus?: {
       inProgress: boolean;
       processed: number;
@@ -496,6 +504,121 @@ export interface ScreenerResponse {
   items: ScreenerItem[];
   warningItems: ScreenerItem[];
   warnings: string[];
+}
+
+export interface AdminRebuildStatusResponse {
+  ok: boolean;
+  inProgress: boolean;
+  date: string;
+  storage?: {
+    backend: "kv" | "d1" | "none";
+    enabled: boolean;
+    snapshotSource: "cache" | "kv" | "d1" | "none";
+  };
+  lock: {
+    exists: boolean;
+    startedAt: string | null;
+    ageSec: number | null;
+    stale: boolean;
+    staleAfterSec: number;
+    ttlSec: number;
+  };
+  progress: {
+    processed: number;
+    total: number;
+    remaining: number;
+    processedCount: number;
+    ohlcvFailures: number;
+    insufficientData: number;
+    failedCount: number;
+    failedItems: Array<{
+      code: string;
+      name: string;
+      market: string;
+      reason: string;
+      retries: number;
+      at: string;
+    }>;
+    retryStats: {
+      totalRetries: number;
+      retriedSymbols: number;
+      maxRetryPerSymbol: number;
+    };
+    lastBatch: {
+      from: number;
+      to: number;
+      batchSize: number;
+    } | null;
+    startedAt: string;
+    updatedAt: string;
+  } | null;
+  snapshot: {
+    date: string;
+    updatedAt: string;
+    universeCount: number;
+    processedCount: number;
+    candidateCount: number;
+    topStored: number;
+    warnings: string[];
+    changeSummary: ScreenerResponse["meta"]["changeSummary"] | null;
+    rsSummary: ScreenerResponse["meta"]["rsSummary"] | null;
+    tuningSummary: ScreenerResponse["meta"]["tuningSummary"] | null;
+    rebuildMeta: {
+      durationMs: number;
+      batchSize: number;
+      kisCalls: number;
+      ohlcvFailures: number;
+      insufficientData: number;
+      failedItems: Array<{
+        code: string;
+        name: string;
+        market: string;
+        reason: string;
+        retries: number;
+        at: string;
+      }>;
+      retryStats: {
+        totalRetries: number;
+        retriedSymbols: number;
+        maxRetryPerSymbol: number;
+      };
+    } | null;
+  } | null;
+  message: string;
+}
+
+export interface AdminRebuildHistoryResponse {
+  ok: boolean;
+  backend: "kv" | "d1" | "none";
+  limit: number;
+  changes: Array<{
+    date: string;
+    updatedAt: string | null;
+    changeSummary: ScreenerResponse["meta"]["changeSummary"] | null;
+    alertsMeta: ScreenerResponse["meta"]["alertsMeta"] | null;
+  }>;
+  failures: Array<{
+    date: string;
+    updatedAt: string | null;
+    failedItems: Array<{
+      code: string;
+      name: string;
+      market: string;
+      reason: string;
+      retries: number;
+      at: string;
+    }>;
+    retryStats: {
+      totalRetries: number;
+      retriedSymbols: number;
+      maxRetryPerSymbol: number;
+    } | null;
+  }>;
+  alerts: {
+    updatedAt: string | null;
+    count: number;
+  };
+  message?: string;
 }
 
 export type BacktestOutcome = "WIN" | "LOSS" | "FLAT";

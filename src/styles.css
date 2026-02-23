@@ -1220,6 +1220,84 @@ h2 {
   align-items: center;
 }
 
+.admin-ops {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-controls {
+  margin-bottom: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 120px 120px minmax(0, 1fr) 130px 130px;
+  gap: 8px;
+  align-items: end;
+}
+
+.admin-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #b9cde3;
+  font-size: 12px;
+}
+
+.admin-controls .checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+}
+
+.admin-controls .checkbox-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ops-progress {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(87, 163, 255, 0.15);
+  border: 1px solid rgba(87, 163, 255, 0.35);
+  overflow: hidden;
+}
+
+.ops-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(20, 100, 168, 0.95), rgba(16, 149, 122, 0.95));
+}
+
+.ops-fail-list {
+  display: grid;
+  gap: 6px;
+}
+
+.ops-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.ops-history-item {
+  border: 1px solid rgba(87, 163, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(12, 24, 36, 0.55);
+  padding: 8px 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.ops-history-item h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
 @media (max-width: 860px) {
   .mode-tabs {
     flex-wrap: wrap;
@@ -1302,5 +1380,13 @@ h2 {
 
   .backtest-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-grid {
+    grid-template-columns: 1fr;
   }
 }
