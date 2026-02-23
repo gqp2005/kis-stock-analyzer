@@ -46,8 +46,30 @@ export interface KisMarketSnapshot {
 const TOKEN_BUFFER_MS = 10 * 60 * 1000;
 let memoryToken: (TokenCacheRecord & { cacheIdentity: string }) | null = null;
 
+const normalizeBaseUrl = (raw?: string): string | null => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    // KIS 공식 호스트만 허용하고, 나머지는 안전하게 기본값으로 폴백한다.
+    if (!parsed.hostname.endsWith("koreainvestment.com")) {
+      return null;
+    }
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return null;
+  }
+};
+
 const getBaseUrl = (env: Env): string => {
-  if (env.KIS_BASE_URL) return env.KIS_BASE_URL;
+  const normalized = normalizeBaseUrl(env.KIS_BASE_URL);
+  if (normalized) return normalized;
+  if (env.KIS_BASE_URL) {
+    console.warn("[kis-config] KIS_BASE_URL가 유효하지 않아 기본 KIS URL을 사용합니다.");
+  }
   if (env.KIS_ENV === "demo") return "https://openapivts.koreainvestment.com:29443";
   return "https://openapi.koreainvestment.com:9443";
 };

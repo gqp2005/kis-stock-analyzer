@@ -28,6 +28,7 @@ import { normalizeInput } from "../lib/utils";
 
 const VALID_TFS: Timeframe[] = ["day", "week", "month"];
 type TfParam = Timeframe | "multi";
+type ViewParam = "default" | "multi";
 
 const MIN_MULTI = {
   month: 60,
@@ -58,6 +59,11 @@ const visibleCount = (tf: Timeframe, dayCount: number): number => {
   if (tf === "day") return dayCount;
   if (tf === "week") return 160;
   return 80;
+};
+
+const parseView = (raw: string | null): ViewParam => {
+  if ((raw ?? "").toLowerCase() === "multi") return "multi";
+  return "default";
 };
 
 const parseProfile = (raw: string | null): InvestmentProfile => {
@@ -131,6 +137,14 @@ const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAna
       hist: analysis.indicators.macd.hist.slice(-count),
     },
   },
+  overlays: {
+    ...analysis.overlays,
+    markers: analysis.overlays.markers.filter((marker) =>
+      analysis.candles
+        .slice(-count)
+        .some((candle) => candle.time === marker.t || marker.t.startsWith(`${candle.time}T`)),
+    ),
+  },
 });
 
 const safeFetchTf = async (
@@ -169,6 +183,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           "",
       ) || "";
     const tfParam = parseTf(url.searchParams.get("tf"));
+    const viewParam = parseView(url.searchParams.get("view"));
     const dayCount = parseDayCount(url);
     const profile = parseProfile(url.searchParams.get("profile"));
     const higherTfSource = (url.searchParams.get("higher_tf_source") ?? "resample").toLowerCase();
@@ -185,9 +200,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const ttlSec = analysisTtlByTf(tfParam);
     const cache = await caches.open("kis-analyzer-cache-v3");
-    const cacheKey = `https://cache.local/analysis/v5?code=${encodeURIComponent(
+    const cacheKey = `https://cache.local/analysis/v6?code=${encodeURIComponent(
       resolved.code,
-    )}&tf=${tfParam}&count=${dayCount}&profile=${profile}&src=${useResampledHigherTf ? "resample" : "kis"}`;
+    )}&tf=${tfParam}&count=${dayCount}&profile=${profile}&src=${useResampledHigherTf ? "resample" : "kis"}&view=${viewParam}`;
 
     if (tfParam === "multi") {
       const cached = await getCachedJson<MultiAnalysisPayload>(cache, cacheKey);
@@ -368,6 +383,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       levels: analysisForChart.levels,
       tradePlan: analysisForChart.tradePlan,
       indicators: analysisForChart.indicators,
+      overlays: analysisForChart.overlays,
+      confluence: analysisForChart.confluence,
+      explanations: analysisForChart.explanations,
       candles: analysisForChart.candles,
       regime: analysisForChart.regime,
     };

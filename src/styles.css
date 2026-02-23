@@ -84,7 +84,7 @@ h1 {
 .backtest-controls {
   margin: -10px 0 16px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 220px)) 1fr;
+  grid-template-columns: repeat(2, minmax(0, 220px)) 1fr;
   gap: 10px;
   align-items: end;
 }
@@ -578,9 +578,28 @@ h2 {
 
 .profile-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.profile-dual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-card {
+  border: 1px solid rgba(87, 163, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(12, 24, 36, 0.55);
+  padding: 10px;
+}
+
+.profile-card h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #d7e8fa;
 }
 
 .fund-grid {
@@ -870,6 +889,47 @@ h2 {
   margin: 10px 0 0;
   color: #9fb5cc;
   font-size: 12px;
+}
+
+.confluence-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.confluence-item {
+  border: 1px solid rgba(87, 163, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(12, 24, 36, 0.6);
+  padding: 8px 10px;
+}
+
+.confluence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.confluence-head strong {
+  font-size: 13px;
+  color: #e9f3ff;
+}
+
+.confluence-head small {
+  border-radius: 999px;
+  border: 1px solid rgba(87, 163, 255, 0.45);
+  background: rgba(87, 163, 255, 0.15);
+  color: #cde6ff;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.confluence-item p {
+  margin: 0;
+  color: #b9cde2;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .plan-item {
@@ -1171,6 +1231,10 @@ h2 {
 
   .profile-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-dual-grid {
+    grid-template-columns: 1fr;
   }
 
   .fund-grid {

@@ -31,6 +31,7 @@ describe("analysis scoring extras", () => {
     }
 
     const latestClose = candles[candles.length - 1].close;
+    const day = analyzeTimeframe("day", candles);
     const result = analyzeCandles(candles);
 
     expect(result.summaryText.includes("·")).toBe(true);
@@ -42,6 +43,13 @@ describe("analysis scoring extras", () => {
     expect(Array.isArray(result.signals.volumePatterns)).toBe(true);
     expect((result.levels.support as number) < latestClose).toBe(true);
     expect((result.levels.resistance as number) > latestClose).toBe(true);
+    expect(day.overlays.zones.length).toBeGreaterThanOrEqual(2);
+    expect(
+      day.overlays.segments.some(
+        (segment) => segment.kind === "trendlineUp" || segment.kind === "trendlineDown",
+      ),
+    ).toBe(true);
+    expect(day.explanations.length).toBeGreaterThan(0);
   });
 
   it("should support partial multi final when only day is available", () => {

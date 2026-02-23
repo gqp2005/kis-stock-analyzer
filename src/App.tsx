@@ -14,6 +14,7 @@ import type {
   IndicatorPoint,
   InvestmentProfile,
   MultiAnalysisResponse,
+  OverlayMarker,
   Overall,
   Timeframe,
   TimeframeAnalysis,
@@ -52,6 +53,36 @@ const overallLabel = (overall: Overall): string => {
   return "주의";
 };
 
+const profileOverallFromScore = (score: number): Overall => {
+  if (score >= 70) return "GOOD";
+  if (score >= 45) return "NEUTRAL";
+  return "CAUTION";
+};
+
+const buildProfileScoreFromBase = (
+  mode: InvestmentProfile,
+  trend: number,
+  momentum: number,
+  risk: number,
+) => {
+  const cfg = PROFILE_WEIGHT_CONFIG[mode];
+  const score = Math.max(
+    0,
+    Math.min(100, Math.round((trend * cfg.trend + momentum * cfg.momentum + risk * cfg.risk) / 100)),
+  );
+  return {
+    mode,
+    score,
+    overall: profileOverallFromScore(score),
+    weights: {
+      trend: cfg.trend,
+      momentum: cfg.momentum,
+      risk: cfg.risk,
+    },
+    description: cfg.description,
+  };
+};
+
 const confidenceClass = (confidence: number): string => {
   if (confidence >= 70) return "confidence good";
   if (confidence >= 45) return "confidence neutral";
@@ -67,6 +98,24 @@ const TF_LABEL: Record<Timeframe, string> = {
 const PROFILE_LABEL: Record<InvestmentProfile, string> = {
   short: "단기",
   mid: "중기",
+};
+
+const PROFILE_WEIGHT_CONFIG: Record<
+  InvestmentProfile,
+  { trend: number; momentum: number; risk: number; description: string }
+> = {
+  short: {
+    trend: 30,
+    momentum: 50,
+    risk: 20,
+    description: "단기 성향: 모멘텀/수급 비중을 높여 빠른 변화를 우선합니다.",
+  },
+  mid: {
+    trend: 50,
+    momentum: 20,
+    risk: 30,
+    description: "중기 성향: 추세/리스크 비중을 높여 안정적인 흐름을 우선합니다.",
+  },
 };
 
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
@@ -85,53 +134,6 @@ const BASIC_PATTERN_TYPES = new Set<VolumePatternType>([
   "Upthrust",
   "PullbackReaccumulation",
 ]);
-
-const PATTERN_MARKER_CONFIG: Record<
-  VolumePatternType,
-  {
-    position: "aboveBar" | "belowBar";
-    shape: "arrowUp" | "arrowDown" | "circle" | "square";
-    text: string;
-    color: string;
-  }
-> = {
-  BreakoutConfirmed: {
-    position: "aboveBar",
-    shape: "arrowUp",
-    text: "BRK",
-    color: "#00b386",
-  },
-  Upthrust: {
-    position: "aboveBar",
-    shape: "arrowDown",
-    text: "TRAP",
-    color: "#ff5a76",
-  },
-  PullbackReaccumulation: {
-    position: "belowBar",
-    shape: "arrowUp",
-    text: "PB",
-    color: "#57a3ff",
-  },
-  ClimaxUp: {
-    position: "aboveBar",
-    shape: "square",
-    text: "HOT",
-    color: "#ff9f43",
-  },
-  CapitulationAbsorption: {
-    position: "belowBar",
-    shape: "circle",
-    text: "CAP",
-    color: "#00d2d3",
-  },
-  WeakBounce: {
-    position: "aboveBar",
-    shape: "circle",
-    text: "WB",
-    color: "#c792ea",
-  },
-};
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
@@ -181,22 +183,19 @@ const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null
   return null;
 };
 
-const toPatternMarkers = (
-  patterns: VolumePatternSignal[],
+const toOverlayMarkers = (
+  markers: OverlayMarker[],
   showAdvanced: boolean,
 ): SeriesMarker<Time>[] =>
-  patterns
-    .filter((pattern) => showAdvanced || BASIC_PATTERN_TYPES.has(pattern.type))
-    .map((pattern) => {
-      const cfg = PATTERN_MARKER_CONFIG[pattern.type];
-      return {
-        time: toChartTime(pattern.t),
-        position: cfg.position,
-        shape: cfg.shape,
-        color: cfg.color,
-        text: cfg.text,
-      } as SeriesMarker<Time>;
-    });
+  markers
+    .filter((marker) => showAdvanced || BASIC_PATTERN_TYPES.has(marker.type))
+    .map((marker) => ({
+      time: toChartTime(marker.t),
+      position: marker.position,
+      shape: marker.shape,
+      color: marker.color,
+      text: marker.text,
+    })) as SeriesMarker<Time>[];
 
 const formatPrice = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
@@ -269,6 +268,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 };
 
 export default function App() {
+  const ANALYSIS_PROFILE: InvestmentProfile = "short";
   const [pageMode, setPageMode] = useState<"analysis" | "screener">("analysis");
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
@@ -280,7 +280,6 @@ export default function App() {
   const [backtestError, setBacktestError] = useState("");
   const [backtestSignal, setBacktestSignal] = useState<Overall>("GOOD");
   const [backtestHoldBars, setBacktestHoldBars] = useState(10);
-  const [profile, setProfile] = useState<InvestmentProfile>("short");
   const [riskBreakdownOpen, setRiskBreakdownOpen] = useState(false);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -288,8 +287,11 @@ export default function App() {
   const [showMa1, setShowMa1] = useState(true);
   const [showMa2, setShowMa2] = useState(true);
   const [showMa3, setShowMa3] = useState(false);
-  const [showSupportResistance, setShowSupportResistance] = useState(true);
-  const [showVolumePatternMarkers, setShowVolumePatternMarkers] = useState(true);
+  const [showLevels, setShowLevels] = useState(true);
+  const [showTrendlines, setShowTrendlines] = useState(false);
+  const [showChannels, setShowChannels] = useState(false);
+  const [showZones, setShowZones] = useState(false);
+  const [showMarkers, setShowMarkers] = useState(true);
   const [showAdvancedPatternMarkers, setShowAdvancedPatternMarkers] = useState(false);
   const [showPatternReferenceLevel, setShowPatternReferenceLevel] = useState(true);
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
@@ -301,21 +303,16 @@ export default function App() {
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
-  const fetchAnalysis = async (
-    value: string,
-    lookback: number,
-    profileMode: InvestmentProfile,
-  ) => {
+  const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
     setError("");
     try {
-      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi&profile=${profileMode}`;
+      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi&view=multi&profile=${ANALYSIS_PROFILE}`;
       const response = await fetch(url);
       const data = (await response.json()) as MultiAnalysisResponse | { error: string };
       if (!response.ok) throw new Error("error" in data ? data.error : "분석 요청 실패");
       const payload = data as MultiAnalysisResponse;
       setResult(payload);
-      setProfile(payload.meta.profile);
       setActiveTf((prev) => (payload.timeframes[prev] ? prev : pickDefaultTf(payload)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
@@ -353,9 +350,8 @@ export default function App() {
     lookback: number,
     holdBars: number,
     signalOverall: Overall,
-    profileMode: InvestmentProfile,
   ) => {
-    void fetchAnalysis(value, lookback, profileMode);
+    void fetchAnalysis(value, lookback);
     void fetchBacktest(value, lookback, holdBars, signalOverall);
   };
 
@@ -364,7 +360,7 @@ export default function App() {
     const normalized = query.trim();
     if (!normalized) return;
     setShowSuggestions(false);
-    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal, profile);
+    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal);
   };
 
   const onSelectSuggestion = (stock: StockLookup) => {
@@ -382,11 +378,11 @@ export default function App() {
     setPageMode("analysis");
     setQuery(code);
     setShowSuggestions(false);
-    fetchDashboard(code, days, backtestHoldBars, backtestSignal, profile);
+    fetchDashboard(code, days, backtestHoldBars, backtestSignal);
   };
 
   useEffect(() => {
-    fetchDashboard("005930", 180, 10, "GOOD", "short");
+    fetchDashboard("005930", 180, 10, "GOOD");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -433,10 +429,10 @@ export default function App() {
   }, [apiBase, query, showSuggestions]);
 
   useEffect(() => {
-    if (activeTf !== "day" || !showVolumePatternMarkers) {
+    if (activeTf !== "day" || !showMarkers) {
       setSelectedPattern(null);
     }
-  }, [activeTf, showVolumePatternMarkers]);
+  }, [activeTf, showMarkers]);
 
   useEffect(() => {
     if (!priceChartRef.current || !result) return;
@@ -534,34 +530,72 @@ export default function App() {
             (pattern) => showAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
           )
         : [];
+    const overlayMarkers =
+      activeTf === "day"
+        ? (active.overlays?.markers ?? []).filter(
+            (marker) => showAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(marker.type),
+          )
+        : [];
 
-    if (showVolumePatternMarkers && activeTf === "day") {
-      candleSeries.setMarkers(
-        toPatternMarkers(markerPatterns, true),
-      );
+    if (showMarkers && activeTf === "day") {
+      candleSeries.setMarkers(toOverlayMarkers(overlayMarkers, true));
     } else {
       candleSeries.setMarkers([]);
     }
 
-    if (showSupportResistance && active.levels.support != null) {
-      candleSeries.createPriceLine({
-        price: active.levels.support,
-        color: "rgba(0, 179, 134, 0.95)",
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "지지",
-      });
+    const levelLines = (active.overlays?.priceLines ?? []).filter((line) => line.group === "level");
+    const zoneLines = (active.overlays?.priceLines ?? []).filter((line) => line.group === "zone");
+    if (showLevels) {
+      for (const line of levelLines) {
+        candleSeries.createPriceLine({
+          price: line.price,
+          color: line.color ?? "rgba(87,163,255,0.9)",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: line.label,
+        });
+      }
     }
-    if (showSupportResistance && active.levels.resistance != null) {
-      candleSeries.createPriceLine({
-        price: active.levels.resistance,
-        color: "rgba(255, 90, 118, 0.95)",
+    if (showZones) {
+      for (const line of zoneLines) {
+        candleSeries.createPriceLine({
+          price: line.price,
+          color: line.color ?? "rgba(155,176,198,0.85)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: line.label,
+        });
+      }
+    }
+
+    const overlaySegments = active.overlays?.segments ?? [];
+    const segmentVisible = overlaySegments.filter((segment) => {
+      if (segment.kind === "trendlineUp" || segment.kind === "trendlineDown") return showTrendlines;
+      if (segment.kind === "channelLow" || segment.kind === "channelHigh") return showChannels;
+      return false;
+    });
+    for (const segment of segmentVisible) {
+      const color =
+        segment.kind === "trendlineUp"
+          ? "#00b386"
+          : segment.kind === "trendlineDown"
+            ? "#ff5a76"
+            : segment.kind === "channelLow"
+              ? "#4db5ff"
+              : "#9f7aea";
+      const segmentSeries = mainChart.addLineSeries({
+        color,
         lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "저항",
+        lineStyle: segment.kind.startsWith("channel") ? LineStyle.Dotted : LineStyle.Solid,
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
+      segmentSeries.setData([
+        { time: toChartTime(segment.t1), value: segment.p1 },
+        { time: toChartTime(segment.t2), value: segment.p2 },
+      ]);
     }
 
     const selectedCandleIndex =
@@ -637,7 +671,7 @@ export default function App() {
 
     if (activeTf === "day") {
       onMainChartClick = (param: unknown) => {
-        if (!showVolumePatternMarkers) return;
+        if (!showMarkers) return;
         const clicked = param as { time?: unknown };
         const clickedKey = fromChartTimeKey(clicked.time);
         if (!clickedKey) return;
@@ -759,8 +793,11 @@ export default function App() {
     showMa1,
     showMa2,
     showMa3,
-    showSupportResistance,
-    showVolumePatternMarkers,
+    showLevels,
+    showTrendlines,
+    showChannels,
+    showZones,
+    showMarkers,
     showAdvancedPatternMarkers,
     showPatternReferenceLevel,
     highlightSelectedCandle,
@@ -786,7 +823,24 @@ export default function App() {
   const rsiDisabledMessage = "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
   const momentumSignal = activeAnalysis?.signals.momentum ?? null;
   const riskSignal = activeAnalysis?.signals.risk ?? null;
-  const profileScore = activeAnalysis?.profile ?? result?.final.profile ?? null;
+  const confluenceBands = activeAnalysis?.confluence ?? [];
+  const overlayExplanations = activeAnalysis?.explanations ?? [];
+  const shortProfileScore = activeAnalysis
+    ? buildProfileScoreFromBase(
+        "short",
+        activeAnalysis.scores.trend,
+        activeAnalysis.scores.momentum,
+        activeAnalysis.scores.risk,
+      )
+    : null;
+  const midProfileScore = activeAnalysis
+    ? buildProfileScoreFromBase(
+        "mid",
+        activeAnalysis.scores.trend,
+        activeAnalysis.scores.momentum,
+        activeAnalysis.scores.risk,
+      )
+    : null;
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -881,17 +935,6 @@ export default function App() {
         </form>
         <div className="backtest-controls">
           <label>
-            투자 성향
-            <select
-              value={profile}
-              onChange={(e) => setProfile(e.target.value as InvestmentProfile)}
-              aria-label="투자 성향"
-            >
-              <option value="short">단기(모멘텀 중심)</option>
-              <option value="mid">중기(추세/리스크 중심)</option>
-            </select>
-          </label>
-          <label>
             백테스트 진입 신호
             <select
               value={backtestSignal}
@@ -929,7 +972,7 @@ export default function App() {
                   {result.meta.name} ({result.meta.symbol})
                 </h2>
                 <p className="meta">
-                  {result.meta.market} · {result.meta.asOf} · 성향 {PROFILE_LABEL[result.meta.profile]} · 출처 {result.meta.source}
+                  {result.meta.market} · {result.meta.asOf} · 성향 단기/중기 동시 표시 · 출처 {result.meta.source}
                 </p>
               </div>
               <div className="summary-right">
@@ -987,30 +1030,33 @@ export default function App() {
                   </article>
                 </div>
 
-                {profileScore && (
+                {shortProfileScore && midProfileScore && (
                   <div className="card">
-                    <h3>투자 성향 맞춤 전략</h3>
-                    <div className="profile-grid">
-                      <div className="plan-item">
-                        <span>성향</span>
-                        <strong>{PROFILE_LABEL[profileScore.mode]}</strong>
-                      </div>
-                      <div className="plan-item">
-                        <span>가중 점수</span>
-                        <strong>{profileScore.score}</strong>
-                      </div>
-                      <div className="plan-item">
-                        <span>가중 판정</span>
-                        <strong>{overallLabel(profileScore.overall)}</strong>
-                      </div>
-                      <div className="plan-item">
-                        <span>가중치(추세/모멘텀/위험)</span>
-                        <strong>
-                          {profileScore.weights.trend}/{profileScore.weights.momentum}/{profileScore.weights.risk}
-                        </strong>
-                      </div>
+                    <h3>투자 성향 맞춤 전략 (단기/중기 동시)</h3>
+                    <div className="profile-dual-grid">
+                      {[shortProfileScore, midProfileScore].map((item) => (
+                        <article key={item.mode} className="profile-card">
+                          <h4>{PROFILE_LABEL[item.mode]} 성향</h4>
+                          <div className="profile-grid">
+                            <div className="plan-item">
+                              <span>가중 점수</span>
+                              <strong>{item.score}</strong>
+                            </div>
+                            <div className="plan-item">
+                              <span>가중 판정</span>
+                              <strong>{overallLabel(item.overall)}</strong>
+                            </div>
+                            <div className="plan-item">
+                              <span>가중치(추세/모멘텀/위험)</span>
+                              <strong>
+                                {item.weights.trend}/{item.weights.momentum}/{item.weights.risk}
+                              </strong>
+                            </div>
+                          </div>
+                          <p className="plan-note">{item.description}</p>
+                        </article>
+                      ))}
                     </div>
-                    <p className="plan-note">{profileScore.description}</p>
                   </div>
                 )}
 
@@ -1348,6 +1394,40 @@ export default function App() {
                 </div>
 
                 <div className="card">
+                  <h3>강한 지지/저항 구간 (Confluence)</h3>
+                  {confluenceBands.length > 0 ? (
+                    <div className="confluence-grid">
+                      {confluenceBands.slice(0, 5).map((band, index) => (
+                        <article key={`${band.bandLow}-${band.bandHigh}-${index}`} className="confluence-item">
+                          <div className="confluence-head">
+                            <strong>
+                              {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
+                            </strong>
+                            <small>강도 {band.strength}</small>
+                          </div>
+                          <p>{band.reasons.join(" · ")}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="plan-note">컨플루언스 구간이 아직 충분하지 않습니다.</p>
+                  )}
+                </div>
+
+                <div className="card">
+                  <h3>오버레이 설명</h3>
+                  {overlayExplanations.length > 0 ? (
+                    <ul>
+                      {overlayExplanations.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="plan-note">오버레이 설명이 없습니다.</p>
+                  )}
+                </div>
+
+                <div className="card">
                   <h3>{TF_LABEL[activeTf]} 근거</h3>
                   <ul>
                     {activeAnalysis.reasons.map((reason, index) => (
@@ -1397,18 +1477,42 @@ export default function App() {
                       <label>
                         <input
                           type="checkbox"
-                          checked={showSupportResistance}
-                          onChange={(e) => setShowSupportResistance(e.target.checked)}
+                          checked={showLevels}
+                          onChange={(e) => setShowLevels(e.target.checked)}
                         />
-                        Show Support/Resistance
+                        Levels
                       </label>
                       <label>
                         <input
                           type="checkbox"
-                          checked={showVolumePatternMarkers}
-                          onChange={(e) => setShowVolumePatternMarkers(e.target.checked)}
+                          checked={showTrendlines}
+                          onChange={(e) => setShowTrendlines(e.target.checked)}
                         />
-                        Show Volume Pattern Markers
+                        Trendlines
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showChannels}
+                          onChange={(e) => setShowChannels(e.target.checked)}
+                        />
+                        Channels
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showZones}
+                          onChange={(e) => setShowZones(e.target.checked)}
+                        />
+                        Zones
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showMarkers}
+                          onChange={(e) => setShowMarkers(e.target.checked)}
+                        />
+                        Markers
                       </label>
                       {activeTf === "day" && (
                         <label>
@@ -1443,7 +1547,7 @@ export default function App() {
                     </div>
                   )}
                   <div ref={priceChartRef} className="chart" />
-                  {activeTf === "day" && showVolumePatternMarkers && selectedPattern && (
+                  {activeTf === "day" && showMarkers && selectedPattern && (
                     <div className="marker-detail-panel">
                       <div className="marker-detail-head">
                         <h4>패턴 상세</h4>
@@ -1499,7 +1603,7 @@ export default function App() {
                       </p>
                     </div>
                   )}
-                  {activeTf === "day" && showVolumePatternMarkers && !selectedPattern && (
+                  {activeTf === "day" && showMarkers && !selectedPattern && (
                     <p className="marker-detail-hint">차트 마커를 클릭하면 패턴 상세가 표시됩니다.</p>
                   )}
                 </div>

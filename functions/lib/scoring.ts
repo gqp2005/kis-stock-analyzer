@@ -1,4 +1,5 @@
 import { atr, bollingerBands, macd, rsi, sma } from "./indicators";
+import { buildMultiViewArtifacts } from "./overlays";
 import type {
   Candle,
   IndicatorPoint,
@@ -1006,6 +1007,7 @@ const analyzeWithConfig = (
       reasons: ["수급 데이터가 아직 제공되지 않았습니다."],
     },
   };
+  const multiView = buildMultiViewArtifacts(config.tf, candles, levels, signals);
 
   return {
     tf: config.tf,
@@ -1018,6 +1020,9 @@ const analyzeWithConfig = (
     levels,
     tradePlan,
     indicators,
+    overlays: multiView.overlays,
+    confluence: multiView.confluence,
+    explanations: multiView.explanations,
     candles,
   };
 };

@@ -131,6 +131,65 @@ export interface FlowSignal {
   reasons: string[];
 }
 
+export type OverlayLineGroup = "level" | "zone";
+export type OverlaySegmentKind = "trendlineUp" | "trendlineDown" | "channelLow" | "channelHigh";
+
+export interface OverlayPriceLine {
+  id: string;
+  group: OverlayLineGroup;
+  price: number;
+  label: string;
+  color?: string;
+}
+
+export interface OverlayZone {
+  id: string;
+  kind: "support" | "resistance";
+  low: number;
+  high: number;
+  strength: number;
+  touches: number;
+  reason: string;
+}
+
+export interface OverlaySegment {
+  id: string;
+  kind: OverlaySegmentKind;
+  t1: string;
+  p1: number;
+  t2: string;
+  p2: number;
+  label: string;
+  score: number;
+}
+
+export interface OverlayMarker {
+  id: string;
+  t: string;
+  type: VolumePatternType;
+  label: string;
+  desc: string;
+  position: "aboveBar" | "belowBar";
+  shape: "arrowUp" | "arrowDown" | "circle" | "square";
+  text: string;
+  color: string;
+  strength?: number;
+}
+
+export interface Overlays {
+  priceLines: OverlayPriceLine[];
+  zones: OverlayZone[];
+  segments: OverlaySegment[];
+  markers: OverlayMarker[];
+}
+
+export interface ConfluenceBand {
+  bandLow: number;
+  bandHigh: number;
+  strength: number;
+  reasons: string[];
+}
+
 export interface Signals {
   trend: {
     closeAboveMid: boolean;
@@ -201,6 +260,9 @@ export interface TimeframeAnalysis {
   };
   tradePlan: TradePlan;
   indicators: IndicatorSeries;
+  overlays: Overlays;
+  confluence: ConfluenceBand[];
+  explanations: string[];
   candles: Candle[];
 }
 
