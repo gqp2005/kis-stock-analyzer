@@ -20,8 +20,8 @@ vi.mock("../functions/lib/kis", () => ({
     })) as Candle[],
     cacheTtlSec: 60,
   })),
-  fetchKospiIndexCandles: vi.fn(async () => ({
-    index: "KOSPI",
+  fetchMarketIndexCandles: vi.fn(async (_env, _cache, market: "KOSPI" | "KOSDAQ") => ({
+    index: market,
     candles: Array.from({ length: 320 }, (_, index) => ({
       time: new Date(Date.UTC(2024, 0, 1 + index)).toISOString().slice(0, 10),
       open: 2500 + index * 0.5,
@@ -173,6 +173,15 @@ vi.mock("../functions/lib/screener", () => ({
       vcp: ["테스트 vcp"],
     },
     backtestSummary: { all: null, volume: null, hs: null, ihs: null, vcp: null },
+    rs: {
+      benchmark: "KOSPI",
+      ret63Diff: 0.04,
+      label: "NEUTRAL",
+    },
+    tuning: {
+      thresholds: { volume: 60, hs: 68, ihs: 65, vcp: 80 },
+      quality: 72,
+    },
   })),
 }));
 
@@ -237,6 +246,13 @@ describe("/api/admin/rebuild-screener", () => {
           insufficientData: 3,
           warnings: [],
           candidates: [],
+          failedItems: [],
+          retryStats: {
+            totalRetries: 0,
+            retriedSymbols: 0,
+            maxRetryPerSymbol: 0,
+          },
+          lastBatch: null,
         } as never,
       );
 

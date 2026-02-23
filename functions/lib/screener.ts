@@ -2,6 +2,7 @@ import stockList from "../../data/kr-stocks.json";
 import { sma } from "./indicators";
 import { analyzeTimeframe } from "./scoring";
 import { detectVcpPattern } from "./vcp";
+import { runWalkForwardTuning, type StrategyThresholds } from "./walkforward";
 import type {
   Candle,
   PatternHit,
@@ -29,9 +30,13 @@ export interface ScreenerUniverseEntry {
 }
 
 export interface ScreenerBenchmarkInput {
-  index: "KOSPI";
+  index: "KOSPI" | "KOSDAQ";
   candles: Candle[];
 }
+
+export type ScreenerBenchmarkMap = Partial<
+  Record<"KOSPI" | "KOSDAQ", ScreenerBenchmarkInput>
+>;
 
 interface PatternCandidate {
   hit: PatternHit;
@@ -76,6 +81,15 @@ export interface ScreenerStoredCandidate {
     ihs: StrategyBacktestSummary | null;
     vcp: StrategyBacktestSummary | null;
   };
+  rs: {
+    benchmark: "KOSPI" | "KOSDAQ";
+    ret63Diff: number | null;
+    label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A";
+  };
+  tuning: {
+    thresholds: StrategyThresholds;
+    quality: number | null;
+  } | null;
 }
 
 const stocks = stockList as StockEntry[];
@@ -107,70 +121,6 @@ const defaultPatternHit = (reason: string): PatternHit => ({
 });
 
 const defaultBacktestSummary = (): StrategyBacktestSummary | null => null;
-
-const defaultVcpHit = (reason: string): VcpHit => ({
-  detected: false,
-  state: "NONE",
-  score: 0,
-  resistance: {
-    price: null,
-    zoneLow: null,
-    zoneHigh: null,
-    touches: 0,
-  },
-  distanceToR: null,
-  breakDate: null,
-  contractions: [],
-  atr: {
-    atrPct20: null,
-    atrPct120: null,
-    shrink: false,
-  },
-  leadership: {
-    label: "WEAK",
-    ret63: null,
-    ret126: null,
-  },
-  pivot: {
-    label: "NONE",
-    nearHigh52: false,
-    newHigh52: false,
-    pivotReady: false,
-  },
-  volume: {
-    dryUp: false,
-    dryUpStrength: "NONE",
-    volRatioLast: null,
-    volRatioAvg10: null,
-  },
-  rs: {
-    index: "KOSPI",
-    ok: false,
-    rsVsMa90: false,
-    rsRet63: null,
-  },
-  risk: {
-    invalidLow: null,
-    entryRef: null,
-    riskPct: null,
-    riskGrade: "N/A",
-  },
-  breakout: {
-    confirmed: false,
-    rule: "close>R && volRatio>=1.5",
-  },
-  trendPass: false,
-  quality: {
-    baseWidthOk: false,
-    depthShrinkOk: false,
-    durationOk: false,
-    baseSpanBars: null,
-    baseLenOk: false,
-    baseDepthMax: null,
-    gapCrashFlags: 0,
-  },
-  reasons: [reason],
-});
 
 const getSwingHighs = (candles: Candle[], leftRight: number): Array<{ index: number; price: number; time: string }> => {
   const swings: Array<{ index: number; price: number; time: string }> = [];
@@ -554,6 +504,85 @@ const getDataAdjustment = (candles: Candle[]): { adjustment: number; reason: str
   return { adjustment: -10, reason: "분석 캔들 수가 부족해 신뢰도를 낮췄습니다." };
 };
 
+const computeReturn = (candles: Candle[], bars: number): number | null => {
+  if (candles.length <= bars) return null;
+  const last = candles[candles.length - 1].close;
+  const prev = candles[candles.length - 1 - bars].close;
+  if (!Number.isFinite(last) || !Number.isFinite(prev) || prev <= 0) return null;
+  return last / prev - 1;
+};
+
+const computeRsLabel = (
+  stockCandles: Candle[],
+  benchmark: ScreenerBenchmarkInput | null,
+): {
+  benchmark: "KOSPI" | "KOSDAQ";
+  ret63Diff: number | null;
+  label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A";
+} => {
+  if (!benchmark) {
+    return { benchmark: "KOSPI", ret63Diff: null, label: "N/A" };
+  }
+
+  const stockRet63 = computeReturn(stockCandles, 63);
+  const indexRet63 = computeReturn(benchmark.candles, 63);
+  const ret63Diff =
+    stockRet63 != null && indexRet63 != null ? stockRet63 - indexRet63 : null;
+
+  const benchMap = new Map(
+    benchmark.candles.map((candle) => [candle.time.slice(0, 10), candle.close]),
+  );
+  const rsSeries: number[] = [];
+  for (const candle of stockCandles) {
+    const benchClose = benchMap.get(candle.time.slice(0, 10));
+    if (benchClose == null || benchClose <= 0 || candle.close <= 0) continue;
+    rsSeries.push(candle.close / benchClose);
+  }
+  const rsMa30 = sma(rsSeries, 30);
+  const rsLatest = rsSeries[rsSeries.length - 1] ?? null;
+  const rsLatestMa30 = rsMa30[rsMa30.length - 1] ?? null;
+
+  let label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A" = "N/A";
+  if (ret63Diff != null && rsLatest != null && rsLatestMa30 != null) {
+    if (ret63Diff >= 0.05 && rsLatest >= rsLatestMa30) label = "STRONG";
+    else if (ret63Diff <= -0.05 || rsLatest < rsLatestMa30 * 0.97) label = "WEAK";
+    else label = "NEUTRAL";
+  }
+
+  return {
+    benchmark: benchmark.index,
+    ret63Diff: toNullableRounded(ret63Diff),
+    label,
+  };
+};
+
+const scoreAdjustmentFromRs = (label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A"): number => {
+  if (label === "STRONG") return 6;
+  if (label === "WEAK") return -8;
+  if (label === "NEUTRAL") return 0;
+  return -2;
+};
+
+const confidenceAdjustmentFromRs = (label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A"): number => {
+  if (label === "STRONG") return 8;
+  if (label === "WEAK") return -10;
+  if (label === "NEUTRAL") return 0;
+  return -3;
+};
+
+const confidenceAdjustmentFromTuning = (
+  score: number,
+  threshold: number,
+  quality: number,
+): number => {
+  if (quality <= 0) return 0;
+  const qualityFactor = quality >= 70 ? 1 : quality >= 45 ? 0.7 : 0.4;
+  if (score >= threshold + 10) return Math.round(8 * qualityFactor);
+  if (score >= threshold) return Math.round(4 * qualityFactor);
+  if (score >= threshold - 8) return Math.round(1 * qualityFactor);
+  return Math.round(-6 * qualityFactor);
+};
+
 const computeVcpConfidence = (vcp: VcpHit): number => {
   let confidence = 35;
   if (vcp.trendPass) confidence += 12;
@@ -726,36 +755,93 @@ export const analyzeScreenerRawCandidate = (
   stock: ScreenerUniverseEntry,
   candles: Candle[],
   includeBacktest: boolean,
-  benchmark: ScreenerBenchmarkInput | null = null,
+  benchmarks: ScreenerBenchmarkMap | null = null,
 ): ScreenerStoredCandidate | null => {
   if (candles.length < 140) return null;
 
+  const marketKey: "KOSPI" | "KOSDAQ" = stock.market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
+  const marketBenchmark = benchmarks?.[marketKey] ?? null;
   const day = analyzeTimeframe("day", candles.slice(-260));
   const hs = detectHeadShouldersPattern(day.candles);
   const ihs = detectInverseHeadShouldersPattern(day.candles);
   const volume = computeVolumeHit(day);
-  const vcp = detectVcpPattern(day.candles, benchmark);
+  const vcp = detectVcpPattern(day.candles, marketBenchmark);
+  const rsInfo = computeRsLabel(day.candles, marketBenchmark);
+  const rsScoreAdj = scoreAdjustmentFromRs(rsInfo.label);
+  const rsConfidenceAdj = confidenceAdjustmentFromRs(rsInfo.label);
+
+  const tuningResult = runWalkForwardTuning(day.candles);
+  const tuningQuality = toNullableRounded(
+    average([
+      tuningResult.metrics.volume.quality,
+      tuningResult.metrics.hs.quality,
+      tuningResult.metrics.ihs.quality,
+      tuningResult.metrics.vcp.quality,
+    ]),
+  );
+  const tuningScoreAdj =
+    (volume.score >= tuningResult.thresholds.volume ? 2 : -2) +
+    (ihs.score >= tuningResult.thresholds.ihs ? 2 : -2) +
+    (vcp.score >= tuningResult.thresholds.vcp ? 3 : -3) +
+    (hs.score >= tuningResult.thresholds.hs ? -2 : 1);
 
   const dataAdj = getDataAdjustment(day.candles);
   const liquidityAdj = getLiquidityAdjustment(day.candles);
-  const adjustment = dataAdj.adjustment + liquidityAdj.adjustment;
+  const adjustment = dataAdj.adjustment + liquidityAdj.adjustment + rsConfidenceAdj;
 
   const hsRisk = hs.detected ? hs.score : 50;
   const ihsStrength = ihs.detected ? ihs.score : 45;
   const vcpStrength = vcp.detected ? vcp.score : 35;
 
   const allScore = clampScore(
-    0.35 * volume.score + 0.25 * ihsStrength + 0.2 * (100 - hsRisk) + 0.2 * vcpStrength,
+    0.35 * volume.score +
+      0.25 * ihsStrength +
+      0.2 * (100 - hsRisk) +
+      0.2 * vcpStrength +
+      rsScoreAdj +
+      tuningScoreAdj,
   );
   const volumeScore = clampScore(volume.score);
   const hsScore = clampScore(hs.score);
   const ihsScore = clampScore(ihs.score);
   const vcpScore = clampScore(vcp.score);
 
-  const volumeConfidence = clampScore(volume.confidence + adjustment);
-  const hsConfidence = clampScore(hs.confidence + adjustment);
-  const ihsConfidence = clampScore(ihs.confidence + adjustment);
-  const vcpConfidence = clampScore(computeVcpConfidence(vcp) + adjustment);
+  const volumeConfidence = clampScore(
+    volume.confidence +
+      adjustment +
+      confidenceAdjustmentFromTuning(
+        volume.score,
+        tuningResult.thresholds.volume,
+        tuningResult.metrics.volume.quality,
+      ),
+  );
+  const hsConfidence = clampScore(
+    hs.confidence +
+      adjustment +
+      confidenceAdjustmentFromTuning(
+        hs.score,
+        tuningResult.thresholds.hs,
+        tuningResult.metrics.hs.quality,
+      ),
+  );
+  const ihsConfidence = clampScore(
+    ihs.confidence +
+      adjustment +
+      confidenceAdjustmentFromTuning(
+        ihs.score,
+        tuningResult.thresholds.ihs,
+        tuningResult.metrics.ihs.quality,
+      ),
+  );
+  const vcpConfidence = clampScore(
+    computeVcpConfidence(vcp) +
+      adjustment +
+      confidenceAdjustmentFromTuning(
+        vcp.score,
+        tuningResult.thresholds.vcp,
+        tuningResult.metrics.vcp.quality,
+      ),
+  );
   const allConfidence = clampScore(
     0.3 * volumeConfidence + 0.25 * ihsConfidence + 0.2 * hsConfidence + 0.25 * vcpConfidence,
   );
@@ -785,6 +871,24 @@ export const analyzeScreenerRawCandidate = (
   if (!vcp.rs.ok) {
     sharedReasons.push("VCP RS 필터가 미충족이거나 지수 데이터가 부족합니다.");
   }
+  if (rsInfo.label === "STRONG") {
+    sharedReasons.push(
+      `${rsInfo.benchmark} 대비 상대강도가 강합니다${
+        rsInfo.ret63Diff != null ? ` (63일 초과수익 ${(rsInfo.ret63Diff * 100).toFixed(1)}%)` : ""
+      }.`,
+    );
+  } else if (rsInfo.label === "WEAK") {
+    sharedReasons.push(
+      `${rsInfo.benchmark} 대비 상대강도가 약해 보수적으로 반영했습니다${
+        rsInfo.ret63Diff != null ? ` (63일 열위 ${(rsInfo.ret63Diff * 100).toFixed(1)}%)` : ""
+      }.`,
+    );
+  } else if (rsInfo.label === "N/A") {
+    sharedReasons.push("지수 상대강도 데이터가 부족해 RS 필터를 약하게 적용했습니다.");
+  }
+  sharedReasons.push(
+    `워크포워드 튜닝 임계값 V/H/I/VCP=${tuningResult.thresholds.volume}/${tuningResult.thresholds.hs}/${tuningResult.thresholds.ihs}/${tuningResult.thresholds.vcp}, 품질 ${tuningQuality ?? 0}점.`,
+  );
 
   const allReasons = [
     ...volume.reasons,
@@ -828,7 +932,7 @@ export const analyzeScreenerRawCandidate = (
       volume,
       hs,
       ihs,
-      vcp: vcp.detected ? vcp : defaultVcpHit(vcp.reasons[0] ?? "VCP 패턴 미감지"),
+      vcp,
     },
     scoring: {
       all: { score: allScore, confidence: allConfidence },
@@ -851,6 +955,11 @@ export const analyzeScreenerRawCandidate = (
       ihs: backtestIhs,
       vcp: backtestVcp,
     },
+    rs: rsInfo,
+    tuning: {
+      thresholds: tuningResult.thresholds,
+      quality: tuningQuality,
+    },
   };
 };
 
@@ -872,6 +981,13 @@ export const materializeScreenerItem = (
   const scoreTotal = raw.scoring[key].score;
   const confidence = raw.scoring[key].confidence;
   const overallLabel = getOverallLabel(scoreTotal, confidence, raw.hits.hs);
+  const rs =
+    raw.rs ??
+    ({
+      benchmark: "KOSPI",
+      ret63Diff: null,
+      label: "N/A",
+    } as const);
 
   return {
     code: raw.code,
@@ -886,11 +1002,16 @@ export const materializeScreenerItem = (
     reasons: raw.reasons[key].slice(0, 6),
     levels: raw.levels,
     backtestSummary: raw.backtestSummary[key],
+    rs,
+    tuning: raw.tuning ?? null,
   };
 };
 
 export const isWarningCandidate = (item: ScreenerItem): boolean =>
   item.hits.hs.detected && item.hits.hs.state === "CONFIRMED";
+
+const isRsQualified = (item: ScreenerItem): boolean =>
+  item.rs.label !== "WEAK";
 
 const sortByScore = (items: ScreenerItem[]): ScreenerItem[] =>
   [...items].sort((a, b) => b.scoreTotal - a.scoreTotal || b.confidence - a.confidence);
@@ -922,10 +1043,14 @@ export const buildScreenerView = (
     0,
     Math.max(5, count),
   );
+  const rsFilteredItems =
+    strategy === "HS"
+      ? rawItems
+      : rawItems.filter((item) => isRsQualified(item));
   const items =
     strategy === "VCP"
-      ? rawItems.filter((item) => item.hits.vcp.detected && item.hits.vcp.score >= 80)
-      : rawItems;
+      ? rsFilteredItems.filter((item) => item.hits.vcp.detected && item.hits.vcp.score >= 80)
+      : rsFilteredItems;
 
   if (strategy === "HS") {
     return {

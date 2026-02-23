@@ -24,6 +24,60 @@ export const rebuildLockKey = (): string =>
 export const rebuildProgressKey = (date: string): string =>
   toCacheUrl(`screener:v1:rebuild-progress:${date}`);
 
+export interface RebuildFailureItem {
+  code: string;
+  name: string;
+  market: string;
+  reason: string;
+  retries: number;
+  at: string;
+}
+
+export interface RebuildRetryStats {
+  totalRetries: number;
+  retriedSymbols: number;
+  maxRetryPerSymbol: number;
+}
+
+export interface ScreenerRankChangeItem {
+  code: string;
+  name: string;
+  market: string;
+  prevRank: number | null;
+  currRank: number | null;
+  deltaRank: number | null;
+  score: number;
+  confidence: number;
+}
+
+export interface ScreenerChangeSummary {
+  generatedAt: string;
+  basisTopN: number;
+  added: ScreenerRankChangeItem[];
+  removed: ScreenerRankChangeItem[];
+  risers: ScreenerRankChangeItem[];
+  fallers: ScreenerRankChangeItem[];
+}
+
+export interface ScreenerRsSummary {
+  enabled: boolean;
+  benchmarkMarkets: string[];
+  matched: number;
+  weak: number;
+  missing: number;
+}
+
+export interface ScreenerTuningSummary {
+  enabled: boolean;
+  sampleCount: number;
+  avgThresholds: {
+    volume: number;
+    hs: number;
+    ihs: number;
+    vcp: number;
+  } | null;
+}
+
 export interface UniverseSnapshot {
   date: string;
   updatedAt: string;
@@ -42,6 +96,18 @@ export interface ScreenerSnapshot {
   warnings: string[];
   candidates: ScreenerStoredCandidate[];
   topCandidates: ScreenerStoredCandidate[];
+  changeSummary?: ScreenerChangeSummary | null;
+  rsSummary?: ScreenerRsSummary | null;
+  tuningSummary?: ScreenerTuningSummary | null;
+  rebuildMeta?: {
+    durationMs: number;
+    batchSize: number;
+    kisCalls: number;
+    ohlcvFailures: number;
+    insufficientData: number;
+    failedItems: RebuildFailureItem[];
+    retryStats: RebuildRetryStats;
+  };
 }
 
 export interface RebuildProgressSnapshot {
@@ -55,4 +121,11 @@ export interface RebuildProgressSnapshot {
   insufficientData: number;
   warnings: string[];
   candidates: ScreenerStoredCandidate[];
+  failedItems: RebuildFailureItem[];
+  retryStats: RebuildRetryStats;
+  lastBatch: {
+    from: number;
+    to: number;
+    batchSize: number;
+  } | null;
 }

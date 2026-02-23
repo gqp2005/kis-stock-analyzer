@@ -35,7 +35,7 @@ interface RawContraction {
 }
 
 interface BenchmarkInput {
-  index: "KOSPI";
+  index: "KOSPI" | "KOSDAQ";
   candles: Candle[];
 }
 
@@ -94,10 +94,10 @@ const defaultVcpHit = (reason: string): VcpHit => ({
     volRatioLast: null,
     volRatioAvg10: null,
   },
-  rs: {
-    index: "KOSPI",
-    ok: false,
-    rsVsMa90: false,
+    rs: {
+      index: "KOSPI",
+      ok: false,
+      rsVsMa90: false,
     rsRet63: null,
   },
   risk: {
@@ -534,6 +534,7 @@ export const detectVcpPattern = (
   const ret63 = computeReturn(closes, 63);
   const ret126 = computeReturn(closes, 126);
   const rs = computeRsSignal(sample, benchmark);
+  const benchmarkIndex = benchmark?.index ?? "KOSPI";
   const rsOk = rs.ok;
   const rsVsMa90 = rs.rsVsMa90;
   const rsRet63 = rs.rsRet63;
@@ -672,7 +673,7 @@ export const detectVcpPattern = (
       volRatioAvg10: toNullableRounded(avgVolRatio10),
     },
     rs: {
-      index: "KOSPI",
+      index: benchmarkIndex,
       ok: rsOk,
       rsVsMa90,
       rsRet63: toNullableRounded(rsRet63),

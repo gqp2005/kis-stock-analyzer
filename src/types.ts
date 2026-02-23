@@ -351,7 +351,7 @@ export interface VcpHit {
     volRatioAvg10: number | null;
   };
   rs: {
-    index: "KOSPI";
+    index: "KOSPI" | "KOSDAQ";
     ok: boolean;
     rsVsMa90: boolean;
     rsRet63: number | null;
@@ -428,6 +428,20 @@ export interface ScreenerItem {
     neckline: number | null;
   };
   backtestSummary: StrategyBacktestSummary | null;
+  rs: {
+    benchmark: "KOSPI" | "KOSDAQ";
+    ret63Diff: number | null;
+    label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A";
+  };
+  tuning: {
+    thresholds: {
+      volume: number;
+      hs: number;
+      ihs: number;
+      vcp: number;
+    };
+    quality: number | null;
+  } | null;
 }
 
 export interface ScreenerResponse {
@@ -445,6 +459,39 @@ export interface ScreenerResponse {
     cacheTtlSec: number;
     includeBacktest: boolean;
     rebuildRequired: boolean;
+    changeSummary?: {
+      basisTopN: number;
+      added: Array<{ code: string; name: string; currRank: number | null }>;
+      removed: Array<{ code: string; name: string; prevRank: number | null }>;
+      risers: Array<{ code: string; name: string; prevRank: number | null; currRank: number | null }>;
+      fallers: Array<{ code: string; name: string; prevRank: number | null; currRank: number | null }>;
+    } | null;
+    rsSummary?: {
+      enabled: boolean;
+      benchmarkMarkets: string[];
+      matched: number;
+      weak: number;
+      missing: number;
+    } | null;
+    tuningSummary?: {
+      enabled: boolean;
+      sampleCount: number;
+      avgThresholds: {
+        volume: number;
+        hs: number;
+        ihs: number;
+        vcp: number;
+      } | null;
+    } | null;
+    lastRebuildStatus?: {
+      inProgress: boolean;
+      processed: number;
+      total: number;
+      updatedAt: string | null;
+      failedCount: number;
+      retriedSymbols: number;
+      totalRetries: number;
+    } | null;
   };
   items: ScreenerItem[];
   warningItems: ScreenerItem[];

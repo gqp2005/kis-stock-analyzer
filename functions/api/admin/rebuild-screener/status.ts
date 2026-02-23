@@ -31,6 +31,22 @@ const computeLockState = (startedAt: string | undefined): { stale: boolean; ageS
   return { stale: ageSec > LOCK_STALE_SEC, ageSec };
 };
 
+const normalizeProgress = (
+  progress: RebuildProgressSnapshot | null,
+): RebuildProgressSnapshot | null => {
+  if (!progress) return null;
+  return {
+    ...progress,
+    failedItems: Array.isArray(progress.failedItems) ? progress.failedItems : [],
+    retryStats: progress.retryStats ?? {
+      totalRetries: 0,
+      retriedSymbols: 0,
+      maxRetryPerSymbol: 0,
+    },
+    lastBatch: progress.lastBatch ?? null,
+  };
+};
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const metrics = createRequestMetrics(context.request);
   const finalize = (response: Response): Response => attachMetrics(response, metrics);
@@ -47,7 +63,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const lock = await getCachedJson<{ startedAt?: string }>(cache, rebuildLockKey());
     const lockState = computeLockState(lock?.startedAt);
-    const progress = await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date));
+    const progress = normalizeProgress(
+      await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date)),
+    );
     const todaySnapshot = await getCachedJson<ScreenerSnapshot>(cache, screenerDateKey(date));
     const lastSuccessSnapshot =
       todaySnapshot ?? (await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey()));
@@ -76,6 +94,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               processedCount: progress.processedCount,
               ohlcvFailures: progress.ohlcvFailures,
               insufficientData: progress.insufficientData,
+              failedCount: progress.failedItems.length,
+              failedItems: progress.failedItems.slice(-20),
+              retryStats: progress.retryStats,
+              lastBatch: progress.lastBatch,
               startedAt: progress.startedAt,
               updatedAt: progress.updatedAt,
             }
@@ -89,6 +111,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               candidateCount: lastSuccessSnapshot.candidates.length,
               topStored: lastSuccessSnapshot.topCandidates.length,
               warnings: lastSuccessSnapshot.warnings.slice(0, 10),
+              changeSummary: lastSuccessSnapshot.changeSummary ?? null,
+              rsSummary: lastSuccessSnapshot.rsSummary ?? null,
+              tuningSummary: lastSuccessSnapshot.tuningSummary ?? null,
+              rebuildMeta: lastSuccessSnapshot.rebuildMeta ?? null,
             }
           : null,
         message: inProgress

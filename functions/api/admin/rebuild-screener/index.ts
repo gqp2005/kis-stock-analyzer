@@ -1,14 +1,22 @@
 import { getCachedJson, putCachedJson } from "../../../lib/cache";
-import { fetchKospiIndexCandles, fetchTimeframeCandles } from "../../../lib/kis";
+import { fetchMarketIndexCandles, fetchTimeframeCandles } from "../../../lib/kis";
 import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
 import { errorJson, json, serverError } from "../../../lib/response";
-import { analyzeScreenerRawCandidate, type ScreenerBenchmarkInput } from "../../../lib/screener";
+import {
+  analyzeScreenerRawCandidate,
+  type ScreenerBenchmarkMap,
+  type ScreenerStoredCandidate,
+} from "../../../lib/screener";
 import {
   REBUILD_LOCK_TTL_SEC,
   SCREENER_CACHE_TTL_SEC,
+  type RebuildFailureItem,
   type RebuildProgressSnapshot,
+  type ScreenerChangeSummary,
   type ScreenerSnapshot,
+  type ScreenerTuningSummary,
+  type ScreenerRsSummary,
   type UniverseSnapshot,
   rebuildLockKey,
   rebuildProgressKey,
@@ -25,7 +33,10 @@ const TOP_N_STORE = 50;
 const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 120;
 const PARALLEL_PER_BATCH = 2;
+const ITEM_MAX_RETRIES = 2;
 const LOCK_STALE_SEC = 5 * 60;
+const MAX_FAILED_ITEMS_KEEP = 40;
+const CHANGE_BASIS_TOP_N = 30;
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
@@ -153,7 +164,181 @@ const createProgress = (
   insufficientData: 0,
   warnings: dedupeWarnings(warnings),
   candidates: [],
+  failedItems: [],
+  retryStats: {
+    totalRetries: 0,
+    retriedSymbols: 0,
+    maxRetryPerSymbol: 0,
+  },
+  lastBatch: null,
 });
+
+const normalizeProgress = (progress: RebuildProgressSnapshot): RebuildProgressSnapshot => ({
+  ...progress,
+  failedItems: Array.isArray(progress.failedItems) ? progress.failedItems : [],
+  retryStats: progress.retryStats ?? {
+    totalRetries: 0,
+    retriedSymbols: 0,
+    maxRetryPerSymbol: 0,
+  },
+  lastBatch: progress.lastBatch ?? null,
+});
+
+const buildChangeSummary = (
+  previous: ScreenerSnapshot | null,
+  current: ScreenerStoredCandidate[],
+): ScreenerChangeSummary | null => {
+  const currentTop = current.slice(0, CHANGE_BASIS_TOP_N);
+  if (!previous) {
+    return {
+      generatedAt: nowIsoKst(),
+      basisTopN: CHANGE_BASIS_TOP_N,
+      added: currentTop.slice(0, 10).map((candidate, index) => ({
+        code: candidate.code,
+        name: candidate.name,
+        market: candidate.market,
+        prevRank: null,
+        currRank: index + 1,
+        deltaRank: null,
+        score: candidate.scoring.all.score,
+        confidence: candidate.scoring.all.confidence,
+      })),
+      removed: [],
+      risers: [],
+      fallers: [],
+    };
+  }
+
+  const previousTop = previous.topCandidates.slice(0, CHANGE_BASIS_TOP_N);
+  const prevRank = new Map(previousTop.map((candidate, index) => [candidate.code, index + 1]));
+  const curRank = new Map(currentTop.map((candidate, index) => [candidate.code, index + 1]));
+
+  const currentByCode = new Map(currentTop.map((candidate) => [candidate.code, candidate]));
+  const previousByCode = new Map(previousTop.map((candidate) => [candidate.code, candidate]));
+
+  const added = currentTop
+    .filter((candidate) => !prevRank.has(candidate.code))
+    .map((candidate, index) => ({
+      code: candidate.code,
+      name: candidate.name,
+      market: candidate.market,
+      prevRank: null,
+      currRank: curRank.get(candidate.code) ?? index + 1,
+      deltaRank: null,
+      score: candidate.scoring.all.score,
+      confidence: candidate.scoring.all.confidence,
+    }))
+    .slice(0, 10);
+
+  const removed = previousTop
+    .filter((candidate) => !curRank.has(candidate.code))
+    .map((candidate, index) => ({
+      code: candidate.code,
+      name: candidate.name,
+      market: candidate.market,
+      prevRank: prevRank.get(candidate.code) ?? index + 1,
+      currRank: null,
+      deltaRank: null,
+      score: candidate.scoring.all.score,
+      confidence: candidate.scoring.all.confidence,
+    }))
+    .slice(0, 10);
+
+  const movers = currentTop
+    .filter((candidate) => prevRank.has(candidate.code))
+    .map((candidate) => {
+      const before = prevRank.get(candidate.code) ?? 0;
+      const after = curRank.get(candidate.code) ?? 0;
+      const deltaRank = before - after;
+      return {
+        code: candidate.code,
+        name: candidate.name,
+        market: candidate.market,
+        prevRank: before,
+        currRank: after,
+        deltaRank,
+        score: candidate.scoring.all.score,
+        confidence: candidate.scoring.all.confidence,
+      };
+    });
+
+  const risers = movers
+    .filter((item) => (item.deltaRank ?? 0) > 0)
+    .sort((a, b) => (b.deltaRank ?? 0) - (a.deltaRank ?? 0))
+    .slice(0, 10);
+
+  const fallers = movers
+    .filter((item) => (item.deltaRank ?? 0) < 0)
+    .sort((a, b) => (a.deltaRank ?? 0) - (b.deltaRank ?? 0))
+    .slice(0, 10);
+
+  // 남아있는 코드의 점수/신뢰도는 최신 값을 우선 사용한다.
+  for (const item of removed) {
+    const cur = currentByCode.get(item.code);
+    const prev = previousByCode.get(item.code);
+    if (cur) {
+      item.score = cur.scoring.all.score;
+      item.confidence = cur.scoring.all.confidence;
+    } else if (prev) {
+      item.score = prev.scoring.all.score;
+      item.confidence = prev.scoring.all.confidence;
+    }
+  }
+
+  return {
+    generatedAt: nowIsoKst(),
+    basisTopN: CHANGE_BASIS_TOP_N,
+    added,
+    removed,
+    risers,
+    fallers,
+  };
+};
+
+const buildRsSummary = (candidates: ScreenerStoredCandidate[]): ScreenerRsSummary => {
+  const benchmarkMarkets = [...new Set(candidates.map((candidate) => candidate.rs.benchmark))];
+  const weak = candidates.filter((candidate) => candidate.rs.label === "WEAK").length;
+  const matched = candidates.filter(
+    (candidate) => candidate.rs.label === "STRONG" || candidate.rs.label === "NEUTRAL",
+  ).length;
+  const missing = candidates.filter((candidate) => candidate.rs.label === "N/A").length;
+
+  return {
+    enabled: true,
+    benchmarkMarkets,
+    matched,
+    weak,
+    missing,
+  };
+};
+
+const buildTuningSummary = (candidates: ScreenerStoredCandidate[]): ScreenerTuningSummary => {
+  const tunings = candidates
+    .map((candidate) => candidate.tuning)
+    .filter((item): item is NonNullable<ScreenerStoredCandidate["tuning"]> => item != null);
+
+  if (tunings.length === 0) {
+    return {
+      enabled: true,
+      sampleCount: 0,
+      avgThresholds: null,
+    };
+  }
+
+  const avg = (values: number[]): number =>
+    Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+
+  return {
+    enabled: true,
+    sampleCount: tunings.length,
+    avgThresholds: {
+      volume: avg(tunings.map((item) => item.thresholds.volume)),
+      hs: avg(tunings.map((item) => item.thresholds.hs)),
+      ihs: avg(tunings.map((item) => item.thresholds.ihs)),
+      vcp: avg(tunings.map((item) => item.thresholds.vcp)),
+    },
+  };
+};
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const metrics = createRequestMetrics(context.request);
@@ -172,7 +357,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const lockReq = new Request(lockKey);
   const existingLock = await getCachedJson<{ startedAt: string }>(cache, lockKey);
   if (existingLock && !isLockStale(existingLock.startedAt)) {
-    const progress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
+    const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
+    const progress = cachedProgress ? normalizeProgress(cachedProgress) : null;
     return finalize(
       json(
         {
@@ -192,6 +378,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
                 remaining: Math.max(0, progress.universeCount - progress.cursor),
                 batchSize: parseBatchSize(url),
                 nextCursor: progress.cursor,
+                failedCount: progress.failedItems.length,
+                retryStats: progress.retryStats,
+                lastBatch: progress.lastBatch,
               }
             : null,
           summary: progress
@@ -200,6 +389,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
                 candidateCount: progress.candidates.length,
                 durationMs: null,
                 kisCalls: metrics.kisCalls,
+                failedCount: progress.failedItems.length,
+                retryStats: progress.retryStats,
               }
             : null,
           warnings: progress?.warnings ?? [],
@@ -233,20 +424,30 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const universeLoad = await loadUniverseSnapshot(cache, date);
     const universe = universeLoad.snapshot.items.slice(0, TARGET_UNIVERSE);
-    let benchmark: ScreenerBenchmarkInput | null = null;
+    const benchmarks: ScreenerBenchmarkMap = {};
     const benchmarkWarnings: string[] = [];
-    try {
-      const kospi = await fetchKospiIndexCandles(context.env, cache, 320, metrics);
-      benchmark = { index: kospi.index, candles: kospi.candles };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown";
-      benchmarkWarnings.push(`KOSPI 지수 조회 실패로 RS 필터를 비활성 처리했습니다: ${message}`);
+    for (const market of ["KOSPI", "KOSDAQ"] as const) {
+      try {
+        const indexData = await fetchMarketIndexCandles(
+          context.env,
+          cache,
+          market,
+          320,
+          metrics,
+        );
+        benchmarks[market] = { index: indexData.index, candles: indexData.candles };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown";
+        benchmarkWarnings.push(
+          `${market} 지수 조회 실패로 RS 필터 일부를 비활성 처리했습니다: ${message}`,
+        );
+      }
     }
 
     const prevProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     let progress =
       prevProgress && prevProgress.universeCount === universe.length
-        ? prevProgress
+        ? normalizeProgress(prevProgress)
         : createProgress(date, universe.length, [
             ...universeLoad.providerWarnings,
             ...universeLoad.snapshot.warnings,
@@ -258,33 +459,73 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const batchItems = universe.slice(start, endExclusive);
 
     const batchResults = await mapLimit(batchItems, PARALLEL_PER_BATCH, async (entry) => {
-      try {
-        const fetched = await fetchTimeframeCandles(
-          context.env,
-          cache,
-          entry.code,
-          "day",
-          280,
-          metrics,
-        );
-        const candidate = analyzeScreenerRawCandidate(
-          entry,
-          fetched.candles.slice(-280),
-          false,
-          benchmark,
-        );
-        if (!candidate) {
-          return { kind: "insufficient" as const, candidate: null };
+      let attempt = 0;
+      while (attempt <= ITEM_MAX_RETRIES) {
+        try {
+          const fetched = await fetchTimeframeCandles(
+            context.env,
+            cache,
+            entry.code,
+            "day",
+            280,
+            metrics,
+          );
+          const candidate = analyzeScreenerRawCandidate(
+            entry,
+            fetched.candles.slice(-280),
+            false,
+            benchmarks,
+          );
+          if (!candidate) {
+            return {
+              kind: "insufficient" as const,
+              candidate: null,
+              retries: attempt,
+              reason: "데이터 부족",
+            };
+          }
+          return {
+            kind: "ok" as const,
+            candidate,
+            retries: attempt,
+            reason: "",
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          if (attempt >= ITEM_MAX_RETRIES) {
+            console.log(
+              `[rebuild-screener-item-fail] code=${entry.code} retries=${attempt} reason=${message}`,
+            );
+            return {
+              kind: "failed" as const,
+              candidate: null,
+              retries: attempt,
+              reason: message,
+            };
+          }
+          attempt += 1;
         }
-        return { kind: "ok" as const, candidate };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown error";
-        console.log(`[rebuild-screener-item-fail] code=${entry.code} reason=${message}`);
-        return { kind: "failed" as const, candidate: null };
       }
+
+      return {
+        kind: "failed" as const,
+        candidate: null,
+        retries: ITEM_MAX_RETRIES,
+        reason: "unknown failure",
+      };
     });
 
-    for (const result of batchResults) {
+    for (let batchIndex = 0; batchIndex < batchResults.length; batchIndex += 1) {
+      const result = batchResults[batchIndex];
+      if (result.retries > 0) {
+        progress.retryStats.totalRetries += result.retries;
+        progress.retryStats.retriedSymbols += 1;
+        progress.retryStats.maxRetryPerSymbol = Math.max(
+          progress.retryStats.maxRetryPerSymbol,
+          result.retries,
+        );
+      }
+
       if (result.kind === "ok" && result.candidate) {
         progress.candidates.push(result.candidate);
         progress.processedCount += 1;
@@ -292,10 +533,29 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         progress.insufficientData += 1;
       } else {
         progress.ohlcvFailures += 1;
+        if (progress.failedItems.length < MAX_FAILED_ITEMS_KEEP) {
+          const sourceEntry = batchItems[batchIndex];
+          if (sourceEntry) {
+            const failedItem: RebuildFailureItem = {
+              code: sourceEntry.code,
+              name: sourceEntry.name,
+              market: sourceEntry.market,
+              reason: result.reason || "OHLCV 조회 실패",
+              retries: result.retries,
+              at: nowIsoKst(),
+            };
+            progress.failedItems.push(failedItem);
+          }
+        }
       }
     }
     progress.cursor = endExclusive;
     progress.updatedAt = nowIsoKst();
+    progress.lastBatch = {
+      from: start,
+      to: endExclusive,
+      batchSize,
+    };
     progress.warnings = dedupeWarnings([
       ...progress.warnings,
       ...universeLoad.providerWarnings,
@@ -306,6 +566,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         : "",
       progress.ohlcvFailures > 0
         ? `OHLCV 조회 실패 ${progress.ohlcvFailures}종목 제외`
+        : "",
+      progress.retryStats.retriedSymbols > 0
+        ? `재시도 수행 ${progress.retryStats.retriedSymbols}종목 / 총 ${progress.retryStats.totalRetries}회`
         : "",
     ].filter((msg) => msg.length > 0));
 
@@ -322,6 +585,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           cursor: progress.cursor,
           total: universe.length,
           candidateCount: progress.candidates.length,
+          failedCount: progress.failedItems.length,
+          retries: progress.retryStats.totalRetries,
           kisCalls: metrics.kisCalls,
         })}`,
       );
@@ -344,13 +609,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
               remaining: universe.length - progress.cursor,
               batchSize,
               nextCursor: progress.cursor,
+              failedCount: progress.failedItems.length,
+              retryStats: progress.retryStats,
+              lastBatch: progress.lastBatch,
             },
             summary: {
               processedCount: progress.processedCount,
               candidateCount: progress.candidates.length,
               durationMs,
               kisCalls: metrics.kisCalls,
+              failedCount: progress.failedItems.length,
+              retryStats: progress.retryStats,
             },
+            failedItems: progress.failedItems.slice(-10),
             warnings: progress.warnings,
             message: "재빌드가 진행 중입니다. 같은 엔드포인트를 다시 호출하면 이어서 처리합니다.",
           },
@@ -360,6 +631,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     const candidates = sortByAllScore(progress.candidates);
+    const previousSnapshot = await getCachedJson<ScreenerSnapshot>(
+      cache,
+      screenerLastSuccessKey(),
+    );
+    const changeSummary = buildChangeSummary(previousSnapshot ?? null, candidates);
+    const rsSummary = buildRsSummary(candidates);
+    const tuningSummary = buildTuningSummary(candidates);
+    const durationMs = Date.now() - startedAtMs;
+
     const snapshot: ScreenerSnapshot = {
       date,
       updatedAt: nowIsoKst(),
@@ -370,13 +650,24 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       warnings: progress.warnings,
       candidates,
       topCandidates: candidates.slice(0, TOP_N_STORE),
+      changeSummary,
+      rsSummary,
+      tuningSummary,
+      rebuildMeta: {
+        durationMs,
+        batchSize,
+        kisCalls: metrics.kisCalls,
+        ohlcvFailures: progress.ohlcvFailures,
+        insufficientData: progress.insufficientData,
+        failedItems: progress.failedItems.slice(-MAX_FAILED_ITEMS_KEEP),
+        retryStats: progress.retryStats,
+      },
     };
 
     await putCachedJson(cache, screenerDateKey(date), snapshot, SCREENER_CACHE_TTL_SEC);
     await putCachedJson(cache, screenerLastSuccessKey(), snapshot, SCREENER_CACHE_TTL_SEC);
     await cache.delete(new Request(progressKey));
 
-    const durationMs = Date.now() - startedAtMs;
     console.log(
       `[rebuild-screener-done] ${JSON.stringify({
         date,
@@ -389,6 +680,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         candidateCount: candidates.length,
         ohlcvFailures: progress.ohlcvFailures,
         insufficientData: progress.insufficientData,
+        failedCount: progress.failedItems.length,
+        retries: progress.retryStats.totalRetries,
         kisCalls: metrics.kisCalls,
       })}`,
     );
@@ -411,7 +704,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             topStored: snapshot.topCandidates.length,
             durationMs,
             kisCalls: metrics.kisCalls,
+            failedCount: progress.failedItems.length,
+            retryStats: progress.retryStats,
           },
+          failedItems: progress.failedItems.slice(-10),
+          changes: changeSummary,
+          rsSummary,
+          tuningSummary,
           warnings: snapshot.warnings,
         },
         200,

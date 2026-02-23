@@ -68,6 +68,9 @@ const formatDepth = (value: number | null): string =>
 const formatSignedPercent = (value: number | null): string =>
   value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 
+const formatSignedRatioPercent = (value: number | null): string =>
+  value == null ? "-" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+
 const formatDistancePercent = (value: number | null): string =>
   value == null ? "-" : `${(Math.abs(value) * 100).toFixed(2)}%`;
 
@@ -98,6 +101,13 @@ const riskGradeLabel = (value: VcpRiskGrade): string => {
   if (value === "OK") return "OK";
   if (value === "HIGH") return "HIGH";
   if (value === "BAD") return "BAD";
+  return "N/A";
+};
+
+const rsStrengthLabel = (value: "STRONG" | "NEUTRAL" | "WEAK" | "N/A"): string => {
+  if (value === "STRONG") return "강함";
+  if (value === "NEUTRAL") return "보통";
+  if (value === "WEAK") return "약함";
   return "N/A";
 };
 
@@ -235,6 +245,47 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
               마지막 갱신: {response.meta.lastUpdatedAt ?? "없음"}
               {response.meta.rebuildRequired ? " · rebuild 필요" : " · 최신"}
             </p>
+            {response.meta.lastRebuildStatus && (
+              <p className="meta">
+                리빌드 상태: {response.meta.lastRebuildStatus.inProgress ? "진행 중" : "대기"} ·{" "}
+                {response.meta.lastRebuildStatus.processed}/{response.meta.lastRebuildStatus.total} · 실패{" "}
+                {response.meta.lastRebuildStatus.failedCount}개 · 재시도{" "}
+                {response.meta.lastRebuildStatus.totalRetries}회
+              </p>
+            )}
+            {response.meta.rsSummary && (
+              <p className="meta">
+                RS 필터: 매칭 {response.meta.rsSummary.matched} · 약세 {response.meta.rsSummary.weak} ·
+                데이터부족 {response.meta.rsSummary.missing}
+              </p>
+            )}
+            {response.meta.tuningSummary && (
+              <p className="meta">
+                워크포워드 튜닝: 표본 {response.meta.tuningSummary.sampleCount} · 평균 임계값
+                {response.meta.tuningSummary.avgThresholds
+                  ? ` V/H/I/VCP=${response.meta.tuningSummary.avgThresholds.volume}/${response.meta.tuningSummary.avgThresholds.hs}/${response.meta.tuningSummary.avgThresholds.ihs}/${response.meta.tuningSummary.avgThresholds.vcp}`
+                  : " 없음"}
+              </p>
+            )}
+            {response.meta.changeSummary && (
+              <div className="screener-hit-row">
+                {response.meta.changeSummary.added.slice(0, 3).map((item) => (
+                  <small key={`added-${item.code}`} className="reason-tag positive">
+                    신규 {item.name} #{item.currRank ?? "-"}
+                  </small>
+                ))}
+                {response.meta.changeSummary.risers.slice(0, 3).map((item) => (
+                  <small key={`rise-${item.code}`} className="reason-tag positive">
+                    상승 {item.name} #{item.prevRank ?? "-"}→#{item.currRank ?? "-"}
+                  </small>
+                ))}
+                {response.meta.changeSummary.fallers.slice(0, 2).map((item) => (
+                  <small key={`fall-${item.code}`} className="reason-tag negative">
+                    하락 {item.name} #{item.prevRank ?? "-"}→#{item.currRank ?? "-"}
+                  </small>
+                ))}
+              </div>
+            )}
             {response.warnings.length > 0 && (
               <ul>
                 {response.warnings.map((warning) => (
@@ -320,6 +371,17 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                         {formatPrice(item.hits.vcp.risk.invalidLow)})
                       </small>
                     </div>
+                    <div className="screener-levels vcp-kpi-row">
+                      <small>
+                        RS {rsStrengthLabel(item.rs.label)} ({formatSignedRatioPercent(item.rs.ret63Diff)})
+                      </small>
+                      <small>
+                        튜닝 품질 {item.tuning?.quality != null ? `${item.tuning.quality}점` : "-"}
+                      </small>
+                      <small>
+                        VCP 컷 {item.tuning?.thresholds.vcp ?? "-"}점
+                      </small>
+                    </div>
                     <div className="vcp-strip">
                       <small
                         className={item.hits.vcp.pivot.nearHigh52 ? "reason-tag positive" : "reason-tag neutral"}
@@ -352,6 +414,17 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       <span className="reason-tag positive">
                         거래량 {formatScore(item.hits.volume.score)} / {item.hits.volume.confidence}
                       </span>
+                      <span
+                        className={
+                          item.rs.label === "STRONG"
+                            ? "reason-tag positive"
+                            : item.rs.label === "WEAK"
+                              ? "reason-tag negative"
+                              : "reason-tag neutral"
+                        }
+                      >
+                        RS {rsStrengthLabel(item.rs.label)} ({formatSignedRatioPercent(item.rs.ret63Diff)})
+                      </span>
                       <span className={item.hits.vcp.detected ? "reason-tag positive" : "reason-tag neutral"}>
                         VCP {vcpStateLabel(item.hits.vcp.state)} / {item.hits.vcp.score}
                       </span>
@@ -361,6 +434,17 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       <span className="reason-tag positive">
                         IHS {hsStateLabel(item.hits.ihs.state)} / {item.hits.ihs.score}
                       </span>
+                    </div>
+                    <div className="screener-hit-row">
+                      <small className="reason-tag neutral">
+                        튜닝 임계값 V/H/I/VCP{" "}
+                        {item.tuning
+                          ? `${item.tuning.thresholds.volume}/${item.tuning.thresholds.hs}/${item.tuning.thresholds.ihs}/${item.tuning.thresholds.vcp}`
+                          : "-"}
+                      </small>
+                      <small className="reason-tag neutral">
+                        튜닝 품질 {item.tuning?.quality != null ? `${item.tuning.quality}점` : "-"}
+                      </small>
                     </div>
                     <div className="screener-hit-row">
                       {item.hits.volume.patterns.length > 0 ? (

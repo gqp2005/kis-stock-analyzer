@@ -631,8 +631,13 @@ const cacheKeyForTf = (symbol: string, tf: Timeframe, minCount: number): string 
   return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&min=${minCount}`;
 };
 
-const cacheKeyForBenchmark = (index: "KOSPI", minCount: number): string =>
+const cacheKeyForBenchmark = (index: "KOSPI" | "KOSDAQ", minCount: number): string =>
   `https://cache.local/kis/index/v1?index=${index}&min=${minCount}`;
+
+const INDEX_CODE_BY_MARKET: Record<"KOSPI" | "KOSDAQ", string> = {
+  KOSPI: "0001",
+  KOSDAQ: "1001",
+};
 
 const parseIndexDailyRow = (row: Record<string, string>): Candle | null => {
   const dateRaw =
@@ -695,6 +700,7 @@ const fetchIndexPeriodChunk = async (
 const fetchIndexCandles = async (
   env: Env,
   cache: Cache,
+  market: "KOSPI" | "KOSDAQ",
   indexCode: string,
   minCount: number,
   metrics?: RequestMetrics,
@@ -738,9 +744,40 @@ const fetchIndexCandles = async (
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map((entry) => entry[1]);
   if (candles.length === 0) {
-    throw new Error("KOSPI 지수 일봉 조회 결과가 비었습니다.");
+    throw new Error(`${market} 지수 일봉 조회 결과가 비었습니다.`);
   }
   return candles;
+};
+
+export const fetchMarketIndexCandles = async (
+  env: Env,
+  cache: Cache,
+  market: "KOSPI" | "KOSDAQ",
+  minCount: number,
+  metrics?: RequestMetrics,
+): Promise<{ index: "KOSPI" | "KOSDAQ"; candles: Candle[]; cacheTtlSec: number }> => {
+  const index = market;
+  const ttlSec = timeframeCacheTtlSec("day");
+  const cacheKey = cacheKeyForBenchmark(index, minCount);
+  const cached = await getCachedJson<{ candles: Candle[] }>(cache, cacheKey);
+  if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+    console.log(`[data-cache-hit] benchmark=${index}`);
+    bumpMetric(metrics, "dataCacheHits");
+    return { index, candles: cached.candles, cacheTtlSec: ttlSec };
+  }
+
+  console.log(`[data-cache-miss] benchmark=${index}`);
+  bumpMetric(metrics, "dataCacheMisses");
+  const candles = await fetchIndexCandles(
+    env,
+    cache,
+    market,
+    INDEX_CODE_BY_MARKET[market],
+    minCount,
+    metrics,
+  );
+  await putCachedJson(cache, cacheKey, { candles }, ttlSec);
+  return { index, candles, cacheTtlSec: ttlSec };
 };
 
 export const fetchKospiIndexCandles = async (
@@ -749,21 +786,12 @@ export const fetchKospiIndexCandles = async (
   minCount: number,
   metrics?: RequestMetrics,
 ): Promise<{ index: "KOSPI"; candles: Candle[]; cacheTtlSec: number }> => {
-  const index = "KOSPI";
-  const ttlSec = timeframeCacheTtlSec("day");
-  const cacheKey = cacheKeyForBenchmark(index, minCount);
-  const cached = await getCachedJson<{ candles: Candle[] }>(cache, cacheKey);
-  if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
-    console.log("[data-cache-hit] benchmark=KOSPI");
-    bumpMetric(metrics, "dataCacheHits");
-    return { index, candles: cached.candles, cacheTtlSec: ttlSec };
-  }
-
-  console.log("[data-cache-miss] benchmark=KOSPI");
-  bumpMetric(metrics, "dataCacheMisses");
-  const candles = await fetchIndexCandles(env, cache, "0001", minCount, metrics);
-  await putCachedJson(cache, cacheKey, { candles }, ttlSec);
-  return { index, candles, cacheTtlSec: ttlSec };
+  const result = await fetchMarketIndexCandles(env, cache, "KOSPI", minCount, metrics);
+  return {
+    index: "KOSPI",
+    candles: result.candles,
+    cacheTtlSec: result.cacheTtlSec,
+  };
 };
 
 export const fetchTimeframeCandles = async (
