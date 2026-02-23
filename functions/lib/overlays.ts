@@ -387,6 +387,41 @@ const buildVolumeMarkers = (signals: Signals): OverlayMarker[] =>
     };
   });
 
+const buildVcpContractionMarkers = (signals: Signals): OverlayMarker[] => {
+  if (!signals.vcp.detected || signals.vcp.contractions.length === 0) return [];
+
+  const recentContractions = signals.vcp.contractions.slice(-4);
+  return recentContractions.flatMap((contraction, index) => {
+    const order = index + 1;
+    return [
+      {
+        id: `marker-vcp-peak-${contraction.peakTime}-${order}`,
+        t: contraction.peakTime,
+        type: "VCPPeak",
+        label: `VCP 고점 ${order}`,
+        desc: `컨트랙션 ${order} 고점 (${(contraction.depth * 100).toFixed(1)}%)`,
+        position: "aboveBar",
+        shape: "circle",
+        text: `VH${order}`,
+        color: "#f6c75f",
+        strength: clamp(Math.round((0.2 - contraction.depth) * 400), 20, 90),
+      },
+      {
+        id: `marker-vcp-trough-${contraction.troughTime}-${order}`,
+        t: contraction.troughTime,
+        type: "VCPTrough",
+        label: `VCP 저점 ${order}`,
+        desc: `컨트랙션 ${order} 저점`,
+        position: "belowBar",
+        shape: "circle",
+        text: `VL${order}`,
+        color: "#7ed0ff",
+        strength: clamp(Math.round((0.2 - contraction.depth) * 350), 20, 80),
+      },
+    ];
+  });
+};
+
 const buildConfluenceBands = (
   candles: Candle[],
   levels: IndicatorLevels,
@@ -444,6 +479,13 @@ const buildConfluenceBands = (
         reason: `${pattern.label} 기준가`,
       });
     }
+  }
+  if (signals.vcp.detected && signals.vcp.resistanceR != null) {
+    candidates.push({
+      price: signals.vcp.resistanceR,
+      weight: 2.2,
+      reason: "VCP 저항 R",
+    });
   }
 
   const tolerancePct = 0.008; // +-0.8%
@@ -511,6 +553,7 @@ const buildExplanations = (
   channelSegments: OverlaySegment[],
   markers: OverlayMarker[],
   confluence: ConfluenceBand[],
+  signals: Signals,
 ): string[] => {
   const list: string[] = [];
   const support = zones.find((zone) => zone.kind === "support");
@@ -523,6 +566,11 @@ const buildExplanations = (
   if (confluence.length > 0) {
     list.push(
       `컨플루언스: 최강 구간 ${confluence[0].bandLow.toLocaleString("ko-KR")}~${confluence[0].bandHigh.toLocaleString("ko-KR")}`,
+    );
+  }
+  if (signals.vcp.detected && signals.vcp.resistanceR != null) {
+    list.push(
+      `VCP: 저항 R ${Math.round(signals.vcp.resistanceR).toLocaleString("ko-KR")}원 · 컨트랙션 ${signals.vcp.contractions.length}회`,
     );
   }
   return list.slice(0, 6);
@@ -549,7 +597,7 @@ export const buildMultiViewArtifacts = (
   const zones = pickZoneCandidates(candles, levels);
   const zoneItems = [zones.support, zones.resistance];
   const { trendSegments, channelSegments } = buildTrendAndChannelSegments(candles);
-  const markers = buildVolumeMarkers(signals);
+  const markers = [...buildVolumeMarkers(signals), ...buildVcpContractionMarkers(signals)];
 
   const overlays: Overlays = {
     priceLines: [
@@ -567,6 +615,17 @@ export const buildMultiViewArtifacts = (
         label: "저항 레벨",
         color: "#ff5a76",
       },
+      ...(signals.vcp.detected && signals.vcp.resistanceR != null
+        ? [
+            {
+              id: "level-vcp-resistance",
+              group: "level" as const,
+              price: round2(signals.vcp.resistanceR) ?? signals.vcp.resistanceR,
+              label: "VCP 저항R",
+              color: "#f6c75f",
+            },
+          ]
+        : []),
       ...zoneItems.flatMap((zone) => [
         {
           id: `${zone.id}-low`,
@@ -602,11 +661,17 @@ export const buildMultiViewArtifacts = (
   };
 
   const confluence = buildConfluenceBands(candles, levels, zoneItems, overlays.segments, signals);
-  const explanations = buildExplanations(zoneItems, trendSegments, channelSegments, markers, confluence);
+  const explanations = buildExplanations(
+    zoneItems,
+    trendSegments,
+    channelSegments,
+    markers,
+    confluence,
+    signals,
+  );
   if (tf !== "day") {
     explanations.unshift(`${tf} 타임프레임에서도 동일한 관점 모듈로 오버레이를 계산했습니다.`);
   }
 
   return { overlays, confluence, explanations };
 };
-

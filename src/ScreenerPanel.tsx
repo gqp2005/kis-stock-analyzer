@@ -53,6 +53,15 @@ const hsStateLabel = (state: PatternState): string => {
   return "없음";
 };
 
+const vcpStateLabel = (state: PatternState): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "잠재";
+  return "없음";
+};
+
+const formatDepth = (value: number | null): string =>
+  value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+
 const sortItems = (items: ScreenerItem[], sortKey: SortKey): ScreenerItem[] => {
   const cloned = [...items];
   if (sortKey === "CONFIDENCE") {
@@ -132,6 +141,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
           <select value={strategy} onChange={(e) => setStrategy(e.target.value as ScreenerStrategyFilter)}>
             <option value="ALL">ALL</option>
             <option value="VOLUME">VOLUME</option>
+            <option value="VCP">VCP</option>
             <option value="IHS">IHS</option>
             <option value="HS">HS</option>
           </select>
@@ -212,6 +222,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   <span className="reason-tag positive">
                     거래량 {formatScore(item.hits.volume.score)} / {item.hits.volume.confidence}
                   </span>
+                  <span className={item.hits.vcp.detected ? "reason-tag positive" : "reason-tag neutral"}>
+                    VCP {vcpStateLabel(item.hits.vcp.state)} / {item.hits.vcp.score}
+                  </span>
                   <span className="reason-tag negative">
                     H&S {hsStateLabel(item.hits.hs.state)} / {item.hits.hs.score}
                   </span>
@@ -240,6 +253,30 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   <small>저항 {formatPrice(item.levels.resistance)}</small>
                   <small>넥라인 {formatPrice(item.levels.neckline)}</small>
                 </div>
+                {(strategy === "VCP" || item.hits.vcp.detected) && (
+                  <div className="screener-levels">
+                    <small>VCPScore {formatScore(item.hits.vcp.score)}</small>
+                    <small>상태 {vcpStateLabel(item.hits.vcp.state)}</small>
+                    <small>저항R {formatPrice(item.hits.vcp.resistanceR)}</small>
+                    <small>
+                      마지막 축소폭{" "}
+                      {formatDepth(
+                        item.hits.vcp.contractions.length > 0
+                          ? item.hits.vcp.contractions[item.hits.vcp.contractions.length - 1].depth
+                          : null,
+                      )}
+                    </small>
+                    <small>ATR축소 {item.hits.vcp.atrShrink ? "예" : "아니오"}</small>
+                    <small>거래량드라이업 {item.hits.vcp.volumeDryUp ? "예" : "아니오"}</small>
+                  </div>
+                )}
+                {(strategy === "VCP" || item.hits.vcp.detected) && (
+                  <ul>
+                    {item.hits.vcp.reasons.slice(0, 3).map((reason) => (
+                      <li key={`${item.code}-vcp-${reason}`}>{reason}</li>
+                    ))}
+                  </ul>
+                )}
                 {item.backtestSummary && (
                   <div className="screener-backtest">
                     <small>거래 {item.backtestSummary.trades}</small>

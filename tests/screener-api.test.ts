@@ -51,24 +51,57 @@ const sampleCandidate: ScreenerStoredCandidate = {
       confidence: 74,
       reasons: ["ihs 확인"],
     },
+    vcp: {
+      detected: true,
+      state: "POTENTIAL",
+      score: 71,
+      resistanceR: 101800,
+      distanceToR: 0.018,
+      breakDate: null,
+      contractions: [
+        {
+          peakTime: "2025-01-03",
+          troughTime: "2025-01-05",
+          peak: 103000,
+          trough: 93000,
+          depth: 0.097,
+        },
+        {
+          peakTime: "2025-01-06",
+          troughTime: "2025-01-08",
+          peak: 102400,
+          trough: 96200,
+          depth: 0.061,
+        },
+      ],
+      atrShrink: true,
+      volumeDryUp: true,
+      trendPass: true,
+      atrPctMean20: 0.018,
+      atrPctMean120: 0.029,
+      reasons: ["VCP 테스트"],
+    },
   },
   scoring: {
     all: { score: 80, confidence: 72 },
     volume: { score: 75, confidence: 70 },
     hs: { score: 20, confidence: 30 },
     ihs: { score: 78, confidence: 74 },
+    vcp: { score: 71, confidence: 69 },
   },
   reasons: {
     all: ["테스트 all"],
     volume: ["테스트 volume"],
     hs: ["테스트 hs"],
     ihs: ["테스트 ihs"],
+    vcp: ["테스트 vcp"],
   },
   backtestSummary: {
     all: null,
     volume: null,
     hs: null,
     ihs: null,
+    vcp: null,
   },
 };
 
@@ -151,5 +184,26 @@ describe("/api/screener (cache-only)", () => {
     expect(body.meta.rebuildRequired).toBe(true);
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.warnings.some((warning) => warning.includes("재빌드"))).toBe(true);
+  });
+
+  it("supports strategy=VCP filter", async () => {
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      return sampleSnapshot as never;
+    });
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/screener?market=ALL&strategy=VCP&count=30"),
+    );
+    const body = (await response.json()) as {
+      meta: { strategy: string };
+      items: Array<{ code: string; hits: { vcp: { detected: boolean } } }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.strategy).toBe("VCP");
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(body.items[0]?.hits.vcp.detected).toBe(true);
   });
 });

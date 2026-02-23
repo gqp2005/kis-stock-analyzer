@@ -1,5 +1,6 @@
 import { atr, bollingerBands, macd, rsi, sma } from "./indicators";
 import { buildMultiViewArtifacts } from "./overlays";
+import { detectVcpPattern } from "./vcp";
 import type {
   Candle,
   IndicatorPoint,
@@ -14,6 +15,7 @@ import type {
   TradePlan,
   Timeframe,
   TimeframeAnalysis,
+  VcpHit,
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
@@ -864,6 +866,24 @@ const analyzeWithConfig = (
   const overall = overallFromScores(trend, momentum, risk);
   const profileScore = buildProfileScore(profile, trend, momentum, risk);
   const summaryText = `${trendLabel(trend)} · ${momentumLabel(momentum)} · ${riskLabel(risk)}`;
+  const vcp: VcpHit =
+    config.tf === "day"
+      ? detectVcpPattern(candles)
+      : {
+          detected: false,
+          state: "NONE",
+          score: 0,
+          resistanceR: null,
+          distanceToR: null,
+          breakDate: null,
+          contractions: [],
+          atrShrink: false,
+          volumeDryUp: false,
+          trendPass: false,
+          atrPctMean20: null,
+          atrPctMean120: null,
+          reasons: ["VCP는 일봉 기준으로만 계산합니다."],
+        };
 
   const reasons: string[] = [
     closeAboveMid
@@ -987,6 +1007,7 @@ const analyzeWithConfig = (
     },
     volumePatterns: volumeSignal.volumePatterns,
     volume: volumeSignal.volume,
+    vcp,
     fundamental: {
       per: null,
       pbr: null,

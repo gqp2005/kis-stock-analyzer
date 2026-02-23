@@ -1,6 +1,7 @@
 import stockList from "../../data/kr-stocks.json";
 import { sma } from "./indicators";
 import { analyzeTimeframe } from "./scoring";
+import { detectVcpPattern } from "./vcp";
 import type {
   Candle,
   PatternHit,
@@ -9,6 +10,7 @@ import type {
   ScreenerStrategyFilter,
   StrategyBacktestSummary,
   TimeframeAnalysis,
+  VcpHit,
   VolumeHit,
   VolumePatternType,
 } from "./types";
@@ -46,24 +48,28 @@ export interface ScreenerStoredCandidate {
     volume: VolumeHit;
     hs: PatternHit;
     ihs: PatternHit;
+    vcp: VcpHit;
   };
   scoring: {
     all: { score: number; confidence: number };
     volume: { score: number; confidence: number };
     hs: { score: number; confidence: number };
     ihs: { score: number; confidence: number };
+    vcp: { score: number; confidence: number };
   };
   reasons: {
     all: string[];
     volume: string[];
     hs: string[];
     ihs: string[];
+    vcp: string[];
   };
   backtestSummary: {
     all: StrategyBacktestSummary | null;
     volume: StrategyBacktestSummary | null;
     hs: StrategyBacktestSummary | null;
     ihs: StrategyBacktestSummary | null;
+    vcp: StrategyBacktestSummary | null;
   };
 }
 
@@ -96,6 +102,22 @@ const defaultPatternHit = (reason: string): PatternHit => ({
 });
 
 const defaultBacktestSummary = (): StrategyBacktestSummary | null => null;
+
+const defaultVcpHit = (reason: string): VcpHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  resistanceR: null,
+  distanceToR: null,
+  breakDate: null,
+  contractions: [],
+  atrShrink: false,
+  volumeDryUp: false,
+  trendPass: false,
+  atrPctMean20: null,
+  atrPctMean120: null,
+  reasons: [reason],
+});
 
 const getSwingHighs = (candles: Candle[], leftRight: number): Array<{ index: number; price: number; time: string }> => {
   const swings: Array<{ index: number; price: number; time: string }> = [];
@@ -479,10 +501,30 @@ const getDataAdjustment = (candles: Candle[]): { adjustment: number; reason: str
   return { adjustment: -10, reason: "분석 캔들 수가 부족해 신뢰도를 낮췄습니다." };
 };
 
+const computeVcpConfidence = (vcp: VcpHit): number => {
+  let confidence = 35;
+  if (vcp.trendPass) confidence += 12;
+  if (vcp.detected) confidence += 16;
+  if (vcp.state === "CONFIRMED") confidence += 15;
+  if (vcp.atrShrink) confidence += 10;
+  if (vcp.volumeDryUp) confidence += 10;
+  if (vcp.contractions.length >= 4) confidence += 12;
+  else if (vcp.contractions.length === 3) confidence += 8;
+  else if (vcp.contractions.length === 2) confidence += 5;
+
+  if (vcp.distanceToR != null) {
+    const absDistance = Math.abs(vcp.distanceToR);
+    if (absDistance <= 0.03) confidence += 10;
+    else if (absDistance <= 0.08) confidence += 6;
+  }
+  return clamp(Math.round(confidence), 0, 100);
+};
+
 const buildBullishSignalIndexes = (
   candles: Candle[],
   analysis: TimeframeAnalysis,
   ihs: PatternHit,
+  vcp: VcpHit,
   strategy: ScreenerStrategyFilter,
 ): number[] => {
   const byDate = new Map<string, number>();
@@ -507,6 +549,10 @@ const buildBullishSignalIndexes = (
 
   if ((strategy === "ALL" || strategy === "IHS") && ihs.detected && ihs.breakDate) {
     const idx = byDate.get(dateKey(ihs.breakDate));
+    if (idx != null) indexes.add(idx);
+  }
+  if ((strategy === "ALL" || strategy === "VCP") && vcp.detected && vcp.breakDate) {
+    const idx = byDate.get(dateKey(vcp.breakDate));
     if (idx != null) indexes.add(idx);
   }
 
@@ -622,6 +668,7 @@ export const analyzeScreenerRawCandidate = (
   const hs = detectHeadShouldersPattern(day.candles);
   const ihs = detectInverseHeadShouldersPattern(day.candles);
   const volume = computeVolumeHit(day);
+  const vcp = detectVcpPattern(day.candles);
 
   const dataAdj = getDataAdjustment(day.candles);
   const liquidityAdj = getLiquidityAdjustment(day.candles);
@@ -629,17 +676,22 @@ export const analyzeScreenerRawCandidate = (
 
   const hsRisk = hs.detected ? hs.score : 50;
   const ihsStrength = ihs.detected ? ihs.score : 45;
+  const vcpStrength = vcp.detected ? vcp.score : 35;
 
-  const allScore = clampScore(0.45 * volume.score + 0.275 * ihsStrength + 0.275 * (100 - hsRisk));
+  const allScore = clampScore(
+    0.35 * volume.score + 0.25 * ihsStrength + 0.2 * (100 - hsRisk) + 0.2 * vcpStrength,
+  );
   const volumeScore = clampScore(volume.score);
   const hsScore = clampScore(hs.score);
   const ihsScore = clampScore(ihs.score);
+  const vcpScore = clampScore(vcp.score);
 
   const volumeConfidence = clampScore(volume.confidence + adjustment);
   const hsConfidence = clampScore(hs.confidence + adjustment);
   const ihsConfidence = clampScore(ihs.confidence + adjustment);
+  const vcpConfidence = clampScore(computeVcpConfidence(vcp) + adjustment);
   const allConfidence = clampScore(
-    0.45 * volumeConfidence + 0.275 * ihsConfidence + 0.275 * hsConfidence,
+    0.3 * volumeConfidence + 0.25 * ihsConfidence + 0.2 * hsConfidence + 0.25 * vcpConfidence,
   );
 
   const sharedReasons: string[] = [];
@@ -647,9 +699,15 @@ export const analyzeScreenerRawCandidate = (
   if (liquidityAdj.reason) sharedReasons.push(liquidityAdj.reason);
   if (hs.state === "CONFIRMED") sharedReasons.push("헤드앤숄더 확정 패턴이 감지되어 하방 리스크 경고가 있습니다.");
   if (ihs.state === "CONFIRMED") sharedReasons.push("역헤드앤숄더 확정 패턴이 감지되어 반등 가능성이 강화되었습니다.");
+  if (vcp.detected) {
+    sharedReasons.push(
+      `VCP ${vcp.state === "CONFIRMED" ? "돌파 확정" : "잠재"} 패턴(${vcp.score}점)이 포착되었습니다.`,
+    );
+  }
 
   const allReasons = [
     ...volume.reasons,
+    vcp.reasons[0],
     ihs.reasons[0],
     hs.reasons[0],
     ...sharedReasons,
@@ -658,15 +716,19 @@ export const analyzeScreenerRawCandidate = (
   const volumeReasons = [...volume.reasons, ...sharedReasons].slice(0, 6);
   const hsReasons = [...hs.reasons, ...sharedReasons].slice(0, 6);
   const ihsReasons = [...ihs.reasons, ...sharedReasons].slice(0, 6);
+  const vcpReasons = [...vcp.reasons, ...sharedReasons].slice(0, 6);
 
   const backtestAll = includeBacktest
-    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, "ALL"))
+    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "ALL"))
     : defaultBacktestSummary();
   const backtestVolume = includeBacktest
-    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, "VOLUME"))
+    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "VOLUME"))
     : defaultBacktestSummary();
   const backtestIhs = includeBacktest
-    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, "IHS"))
+    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "IHS"))
+    : defaultBacktestSummary();
+  const backtestVcp = includeBacktest
+    ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "VCP"))
     : defaultBacktestSummary();
   const backtestHs = defaultBacktestSummary();
 
@@ -678,31 +740,35 @@ export const analyzeScreenerRawCandidate = (
     lastDate: day.candles[day.candles.length - 1].time,
     levels: {
       support: day.levels.support,
-      resistance: day.levels.resistance,
+      resistance: vcp.resistanceR ?? day.levels.resistance,
       neckline: ihs.neckline ?? hs.neckline,
     },
     hits: {
       volume,
       hs,
       ihs,
+      vcp: vcp.detected ? vcp : defaultVcpHit(vcp.reasons[0] ?? "VCP 패턴 미감지"),
     },
     scoring: {
       all: { score: allScore, confidence: allConfidence },
       volume: { score: volumeScore, confidence: volumeConfidence },
       hs: { score: hsScore, confidence: hsConfidence },
       ihs: { score: ihsScore, confidence: ihsConfidence },
+      vcp: { score: vcpScore, confidence: vcpConfidence },
     },
     reasons: {
       all: allReasons,
       volume: volumeReasons,
       hs: hsReasons,
       ihs: ihsReasons,
+      vcp: vcpReasons,
     },
     backtestSummary: {
       all: backtestAll,
       volume: backtestVolume,
       hs: backtestHs,
       ihs: backtestIhs,
+      vcp: backtestVcp,
     },
   };
 };
@@ -713,6 +779,7 @@ const strategyKey = (
   if (strategy === "VOLUME") return "volume";
   if (strategy === "HS") return "hs";
   if (strategy === "IHS") return "ihs";
+  if (strategy === "VCP") return "vcp";
   return "all";
 };
 
@@ -767,17 +834,27 @@ export const buildScreenerView = (
   const filteredCandidates = candidates.filter((candidate) =>
     market === "ALL" ? true : candidate.market === market,
   );
-  const items = filteredCandidates.map((candidate) =>
+  const rawItems = filteredCandidates.map((candidate) =>
     materializeScreenerItem(candidate, strategy),
   );
-  const warningItems = sortByHsRisk(items.filter((item) => isWarningCandidate(item))).slice(
+  const warningItems = sortByHsRisk(rawItems.filter((item) => isWarningCandidate(item))).slice(
     0,
     Math.max(5, count),
   );
+  const items =
+    strategy === "VCP"
+      ? rawItems.filter((item) => item.hits.vcp.detected)
+      : rawItems;
 
   if (strategy === "HS") {
     return {
       items: sortByHsRisk(items).slice(0, count),
+      warningItems,
+    };
+  }
+  if (strategy === "VCP") {
+    return {
+      items: sortByScore(items).slice(0, count),
       warningItems,
     };
   }

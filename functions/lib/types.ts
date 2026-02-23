@@ -6,8 +6,6 @@ export interface Env {
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
   ADMIN_TOKEN?: string;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
 }
 
 export type Timeframe = "month" | "week" | "day";
@@ -163,6 +161,7 @@ export interface FlowSignal {
 
 export type OverlayLineGroup = "level" | "zone";
 export type OverlaySegmentKind = "trendlineUp" | "trendlineDown" | "channelLow" | "channelHigh";
+export type OverlayMarkerType = VolumePatternType | "VCPPeak" | "VCPTrough";
 
 export interface OverlayPriceLine {
   id: string;
@@ -196,7 +195,7 @@ export interface OverlaySegment {
 export interface OverlayMarker {
   id: string;
   t: string;
-  type: VolumePatternType;
+  type: OverlayMarkerType;
   label: string;
   desc: string;
   position: "aboveBar" | "belowBar";
@@ -259,6 +258,7 @@ export interface Signals {
     volumeScore: number;
     reasons: string[];
   };
+  vcp: VcpHit;
   fundamental: FundamentalSignal;
   flow: FlowSignal;
 }
@@ -333,47 +333,33 @@ export interface MultiAnalysisPayload {
   warnings: string[];
 }
 
-export interface CommentaryRequestPayload {
-  meta: {
-    symbol: string;
-    name: string;
-    market: string;
-    asOf: string;
-    profile: InvestmentProfile;
-  };
-  final: {
-    overall: Overall;
-    confidence: number;
-    summary: string;
-  };
-  timeframe: {
-    tf: Timeframe;
-    trend: number;
-    momentum: number;
-    risk: number;
-    reasons: string[];
-    volumeScore?: number | null;
-    volRatio?: number | null;
-  };
-}
-
-export interface CommentaryPayload {
-  meta: {
-    symbol: string;
-    name: string;
-    asOf: string;
-    source: "OPENAI" | "RULE";
-    model: string | null;
-    cacheTtlSec: number;
-  };
-  comment: string;
-  disclaimer: string;
-  warnings: string[];
-}
-
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
-export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS";
+export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS" | "VCP";
 export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
+
+export interface VcpContraction {
+  peakTime: string;
+  troughTime: string;
+  peak: number;
+  trough: number;
+  depth: number;
+}
+
+export interface VcpHit {
+  detected: boolean;
+  state: PatternState;
+  score: number;
+  resistanceR: number | null;
+  distanceToR: number | null;
+  breakDate: string | null;
+  contractions: VcpContraction[];
+  atrShrink: boolean;
+  volumeDryUp: boolean;
+  trendPass: boolean;
+  atrPctMean20: number | null;
+  atrPctMean120: number | null;
+  reasons: string[];
+}
 
 export interface StrategyBacktestSummary {
   trades: number;
@@ -415,6 +401,7 @@ export interface ScreenerItem {
     volume: VolumeHit;
     hs: PatternHit;
     ihs: PatternHit;
+    vcp: VcpHit;
   };
   reasons: string[];
   levels: {

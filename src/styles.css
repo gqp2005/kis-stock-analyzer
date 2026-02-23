@@ -220,40 +220,6 @@ h2 {
   font-size: 13px;
 }
 
-.commentary-box {
-  margin: 0 0 12px;
-  border: 1px solid rgba(87, 163, 255, 0.3);
-  border-radius: 12px;
-  background: rgba(13, 25, 37, 0.78);
-  padding: 10px 12px;
-}
-
-.commentary-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.commentary-head strong {
-  font-size: 14px;
-  color: #deecfa;
-}
-
-.commentary-line {
-  margin: 0;
-  color: #d7e8fb;
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.commentary-error {
-  margin: 0;
-  color: #ffd2dc;
-  font-size: 13px;
-}
-
 .confidence {
   border-radius: 999px;
   border: 1px solid;
@@ -537,6 +503,12 @@ h2 {
   color: #ffd0d9;
   border-color: rgba(255, 90, 118, 0.7);
   background: rgba(255, 90, 118, 0.2);
+}
+
+.reason-tag.neutral {
+  color: #d7e5f4;
+  border-color: rgba(155, 176, 198, 0.65);
+  background: rgba(155, 176, 198, 0.16);
 }
 
 .chart {

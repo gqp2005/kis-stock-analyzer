@@ -220,4 +220,39 @@ describe("/api/analysis multi fallback", () => {
     expect(weekCall?.[4]).toBe(200);
     expect(monthCall?.[4]).toBe(80);
   });
+
+  it("returns overlays/confluence/explanations for day tf with view=multi", async () => {
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(280), cacheTtlSec: 60 };
+      throw new Error("unexpected tf");
+    });
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/analysis?code=005930&tf=day&count=200&view=multi"),
+    );
+    const body = (await response.json()) as {
+      overlays: {
+        priceLines: Array<{ group: string }>;
+        zones: Array<{ kind: string }>;
+        segments: Array<{ kind: string }>;
+        markers: Array<object>;
+      };
+      confluence: Array<{ bandLow: number; bandHigh: number; strength: number; reasons: string[] }>;
+      explanations: string[];
+      candles: Candle[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.candles.length).toBe(200);
+    expect(body.overlays.priceLines.length).toBeGreaterThanOrEqual(4);
+    expect(body.overlays.zones.length).toBeGreaterThanOrEqual(2);
+    expect(
+      body.overlays.segments.some(
+        (segment) => segment.kind === "trendlineUp" || segment.kind === "trendlineDown",
+      ),
+    ).toBe(true);
+    expect(Array.isArray(body.overlays.markers)).toBe(true);
+    expect(body.confluence.length).toBeGreaterThan(0);
+    expect(body.explanations.length).toBeGreaterThan(0);
+  });
 });

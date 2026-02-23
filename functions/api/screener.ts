@@ -28,7 +28,13 @@ const parseMarket = (raw: string | null): ScreenerMarketFilter => {
 
 const parseStrategy = (raw: string | null): ScreenerStrategyFilter => {
   const normalized = (raw ?? "ALL").toUpperCase();
-  if (normalized === "ALL" || normalized === "VOLUME" || normalized === "HS" || normalized === "IHS") {
+  if (
+    normalized === "ALL" ||
+    normalized === "VOLUME" ||
+    normalized === "HS" ||
+    normalized === "IHS" ||
+    normalized === "VCP"
+  ) {
     return normalized;
   }
   return "ALL";
