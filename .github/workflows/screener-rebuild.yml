@@ -13,17 +13,24 @@ concurrency:
 jobs:
   rebuild:
     runs-on: ubuntu-latest
-    if: ${{ secrets.SCREENER_REBUILD_URL != '' && (secrets.SCREENER_ADMIN_TOKEN != '' || secrets.ADMIN_TOKEN != '') }}
     steps:
       - name: Trigger screener rebuild until completion
         env:
           REBUILD_URL: ${{ secrets.SCREENER_REBUILD_URL }}
-          ADMIN_TOKEN: ${{ secrets.SCREENER_ADMIN_TOKEN != '' && secrets.SCREENER_ADMIN_TOKEN || secrets.ADMIN_TOKEN }}
+          SCREENER_ADMIN_TOKEN: ${{ secrets.SCREENER_ADMIN_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           BATCH_SIZE: "20"
           MAX_ATTEMPTS: "45"
           SLEEP_SEC: "5"
         run: |
           set -euo pipefail
+
+          TOKEN="${SCREENER_ADMIN_TOKEN:-${ADMIN_TOKEN:-}}"
+
+          if [ -z "${REBUILD_URL}" ] || [ -z "${TOKEN}" ]; then
+            echo "Required secrets are missing: SCREENER_REBUILD_URL and (SCREENER_ADMIN_TOKEN or ADMIN_TOKEN)."
+            exit 1
+          fi
 
           echo "Rebuild URL: ${REBUILD_URL}"
           echo "Batch size: ${BATCH_SIZE}"
@@ -33,7 +40,7 @@ jobs:
             tmp_file="$(mktemp)"
             http_code="$(curl -sS -o "${tmp_file}" -w "%{http_code}" \
               -X POST "${REBUILD_URL}?batch=${BATCH_SIZE}" \
-              -H "x-admin-token: ${ADMIN_TOKEN}")"
+              -H "x-admin-token: ${TOKEN}")"
             body="$(cat "${tmp_file}")"
             rm -f "${tmp_file}"
 
