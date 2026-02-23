@@ -71,7 +71,13 @@ export const timeframeCacheTtlSec = (
   const weekend = day === 0 || day === 6;
   const regular = isKrxRegularSession(date);
 
-  if (tf === "day" || tf === "min5") {
+  if (tf === "min5") {
+    if (regular) return 15;
+    if (weekend) return 60 * 60; // 60m
+    return 10 * 60; // 10m
+  }
+
+  if (tf === "day") {
     if (regular) return 60;
     if (weekend) return 6 * 60 * 60; // 6h
     return 30 * 60; // 30m

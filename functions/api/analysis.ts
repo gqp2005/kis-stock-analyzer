@@ -69,7 +69,7 @@ const singleTfCount = (tf: Timeframe, dayCount: number): number => {
 };
 
 const analysisTtlByTf = (tf: TfParam): number => {
-  if (tf === "multi") return timeframeCacheTtlSec("day");
+  if (tf === "multi") return timeframeCacheTtlSec("min5");
   return timeframeCacheTtlSec(tf);
 };
 

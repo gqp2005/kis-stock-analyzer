@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   LineStyle,
@@ -66,6 +66,7 @@ const TF_LABEL: Record<Timeframe, string> = {
 
 const TF_TABS: Timeframe[] = ["month", "week", "day", "min5"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min5"];
+const LIVE_INTERVAL_OPTIONS = [10, 15, 20, 30] as const;
 const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
   BreakoutConfirmed: "돌파 확인(A)",
   Upthrust: "불트랩(B)",
@@ -246,6 +247,8 @@ export default function App() {
   const [pageMode, setPageMode] = useState<"analysis" | "screener">("analysis");
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveIntervalSec, setLiveIntervalSec] = useState<(typeof LIVE_INTERVAL_OPTIONS)[number]>(15);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
@@ -274,7 +277,7 @@ export default function App() {
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
-  const fetchAnalysis = async (value: string, lookback: number) => {
+  const fetchAnalysis = useCallback(async (value: string, lookback: number) => {
     setLoading(true);
     setError("");
     try {
@@ -291,9 +294,9 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiBase]);
 
-  const fetchBacktest = async (
+  const fetchBacktest = useCallback(async (
     value: string,
     lookback: number,
     holdBars: number,
@@ -314,9 +317,9 @@ export default function App() {
     } finally {
       setBacktestLoading(false);
     }
-  };
+  }, [apiBase]);
 
-  const fetchDashboard = (
+  const fetchDashboard = useCallback((
     value: string,
     lookback: number,
     holdBars: number,
@@ -324,7 +327,7 @@ export default function App() {
   ) => {
     void fetchAnalysis(value, lookback);
     void fetchBacktest(value, lookback, holdBars, signalOverall);
-  };
+  }, [fetchAnalysis, fetchBacktest]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -356,6 +359,18 @@ export default function App() {
     fetchDashboard("005930", 180, 10, "GOOD");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!liveMode || pageMode !== "analysis" || !result?.meta.symbol) return;
+
+    const symbol = result.meta.symbol;
+    const timer = window.setInterval(() => {
+      if (document.hidden || loading) return;
+      void fetchAnalysis(symbol, days);
+    }, liveIntervalSec * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [liveMode, pageMode, result?.meta.symbol, liveIntervalSec, loading, fetchAnalysis, days]);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
@@ -871,6 +886,37 @@ export default function App() {
             </select>
           </label>
           <p>값을 바꾼 뒤 조회를 누르면 백테스트 조건이 적용됩니다.</p>
+        </div>
+
+        <div className="live-controls">
+          <label className="live-toggle">
+            <input
+              type="checkbox"
+              checked={liveMode}
+              onChange={(e) => setLiveMode(e.target.checked)}
+            />
+            준실시간 모드
+          </label>
+          <label>
+            갱신 주기
+            <select
+              value={liveIntervalSec}
+              onChange={(e) => setLiveIntervalSec(Number(e.target.value) as (typeof LIVE_INTERVAL_OPTIONS)[number])}
+              disabled={!liveMode}
+              aria-label="준실시간 갱신 주기"
+            >
+              {LIVE_INTERVAL_OPTIONS.map((sec) => (
+                <option key={sec} value={sec}>
+                  {sec}초
+                </option>
+              ))}
+            </select>
+          </label>
+          <p>
+            {liveMode
+              ? `준실시간 ON · ${liveIntervalSec}초 간격 · 마지막 서버 갱신 ${result?.meta.asOf ?? "-"}`
+              : "준실시간 OFF · 수동 조회 시 최신 데이터를 불러옵니다."}
+          </p>
         </div>
 
         {error && <p className="error">{error}</p>}
