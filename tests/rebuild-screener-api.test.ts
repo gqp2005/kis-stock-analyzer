@@ -176,7 +176,7 @@ vi.mock("../functions/lib/screener", () => ({
   })),
 }));
 
-import { onRequestPost } from "../functions/api/admin/rebuild-screener";
+import { onRequestPost } from "../functions/api/admin/rebuild-screener/index";
 
 const mockedGetCachedJson = vi.mocked(getCachedJson);
 
