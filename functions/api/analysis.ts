@@ -4,12 +4,11 @@ import {
   resampleDayToMonthCandles,
   resampleDayToWeekCandles,
 } from "../lib/kis";
-import { isKrxRegularSession, nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
+import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { attachMetrics, createRequestMetrics, type RequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
 import {
   analyzeTimeframe,
-  buildDisabledMin5Analysis,
   computeMultiFinal,
 } from "../lib/scoring";
 import { resolveStock } from "../lib/stockResolver";
@@ -23,27 +22,24 @@ import type {
 } from "../lib/types";
 import { normalizeInput } from "../lib/utils";
 
-const VALID_TFS: Timeframe[] = ["day", "week", "month", "min5"];
+const VALID_TFS: Timeframe[] = ["day", "week", "month"];
 type TfParam = Timeframe | "multi";
 
 const MIN_MULTI = {
   month: 60,
   week: 160,
   day: 40,
-  min5: 40,
 } as const;
 
 const TARGET_MULTI = {
   month: 80,
   week: 200,
-  min5: 180,
 } as const;
 
 const parseTf = (raw: string | null): TfParam => {
   if (!raw) return "day";
   const tf = raw.toLowerCase();
   if (tf === "multi") return "multi";
-  if (tf === "min15") return "min5"; // backward compatibility
   if ((VALID_TFS as string[]).includes(tf)) return tf as Timeframe;
   return "day";
 };
@@ -57,19 +53,17 @@ const parseDayCount = (url: URL): number => {
 const visibleCount = (tf: Timeframe, dayCount: number): number => {
   if (tf === "day") return dayCount;
   if (tf === "week") return 160;
-  if (tf === "month") return 80;
-  return 120;
+  return 80;
 };
 
 const singleTfCount = (tf: Timeframe, dayCount: number): number => {
   if (tf === "day") return Math.max(dayCount, 200);
   if (tf === "week") return 200;
-  if (tf === "month") return 80;
-  return 180;
+  return 80;
 };
 
 const analysisTtlByTf = (tf: TfParam): number => {
-  if (tf === "multi") return timeframeCacheTtlSec("min5");
+  if (tf === "multi") return timeframeCacheTtlSec("day");
   return timeframeCacheTtlSec(tf);
 };
 
@@ -88,15 +82,6 @@ const ensureMinCandles = (
 };
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
-
-const isMin5SoftFail = (message: string): boolean => {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("egw00201") ||
-    lower.includes("초당 거래건수") ||
-    lower.includes("당일 분봉 데이터를 받지 못했습니다")
-  );
-};
 
 const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAnalysis => ({
   ...analysis,
@@ -190,30 +175,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
       const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
-      let min5Raw: { name: string; candles: Candle[]; cacheTtlSec: number } | null = null;
-      let min5DisabledReason: string | null = null;
-
-      if (!isKrxRegularSession()) {
-        min5DisabledReason = "5분봉은 장중 데이터 기반이라 현재 시간에는 비활성입니다.";
-      } else {
-        try {
-          min5Raw = await fetchTimeframeCandles(
-            fetchCtx.env,
-            fetchCtx.cache,
-            fetchCtx.symbol,
-            "min5",
-            TARGET_MULTI.min5,
-            fetchCtx.metrics,
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          if (isMin5SoftFail(message)) {
-            min5DisabledReason = "5분봉은 API 제약/당일 데이터 부족으로 비활성입니다.";
-          } else {
-            warnings.push(`min5 조회 실패: ${message}`);
-          }
-        }
-      }
 
       let weekCandlesRaw: Candle[] | null = null;
       let monthCandlesRaw: Candle[] | null = null;
@@ -248,20 +209,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       const weekAnalysis = weekCandles ? analyzeTimeframe("week", weekCandles.slice(-200)) : null;
       const monthAnalysis = monthCandles ? analyzeTimeframe("month", monthCandles.slice(-120)) : null;
 
-      let min5Analysis: TimeframeAnalysis | null = null;
-      if (min5DisabledReason) {
-        warnings.push(min5DisabledReason);
-        min5Analysis = buildDisabledMin5Analysis([]);
-      } else if (!min5Raw || min5Raw.candles.length === 0) {
-        warnings.push("5분봉은 장중/당일 데이터가 없어서 비활성");
-        min5Analysis = buildDisabledMin5Analysis([]);
-      } else if (min5Raw.candles.length < MIN_MULTI.min5) {
-        warnings.push(`5분봉 데이터 부족 (${min5Raw.candles.length}/${MIN_MULTI.min5})`);
-        min5Analysis = buildDisabledMin5Analysis(min5Raw.candles);
-      } else {
-        min5Analysis = analyzeTimeframe("min5", min5Raw.candles.slice(-180));
-      }
-
       const timeframes: MultiAnalysisPayload["timeframes"] = {
         month: monthAnalysis
           ? sliceAnalysis(monthAnalysis, visibleCount("month", dayCount))
@@ -272,19 +219,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         day: dayAnalysis
           ? sliceAnalysis(dayAnalysis, visibleCount("day", dayCount))
           : null,
-        min5: min5Analysis
-          ? sliceAnalysis(min5Analysis, visibleCount("min5", dayCount))
-          : null,
       };
       warnings.push(
-        `timeframes.candles.length month=${timeframes.month?.candles.length ?? 0}, week=${timeframes.week?.candles.length ?? 0}, day=${timeframes.day?.candles.length ?? 0}, min5=${timeframes.min5?.candles.length ?? 0}`,
+        `timeframes.candles.length month=${timeframes.month?.candles.length ?? 0}, week=${timeframes.week?.candles.length ?? 0}, day=${timeframes.day?.candles.length ?? 0}`,
       );
 
       const final = computeMultiFinal(
         timeframes.month,
         timeframes.week,
         timeframes.day,
-        timeframes.min5,
       );
       const payload: MultiAnalysisPayload = {
         meta: {
@@ -294,7 +237,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             dayRaw?.name ??
             weekName ??
             monthName ??
-            min5Raw?.name ??
             resolved.name,
           market: resolved.market,
           asOf: nowIsoKst(),
@@ -339,7 +281,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       metrics,
     );
     const candlesForAnalysis = fetched.candles.slice(-Math.max(minCount, 140));
-    if (candlesForAnalysis.length < (tf === "min5" ? 40 : 70)) {
+    if (candlesForAnalysis.length < 70) {
       return finalize(badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`, context.request));
     }
 
@@ -367,7 +309,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       indicators: analysisForChart.indicators,
       candles: analysisForChart.candles,
       regime: analysisForChart.regime,
-      timing: analysisForChart.timing ?? null,
     };
 
     await putCachedJson(cache, cacheKey, payload, ttlSec);

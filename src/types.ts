@@ -1,5 +1,5 @@
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
-export type Timeframe = "month" | "week" | "day" | "min5";
+export type Timeframe = "month" | "week" | "day";
 export type Regime = "UP" | "SIDE" | "DOWN";
 
 export interface Candle {
@@ -55,12 +55,6 @@ export interface IndicatorSeries {
     mid: IndicatorPoint[];
     lower: IndicatorPoint[];
   };
-}
-
-export interface TimingInfo {
-  timingScore: number;
-  timingLabel: "타이밍 양호" | "관망/조건부" | "진입 비추";
-  reasons: string[];
 }
 
 export type VolumePatternType =
@@ -156,7 +150,6 @@ export interface TimeframeAnalysis {
   tradePlan: TradePlan;
   indicators: IndicatorSeries;
   candles: Candle[];
-  timing?: TimingInfo | null;
 }
 
 export interface MultiAnalysisResponse {
@@ -178,7 +171,6 @@ export interface MultiAnalysisResponse {
     month: TimeframeAnalysis | null;
     week: TimeframeAnalysis | null;
     day: TimeframeAnalysis | null;
-    min5: TimeframeAnalysis | null;
   };
   warnings: string[];
 }

@@ -11,7 +11,6 @@ import type {
   TradePlan,
   Timeframe,
   TimeframeAnalysis,
-  TimingInfo,
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
@@ -73,19 +72,6 @@ const TF_CONFIG: Record<Timeframe, TimeframeConfig> = {
       midSlopeUp: 20,
       midAboveLong: 20,
       breakout: 10,
-    },
-  },
-  min5: {
-    tf: "min5",
-    maFast: 20,
-    maMid: 60,
-    breakoutLookback: 20,
-    trendWeights: {
-      closeAboveMid: 30,
-      fastAboveMid: 25,
-      midSlopeUp: 25,
-      midAboveLong: 0,
-      breakout: 20,
     },
   },
 };
@@ -942,193 +928,15 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   };
 };
 
-const computeTiming = (candles: Candle[], levels: IndicatorLevels): TimingInfo => {
-  const closes = candles.map((c) => c.close);
-  const rsi14Series = rsi(closes, 14);
-  const rsiNow = lastValue(rsi14Series);
-  const rsiPrev4 = valueAt(rsi14Series, 4);
-  const latest = candles[candles.length - 1];
-
-  let score = 50;
-  const reasons: string[] = [];
-
-  const closeAboveMa60 = levels.maMid != null ? latest.close > levels.maMid : false;
-  if (closeAboveMa60) {
-    score += 15;
-    reasons.push("종가가 MA60 위라 단기 방향이 우호적입니다.");
-  } else {
-    reasons.push("종가가 MA60 아래라 단기 추세가 약합니다.");
-  }
-
-  const ma20AboveMa60 =
-    levels.maFast != null && levels.maMid != null ? levels.maFast > levels.maMid : false;
-  if (ma20AboveMa60) {
-    score += 15;
-    reasons.push("MA20 > MA60 정렬로 단기 추세 정렬이 좋습니다.");
-  } else {
-    reasons.push("MA20 > MA60 정렬이 아직 아닙니다.");
-  }
-
-  if (rsiNow != null && rsiNow >= 55) {
-    score += 10;
-    reasons.push(`RSI(${round2(rsiNow)})가 55 이상입니다.`);
-  }
-
-  const rsiUp4 = rsiNow != null && rsiPrev4 != null ? rsiNow > rsiPrev4 : false;
-  if (rsiUp4) {
-    score += 10;
-    reasons.push("RSI가 최근 4봉 기준 상승했습니다.");
-  }
-
-  if (levels.bbLower != null && latest.close < levels.bbLower) {
-    score -= 15;
-    reasons.push("볼린저 하단 이탈로 변동성 리스크가 큽니다.");
-  }
-
-  if (levels.bbUpper != null && latest.close > levels.bbUpper) {
-    score -= 5;
-    reasons.push("볼린저 상단 이탈 상태라 과열 부담이 있습니다.");
-  }
-
-  if (levels.atrPercent != null && levels.atrPercent > 1.2) {
-    score -= 10;
-    reasons.push(`ATR%(${levels.atrPercent}%)가 1.2%를 넘어 변동성이 높습니다.`);
-  }
-
-  const timingScore = clamp(score, 0, 100);
-  const timingLabel: TimingInfo["timingLabel"] =
-    timingScore >= 70 ? "타이밍 양호" : timingScore >= 50 ? "관망/조건부" : "진입 비추";
-
-  return {
-    timingScore,
-    timingLabel,
-    reasons: reasons.slice(0, 6),
-  };
-};
-
 export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAnalysis => {
   const config = TF_CONFIG[tf];
-  const base = analyzeWithConfig(candles, config);
-  if (tf === "min5") {
-    return {
-      ...base,
-      timing: computeTiming(candles, base.levels),
-    };
-  }
-  return base;
-};
-
-export const buildDisabledMin5Analysis = (candles: Candle[] = []): TimeframeAnalysis => {
-  const nullPoints = candles.map((candle) => ({ time: candle.time, value: null }));
-
-  const nullLevels: IndicatorLevels = {
-    ma20: null,
-    maFast: null,
-    maMid: null,
-    maLong: null,
-    rsi14: null,
-    bbUpper: null,
-    bbMid: null,
-    bbLower: null,
-    atr14: null,
-    atrPercent: null,
-    recentHigh: null,
-    recentLow: null,
-    volumeMa20: null,
-    support: null,
-    resistance: null,
-  };
-
-  const emptySignals: Signals = {
-    trend: {
-      closeAboveMid: false,
-      fastAboveMid: false,
-      midSlopeUp: false,
-      midAboveLong: false,
-      breakout: false,
-    },
-    momentum: {
-      rsi: null,
-      rsiBand: "LOW",
-      rsiUpN: false,
-      closeAboveFast: false,
-      returnNPositive: false,
-      volumeAboveMa20: false,
-    },
-    risk: {
-      atrPercent: null,
-      atrBucket: "N/A",
-      bbPosition: "N/A",
-      mddN: null,
-      sharpDropBar: false,
-      breakdown: {
-        atrScore: 0,
-        bbScore: 0,
-        mddScore: 0,
-        sharpDropScore: 0,
-        rawTotal: 0,
-        finalRisk: 0,
-      },
-    },
-    volumePatterns: [],
-    volume: {
-      volRatio: 1,
-      turnover: 0,
-      bodyPct: 0,
-      upperWickPct: 0,
-      lowerWickPct: 0,
-      pos20: 0.5,
-      volumeScore: 50,
-      reasons: ["데이터가 부족해 거래량/수급 패턴을 계산하지 않았습니다."],
-    },
-  };
-
-  return {
-    tf: "min5",
-    regime: "SIDE",
-    summaryText: "5분봉 비활성",
-    scores: {
-      trend: 0,
-      momentum: 0,
-      risk: 0,
-      overall: "NEUTRAL",
-    },
-    signals: emptySignals,
-    reasons: ["5분봉은 장중/당일 데이터가 없어서 비활성"],
-    levels: nullLevels,
-    tradePlan: {
-      entry: null,
-      stop: null,
-      target: null,
-      riskReward: null,
-      note: "데이터가 부족해 Entry/Stop/Target을 계산하지 않았습니다.",
-    },
-    indicators: {
-      ma: {
-        ma1Period: 20,
-        ma2Period: 60,
-        ma3Period: null,
-        ma1: [...nullPoints],
-        ma2: [...nullPoints],
-        ma3: [...nullPoints],
-      },
-      rsi14: [...nullPoints],
-      bb: {
-        upper: [...nullPoints],
-        mid: [...nullPoints],
-        lower: [...nullPoints],
-      },
-    },
-    candles,
-    timing: null,
-  };
+  return analyzeWithConfig(candles, config);
 };
 
 export const computeMultiFinal = (
   month: TimeframeAnalysis | null,
   week: TimeframeAnalysis | null,
   day: TimeframeAnalysis | null,
-  min5: TimeframeAnalysis | null,
 ): {
   overall: Overall;
   confidence: number;
@@ -1136,7 +944,7 @@ export const computeMultiFinal = (
   warnings: string[];
 } => {
   const warnings: string[] = [];
-  const base = day ?? week ?? month ?? min5;
+  const base = day ?? week ?? month;
   let overall: Overall = base?.scores.overall ?? "CAUTION";
 
   if (!day) {
@@ -1182,13 +990,11 @@ export const computeMultiFinal = (
   confidence = clamp(Math.round(confidence), 0, 100);
 
   const summaryBase = day?.summaryText ?? week?.summaryText ?? month?.summaryText ?? "분석 데이터 부족";
-  const timingText = min5?.timing ? min5.timing.timingLabel : "5분 타이밍 비활성";
-  const summary = `${summaryBase} · ${timingText}`;
 
   return {
     overall,
     confidence,
-    summary,
+    summary: summaryBase,
     warnings,
   };
 };

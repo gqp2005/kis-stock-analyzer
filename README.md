@@ -2,13 +2,12 @@
 
 KIS OpenAPI 기반 한국 주식 멀티 타임프레임 분석 서비스입니다.
 
-- 타임프레임: `month`, `week`, `day`, `min5`
+- 타임프레임: `month`, `week`, `day`
 - 핵심 API: `/api/analysis?tf=multi`
 - 보조 API: `/api/backtest` (일봉 시그널 백테스트)
 - 보조 API: `/api/screener` (종목 입력 없이 후보 종목 랭킹)
 - 보조 API: `/api/admin/rebuild-screener` (배치형 스크리너 재빌드)
-- 프론트: 월/주/일/5분 탭 + 최종 판정/신뢰도 표시
-- 프론트: 분석 화면 `준실시간 모드`(10/15/20/30초 폴링) 지원
+- 프론트: 월/주/일 탭 + 최종 판정/신뢰도 표시
 - 프론트: 상단 탭으로 `종목 분석` / `종목 추천(스크리너)` 전환
 - 프론트: 스크리너에 `거래대금 상위 500 유니버스`/마지막 갱신 시각 표시
 - 프론트: Risk 점수 분해 카드 + Entry/Stop/Target(참고) 레벨 표시
@@ -198,13 +197,11 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - `metrics.ts`: 승률/손익비/PF/MDD 등 검증 지표 집계
 
 ### `GET /api/ohlcv?query=005930&tf=day&days=180`
-- `tf`: `day|week|month|min5`
-- 하위 호환: 기존 `tf=min15` 요청은 내부적으로 `min5`로 자동 매핑됩니다.
+- `tf`: `day|week|month`
 - TF별 캔들 반환
 
 ### `GET /api/analysis?query=005930&tf=multi&count=180`
-- `tf`: `day|week|month|min5|multi`
-- 하위 호환: 기존 `tf=min15` 요청은 내부적으로 `min5`로 자동 매핑됩니다.
+- `tf`: `day|week|month|multi`
 - `count`: 일봉(day) 기준 조회 봉 수(week/month는 내부 최소치 강제)
 - `higher_tf_source`(선택): `resample|kis` (기본 `resample`)
   - `resample`: day OHLCV를 서버에서 주봉/월봉으로 집계
@@ -218,8 +215,7 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
   "timeframes": {
     "month": {},
     "week": {},
-    "day": {},
-    "min5": {}
+    "day": {}
   },
   "warnings": []
 }
@@ -228,8 +224,7 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - `tf=multi`는 부분 성공 허용:
   - 일부 TF 데이터가 부족해도 가능한 TF 결과를 반환
   - `day`만 가능하면 final은 day 기반으로 계산
-  - `min5`가 없으면 `timing=null` + warnings에 비활성 안내 추가
-- `timeframes.month/week/day/min5`는 데이터 부족 시 `null`일 수 있음
+- `timeframes.month/week/day`는 데이터 부족 시 `null`일 수 있음
 - 각 TF 결과에는 `indicators`(MA/RSI/BB 시계열) 포함:
   - `indicators.ma`(기간/시계열), `indicators.rsi14`, `indicators.bb`
 - 각 TF 결과에는 `tradePlan`(entry/stop/target/riskReward/note) 포함
@@ -238,10 +233,7 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
   - `volRatio`, `turnover`, `bodyPct`, `upperWickPct`, `lowerWickPct`, `pos20`, `volumeScore`, `reasons`
   - `volumePatterns[]` 원소: `{ t, type, label, desc, strength?, ref? }`
   - 패턴 타입: `BreakoutConfirmed`, `Upthrust`, `PullbackReaccumulation`, `ClimaxUp`, `CapitulationAbsorption`, `WeakBounce`
-- `tf=day|week|month|min5`는 단일 TF 분석 응답(기존 day 응답 호환) 반환
-- 프론트 준실시간 모드:
-  - `tf=multi`를 주기적으로 재조회(기본 15초)
-  - 백테스트는 자동 재조회하지 않고 수동 조회 시 갱신
+- `tf=day|week|month`는 단일 TF 분석 응답(기존 day 응답 호환) 반환
 
 오류 응답 포맷(공통):
 
@@ -260,15 +252,6 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - `month/week/day`:
   - KIS `inquire-daily-itemchartprice` 호출 (일봉 직접 조회)
   - multi 기본 모드에서는 day를 충분히 수집한 뒤 주봉/월봉으로 리샘플링
-- `min5`:
-  - KIS `inquire-time-itemchartprice`(주식당일분봉조회)로 당일 분봉 수집
-  - 서버에서 5분봉으로 리샘플링(OHLCV/Volume 집계)
-  - 정규장 외 시간에는 분봉 호출을 생략하고 비활성 처리
-  - KIS 분봉 호출 제한(EGW00201) 발생 시 전체 분석 실패 없이 비활성 처리
-
-제약:
-- `min5`는 KIS 제약상 **당일 분봉 기반**입니다.
-- 전일 이전 분봉은 제공되지 않습니다.
 
 ## 스코어링 v1 (요약)
 
@@ -276,7 +259,6 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
   - month: MA(6/12/24), RSI14, BB20, ATR14, breakout(12)
   - week: MA(10/30/60), RSI14, BB20, ATR14, breakout(20)
   - day: MA(20/60/120), RSI14, BB20, ATR14, breakout(20)
-  - min5: MA(20/60), RSI14, BB20, ATR14, breakout(20)
 - 레짐
   - `trend >= 70`: `UP`
   - `40~69`: `SIDE`
@@ -292,9 +274,6 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
   - 일봉 `volumeScore` 반영:
     - `>=70`: +8, `50~69`: +3, `<50`: -5
     - 단 `day risk < 35`이면 반영치를 50% 축소
-- min5 timingScore
-  - 명세 기반 계산 + timingLabel(`타이밍 양호/관망·조건부/진입 비추`)
-
 ## 캐시 정책
 
 - 분석 캐시 + 원천 OHLCV 캐시를 분리 사용
@@ -313,10 +292,6 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
     - 장중: 60초
     - 장마감 후 평일: 30분
     - 주말: 6시간
-  - `min5` (준실시간용)
-    - 장중: 15초
-    - 장마감 후 평일: 10분
-    - 주말: 60분
   - `week/month`
     - 장중: 30분
     - 장마감 후 평일: 60분
@@ -353,13 +328,6 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
     - `CLOUDFLARE_API_TOKEN`
     - `CLOUDFLARE_ACCOUNT_ID`
     - `CLOUDFLARE_PROJECT_NAME`
-- `.github/workflows/screener-rebuild.yml`
-  - 매일 **KST 06:00**(UTC 21:00)에 `/api/admin/rebuild-screener` 자동 실행
-  - 배치 재빌드가 완료될 때까지 `inProgress`를 확인하며 반복 호출
-  - 수동 실행(`workflow_dispatch`)도 지원
-  - 필요한 GitHub Secrets:
-    - `SCREENER_REBUILD_URL` 예: `https://<your-pages-domain>/api/admin/rebuild-screener`
-    - `ADMIN_TOKEN` (Cloudflare Pages env와 동일 값)
 
 ## KIS 키 롤링 절차
 

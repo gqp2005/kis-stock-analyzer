@@ -9,23 +9,20 @@ import { normalizeInput } from "../lib/utils";
 
 const parseTf = (raw: string | null): Timeframe => {
   const tf = (raw ?? "day").toLowerCase();
-  if (tf === "min15") return "min5"; // backward compatibility
-  if (tf === "month" || tf === "week" || tf === "day" || tf === "min5") return tf;
+  if (tf === "month" || tf === "week" || tf === "day") return tf;
   return "day";
 };
 
 const visibleCount = (tf: Timeframe, days: number): number => {
   if (tf === "day") return days;
   if (tf === "week") return Math.max(60, Math.min(180, Math.floor(days / 3)));
-  if (tf === "month") return Math.max(36, Math.min(120, Math.floor(days / 8)));
-  return 120;
+  return Math.max(36, Math.min(120, Math.floor(days / 8)));
 };
 
 const minCount = (tf: Timeframe, days: number): number => {
   if (tf === "day") return Math.max(days, 200);
   if (tf === "week") return 140;
-  if (tf === "month") return 100;
-  return 180;
+  return 100;
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeCandles,
   analyzeTimeframe,
-  buildDisabledMin5Analysis,
   computeMultiFinal,
 } from "../functions/lib/scoring";
 import type { Candle } from "../functions/lib/types";
@@ -64,11 +63,10 @@ describe("analysis scoring extras", () => {
     }
 
     const day = analyzeTimeframe("day", candles);
-    const min5Disabled = buildDisabledMin5Analysis([]);
-    const final = computeMultiFinal(null, null, day, min5Disabled);
+    const final = computeMultiFinal(null, null, day);
 
     expect(final.overall).toBe(day.scores.overall);
-    expect(final.summary.includes("5분 타이밍 비활성")).toBe(true);
+    expect(final.summary).toBe(day.summaryText);
   });
 
   it("should detect breakout pattern and raise volume score", () => {

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   LineStyle,
@@ -61,12 +61,10 @@ const TF_LABEL: Record<Timeframe, string> = {
   month: "월봉",
   week: "주봉",
   day: "일봉",
-  min5: "5분",
 };
 
-const TF_TABS: Timeframe[] = ["month", "week", "day", "min5"];
-const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min5"];
-const LIVE_INTERVAL_OPTIONS = [10, 15, 20, 30] as const;
+const TF_TABS: Timeframe[] = ["month", "week", "day"];
+const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month"];
 const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
   BreakoutConfirmed: "돌파 확인(A)",
   Upthrust: "불트랩(B)",
@@ -129,57 +127,11 @@ const PATTERN_MARKER_CONFIG: Record<
   },
 };
 
-const KST_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Seoul",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
     return Math.floor(new Date(value).getTime() / 1000) as Time;
   }
   return value as Time;
-};
-
-const toDateFromChartTime = (value: Time): Date | null => {
-  if (typeof value === "number") {
-    return new Date(value * 1000);
-  }
-  if (typeof value === "string") {
-    const parsed = value.includes("T")
-      ? new Date(value)
-      : new Date(`${value}T00:00:00+09:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  if (typeof value === "object" && value !== null && "year" in value && "month" in value && "day" in value) {
-    const businessDay = value as { year: number; month: number; day: number };
-    return new Date(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day, 0, 0, 0));
-  }
-  return null;
-};
-
-const formatChartTimeKst = (time: Time, tf: Timeframe, withDate = false): string => {
-  const date = toDateFromChartTime(time);
-  if (!date) return "";
-  const parts = Object.fromEntries(
-    KST_DATE_TIME_FORMATTER
-      .formatToParts(date)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
-  ) as Record<string, string>;
-
-  if (tf === "min5") {
-    return withDate
-      ? `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
-      : `${parts.hour}:${parts.minute}`;
-  }
-
-  return `${parts.month}-${parts.day}`;
 };
 
 const toPatternTimeKey = (value: string): string => (value.includes("T") ? value.slice(0, 16) : value);
@@ -275,26 +227,10 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
   return "negative";
 };
 
-const timingReasonTone = (reason: string): ReasonTone => {
-  if (reason.includes("위라 단기 방향이 우호적")) return "positive";
-  if (reason.includes("정렬로 단기 추세 정렬이 좋습니다")) return "positive";
-  if (reason.includes("가 55 이상입니다")) return "positive";
-  if (reason.includes("최근 4봉 기준 상승했습니다")) return "positive";
-
-  if (reason.includes("아래라 단기 추세가 약합니다")) return "negative";
-  if (reason.includes("정렬이 아직 아닙니다")) return "negative";
-  if (reason.includes("하단 이탈")) return "negative";
-  if (reason.includes("상단 이탈")) return "negative";
-  if (reason.includes("변동성이 높습니다")) return "negative";
-  return "negative";
-};
-
 export default function App() {
   const [pageMode, setPageMode] = useState<"analysis" | "screener">("analysis");
   const [query, setQuery] = useState("005930");
   const [days, setDays] = useState(180);
-  const [liveMode, setLiveMode] = useState(false);
-  const [liveIntervalSec, setLiveIntervalSec] = useState<(typeof LIVE_INTERVAL_OPTIONS)[number]>(15);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<MultiAnalysisResponse | null>(null);
@@ -323,7 +259,7 @@ export default function App() {
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
-  const fetchAnalysis = useCallback(async (value: string, lookback: number) => {
+  const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
     setError("");
     try {
@@ -340,9 +276,9 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  };
 
-  const fetchBacktest = useCallback(async (
+  const fetchBacktest = async (
     value: string,
     lookback: number,
     holdBars: number,
@@ -363,9 +299,9 @@ export default function App() {
     } finally {
       setBacktestLoading(false);
     }
-  }, [apiBase]);
+  };
 
-  const fetchDashboard = useCallback((
+  const fetchDashboard = (
     value: string,
     lookback: number,
     holdBars: number,
@@ -373,7 +309,7 @@ export default function App() {
   ) => {
     void fetchAnalysis(value, lookback);
     void fetchBacktest(value, lookback, holdBars, signalOverall);
-  }, [fetchAnalysis, fetchBacktest]);
+  };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -405,18 +341,6 @@ export default function App() {
     fetchDashboard("005930", 180, 10, "GOOD");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!liveMode || pageMode !== "analysis" || !result?.meta.symbol) return;
-
-    const symbol = result.meta.symbol;
-    const timer = window.setInterval(() => {
-      if (document.hidden || loading) return;
-      void fetchAnalysis(symbol, days);
-    }, liveIntervalSec * 1000);
-
-    return () => window.clearInterval(timer);
-  }, [liveMode, pageMode, result?.meta.symbol, liveIntervalSec, loading, fetchAnalysis, days]);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
@@ -479,10 +403,6 @@ export default function App() {
         background: { type: ColorType.Solid, color: "#0f1722" },
         textColor: "#9fb2c7",
       },
-      localization: {
-        locale: "ko-KR",
-        timeFormatter: (time) => formatChartTimeKst(time, activeTf, true),
-      },
       grid: {
         vertLines: { color: "#1e2d3f" },
         horzLines: { color: "#1e2d3f" },
@@ -492,9 +412,8 @@ export default function App() {
       },
       timeScale: {
         borderColor: "#30445a",
-        timeVisible: activeTf === "min5",
+        timeVisible: false,
         secondsVisible: false,
-        tickMarkFormatter: (time) => formatChartTimeKst(time, activeTf, false),
       },
     });
 
@@ -515,7 +434,7 @@ export default function App() {
       })),
     );
 
-    const showMaOverlay = activeTf !== "min5";
+    const showMaOverlay = true;
     if (showMaOverlay) {
       const maDefs = [
         {
@@ -700,10 +619,6 @@ export default function App() {
           background: { type: ColorType.Solid, color: "#0f1722" },
           textColor: "#9fb2c7",
         },
-        localization: {
-          locale: "ko-KR",
-          timeFormatter: (time) => formatChartTimeKst(time, activeTf, true),
-        },
         grid: {
           vertLines: { color: "#1e2d3f" },
           horzLines: { color: "#1e2d3f" },
@@ -713,9 +628,8 @@ export default function App() {
         },
         timeScale: {
           borderColor: "#30445a",
-          timeVisible: activeTf === "min5",
+          timeVisible: false,
           secondsVisible: false,
-          tickMarkFormatter: (time) => formatChartTimeKst(time, activeTf, false),
         },
       });
 
@@ -819,10 +733,7 @@ export default function App() {
   const selectedPatternDetails = selectedPattern?.details ?? null;
   const tradePlan = activeAnalysis?.tradePlan ?? null;
   const backtestSummary = backtest?.summary ?? null;
-  const rsiDisabledMessage =
-    activeTf === "min5"
-      ? "5분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
-      : "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
+  const rsiDisabledMessage = "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -838,7 +749,7 @@ export default function App() {
         <header className="hero">
           <p className="eyebrow">KIS 개발자 오픈API</p>
           <h1>한국 주식 시그널 보드</h1>
-          <p className="subtitle">멀티 타임프레임(월/주/일/5분) 스코어링으로 종목 상태를 확인합니다.</p>
+          <p className="subtitle">멀티 타임프레임(월/주/일) 스코어링으로 종목 상태를 확인합니다.</p>
         </header>
 
         <div className="mode-tabs">
@@ -942,37 +853,6 @@ export default function App() {
             </select>
           </label>
           <p>값을 바꾼 뒤 조회를 누르면 백테스트 조건이 적용됩니다.</p>
-        </div>
-
-        <div className="live-controls">
-          <label className="live-toggle">
-            <input
-              type="checkbox"
-              checked={liveMode}
-              onChange={(e) => setLiveMode(e.target.checked)}
-            />
-            준실시간 모드
-          </label>
-          <label>
-            갱신 주기
-            <select
-              value={liveIntervalSec}
-              onChange={(e) => setLiveIntervalSec(Number(e.target.value) as (typeof LIVE_INTERVAL_OPTIONS)[number])}
-              disabled={!liveMode}
-              aria-label="준실시간 갱신 주기"
-            >
-              {LIVE_INTERVAL_OPTIONS.map((sec) => (
-                <option key={sec} value={sec}>
-                  {sec}초
-                </option>
-              ))}
-            </select>
-          </label>
-          <p>
-            {liveMode
-              ? `준실시간 ON · ${liveIntervalSec}초 간격 · 마지막 서버 갱신 ${result?.meta.asOf ?? "-"}`
-              : "준실시간 OFF · 수동 조회 시 최신 데이터를 불러옵니다."}
-          </p>
         </div>
 
         {error && <p className="error">{error}</p>}
@@ -1261,31 +1141,6 @@ export default function App() {
                   )}
                 </div>
 
-                {activeTf === "min5" && (
-                  <div className="timing-box">
-                    {activeAnalysis.timing ? (
-                      <>
-                        <h3>
-                          5분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
-                        </h3>
-                        <ul>
-                          {activeAnalysis.timing.reasons.map((reason) => (
-                            <li key={reason} className="reason-item">
-                              <span>{reason}</span>
-                              {(() => {
-                                const tone = toneBadge(timingReasonTone(reason));
-                                return <small className={tone.className}>{tone.text}</small>;
-                              })()}
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : (
-                      <h3>5분봉은 장중/당일 데이터가 없어 타이밍 분석이 비활성입니다.</h3>
-                    )}
-                  </div>
-                )}
-
                 <div className="card">
                   <h3>{TF_LABEL[activeTf]} 근거</h3>
                   <ul>
@@ -1303,39 +1158,36 @@ export default function App() {
 
                 <div className="card">
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
-                  {activeTf === "min5" && <p className="plan-note">시간축 기준: 한국시간(KST)</p>}
                   {maInfo && (
                     <div className="indicator-controls">
-                      {activeTf !== "min5" && (
-                        <>
+                      <>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={showMa1}
+                            onChange={(e) => setShowMa1(e.target.checked)}
+                          />
+                          MA{maInfo.ma1Period}
+                        </label>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={showMa2}
+                            onChange={(e) => setShowMa2(e.target.checked)}
+                          />
+                          MA{maInfo.ma2Period}
+                        </label>
+                        {maInfo.ma3Period != null && (
                           <label>
                             <input
                               type="checkbox"
-                              checked={showMa1}
-                              onChange={(e) => setShowMa1(e.target.checked)}
+                              checked={showMa3}
+                              onChange={(e) => setShowMa3(e.target.checked)}
                             />
-                            MA{maInfo.ma1Period}
+                            MA{maInfo.ma3Period}
                           </label>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={showMa2}
-                              onChange={(e) => setShowMa2(e.target.checked)}
-                            />
-                            MA{maInfo.ma2Period}
-                          </label>
-                          {maInfo.ma3Period != null && (
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={showMa3}
-                                onChange={(e) => setShowMa3(e.target.checked)}
-                              />
-                              MA{maInfo.ma3Period}
-                            </label>
-                          )}
-                        </>
-                      )}
+                        )}
+                      </>
                       <label>
                         <input
                           type="checkbox"

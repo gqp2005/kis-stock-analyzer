@@ -103,40 +103,6 @@ h1 {
   font-size: 12px;
 }
 
-.live-controls {
-  margin: -2px 0 16px;
-  display: grid;
-  grid-template-columns: auto 150px 1fr;
-  gap: 10px;
-  align-items: end;
-}
-
-.live-controls label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: #b8cce2;
-  font-size: 13px;
-}
-
-.live-controls .live-toggle {
-  flex-direction: row;
-  align-items: center;
-  height: 44px;
-  gap: 8px;
-}
-
-.live-controls .live-toggle input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-}
-
-.live-controls p {
-  margin: 0 0 10px;
-  color: #8fa5bc;
-  font-size: 12px;
-}
-
 .search-input-wrap {
   position: relative;
 }
@@ -905,23 +871,6 @@ h2 {
   border-bottom: 0;
 }
 
-.timing-box {
-  border: 1px solid rgba(87, 163, 255, 0.4);
-  background: rgba(18, 39, 59, 0.7);
-  border-radius: 14px;
-  padding: 12px;
-  margin-bottom: 12px;
-}
-
-.timing-box h3 {
-  margin: 0 0 8px;
-}
-
-.timing-box ul {
-  margin: 0;
-  padding-left: 18px;
-}
-
 .suggestions {
   position: absolute;
   top: calc(100% + 6px);
@@ -1093,15 +1042,6 @@ h2 {
   }
 
   .backtest-controls p {
-    margin: 0;
-  }
-
-  .live-controls {
-    grid-template-columns: 1fr;
-    margin-top: -6px;
-  }
-
-  .live-controls p {
     margin: 0;
   }
 

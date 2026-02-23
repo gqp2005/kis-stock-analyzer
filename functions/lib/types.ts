@@ -8,12 +8,12 @@ export interface Env {
   ADMIN_TOKEN?: string;
 }
 
-export type Timeframe = "month" | "week" | "day" | "min5";
+export type Timeframe = "month" | "week" | "day";
 export type Regime = "UP" | "SIDE" | "DOWN";
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
 
 export interface Candle {
-  time: string; // day/week/month: YYYY-MM-DD, min5: ISO datetime string
+  time: string; // day/week/month: YYYY-MM-DD
   open: number;
   high: number;
   low: number;
@@ -151,12 +151,6 @@ export interface Signals {
   };
 }
 
-export interface TimingInfo {
-  timingScore: number;
-  timingLabel: "타이밍 양호" | "관망/조건부" | "진입 비추";
-  reasons: string[];
-}
-
 export interface TimeframeAnalysis {
   tf: Timeframe;
   regime: Regime;
@@ -168,7 +162,6 @@ export interface TimeframeAnalysis {
   tradePlan: TradePlan;
   indicators: IndicatorSeries;
   candles: Candle[];
-  timing?: TimingInfo | null;
 }
 
 export interface AnalysisPayload {
@@ -192,7 +185,6 @@ export interface AnalysisPayload {
   indicators: IndicatorSeries;
   candles: Candle[];
   regime: Regime;
-  timing?: TimingInfo | null;
 }
 
 export interface MultiAnalysisPayload {
@@ -214,7 +206,6 @@ export interface MultiAnalysisPayload {
     month: TimeframeAnalysis | null;
     week: TimeframeAnalysis | null;
     day: TimeframeAnalysis | null;
-    min5: TimeframeAnalysis | null;
   };
   warnings: string[];
 }
