@@ -129,11 +129,57 @@ const PATTERN_MARKER_CONFIG: Record<
   },
 };
 
+const KST_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
     return Math.floor(new Date(value).getTime() / 1000) as Time;
   }
   return value as Time;
+};
+
+const toDateFromChartTime = (value: Time): Date | null => {
+  if (typeof value === "number") {
+    return new Date(value * 1000);
+  }
+  if (typeof value === "string") {
+    const parsed = value.includes("T")
+      ? new Date(value)
+      : new Date(`${value}T00:00:00+09:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value === "object" && value !== null && "year" in value && "month" in value && "day" in value) {
+    const businessDay = value as { year: number; month: number; day: number };
+    return new Date(Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day, 0, 0, 0));
+  }
+  return null;
+};
+
+const formatChartTimeKst = (time: Time, tf: Timeframe, withDate = false): string => {
+  const date = toDateFromChartTime(time);
+  if (!date) return "";
+  const parts = Object.fromEntries(
+    KST_DATE_TIME_FORMATTER
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  ) as Record<string, string>;
+
+  if (tf === "min5") {
+    return withDate
+      ? `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
+      : `${parts.hour}:${parts.minute}`;
+  }
+
+  return `${parts.month}-${parts.day}`;
 };
 
 const toPatternTimeKey = (value: string): string => (value.includes("T") ? value.slice(0, 16) : value);
@@ -433,6 +479,10 @@ export default function App() {
         background: { type: ColorType.Solid, color: "#0f1722" },
         textColor: "#9fb2c7",
       },
+      localization: {
+        locale: "ko-KR",
+        timeFormatter: (time) => formatChartTimeKst(time, activeTf, true),
+      },
       grid: {
         vertLines: { color: "#1e2d3f" },
         horzLines: { color: "#1e2d3f" },
@@ -444,6 +494,7 @@ export default function App() {
         borderColor: "#30445a",
         timeVisible: activeTf === "min5",
         secondsVisible: false,
+        tickMarkFormatter: (time) => formatChartTimeKst(time, activeTf, false),
       },
     });
 
@@ -649,6 +700,10 @@ export default function App() {
           background: { type: ColorType.Solid, color: "#0f1722" },
           textColor: "#9fb2c7",
         },
+        localization: {
+          locale: "ko-KR",
+          timeFormatter: (time) => formatChartTimeKst(time, activeTf, true),
+        },
         grid: {
           vertLines: { color: "#1e2d3f" },
           horzLines: { color: "#1e2d3f" },
@@ -660,6 +715,7 @@ export default function App() {
           borderColor: "#30445a",
           timeVisible: activeTf === "min5",
           secondsVisible: false,
+          tickMarkFormatter: (time) => formatChartTimeKst(time, activeTf, false),
         },
       });
 
@@ -1247,6 +1303,7 @@ export default function App() {
 
                 <div className="card">
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
+                  {activeTf === "min5" && <p className="plan-note">시간축 기준: 한국시간(KST)</p>}
                   {maInfo && (
                     <div className="indicator-controls">
                       {activeTf !== "min5" && (
