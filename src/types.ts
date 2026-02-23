@@ -1,6 +1,7 @@
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
 export type Timeframe = "month" | "week" | "day";
 export type Regime = "UP" | "SIDE" | "DOWN";
+export type InvestmentProfile = "short" | "mid";
 
 export interface Candle {
   time: string;
@@ -16,6 +17,18 @@ export interface Scores {
   momentum: number;
   risk: number;
   overall: Overall;
+}
+
+export interface ProfileScore {
+  mode: InvestmentProfile;
+  score: number;
+  overall: Overall;
+  weights: {
+    trend: number;
+    momentum: number;
+    risk: number;
+  };
+  description: string;
 }
 
 export interface RiskBreakdown {
@@ -55,6 +68,14 @@ export interface IndicatorSeries {
     mid: IndicatorPoint[];
     lower: IndicatorPoint[];
   };
+  macd: {
+    fastPeriod: number;
+    slowPeriod: number;
+    signalPeriod: number;
+    line: IndicatorPoint[];
+    signal: IndicatorPoint[];
+    hist: IndicatorPoint[];
+  };
 }
 
 export type VolumePatternType =
@@ -86,6 +107,30 @@ export interface VolumePatternSignal {
   };
 }
 
+export type FundamentalLabel = "UNDERVALUED" | "FAIR" | "OVERVALUED" | "N/A";
+export type FlowLabel = "BUYING" | "BALANCED" | "SELLING" | "N/A";
+
+export interface FundamentalSignal {
+  per: number | null;
+  pbr: number | null;
+  eps: number | null;
+  bps: number | null;
+  marketCap: number | null;
+  settlementMonth: string | null;
+  label: FundamentalLabel;
+  reasons: string[];
+}
+
+export interface FlowSignal {
+  foreignNet: number | null;
+  institutionNet: number | null;
+  individualNet: number | null;
+  programNet: number | null;
+  foreignHoldRate: number | null;
+  label: FlowLabel;
+  reasons: string[];
+}
+
 export interface Signals {
   trend: {
     closeAboveMid: boolean;
@@ -101,6 +146,10 @@ export interface Signals {
     closeAboveFast: boolean;
     returnNPositive: boolean;
     volumeAboveMa20: boolean;
+    macd: number | null;
+    macdSignal: number | null;
+    macdHist: number | null;
+    macdBullish: boolean;
   };
   risk: {
     atrPercent: number | null;
@@ -121,6 +170,8 @@ export interface Signals {
     volumeScore: number;
     reasons: string[];
   };
+  fundamental: FundamentalSignal;
+  flow: FlowSignal;
 }
 
 export interface TimeframeAnalysis {
@@ -128,6 +179,7 @@ export interface TimeframeAnalysis {
   regime: Regime;
   summaryText: string;
   scores: Scores;
+  profile: ProfileScore;
   signals: Signals;
   reasons: string[];
   levels: {
@@ -161,11 +213,13 @@ export interface MultiAnalysisResponse {
     asOf: string;
     source: "KIS";
     cacheTtlSec: number;
+    profile: InvestmentProfile;
   };
   final: {
     overall: Overall;
     confidence: number;
     summary: string;
+    profile: ProfileScore | null;
   };
   timeframes: {
     month: TimeframeAnalysis | null;

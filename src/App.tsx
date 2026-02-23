@@ -12,6 +12,7 @@ import {
 import type {
   BacktestResponse,
   IndicatorPoint,
+  InvestmentProfile,
   MultiAnalysisResponse,
   Overall,
   Timeframe,
@@ -61,6 +62,11 @@ const TF_LABEL: Record<Timeframe, string> = {
   month: "월봉",
   week: "주봉",
   day: "일봉",
+};
+
+const PROFILE_LABEL: Record<InvestmentProfile, string> = {
+  short: "단기",
+  mid: "중기",
 };
 
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
@@ -206,6 +212,41 @@ const formatFactor = (value: number | null): string =>
   value == null ? "-" : value.toFixed(2);
 const formatRatio = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}배`;
+const formatSignedDecimal = (value: number | null): string =>
+  value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+const formatSignedQty = (value: number | null): string =>
+  value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value).toLocaleString("ko-KR")}주`;
+
+const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
+  if (rsiBand === "HIGH") return "과열 구간";
+  if (rsiBand === "MID") return "중립 구간";
+  return "침체 구간";
+};
+
+const bbSignalLabel = (position: "ABOVE_UPPER" | "INSIDE_BAND" | "BELOW_LOWER" | "N/A"): string => {
+  if (position === "ABOVE_UPPER") return "상단 이탈(과열 경계)";
+  if (position === "INSIDE_BAND") return "밴드 내부(안정)";
+  if (position === "BELOW_LOWER") return "하단 이탈(약세 경계)";
+  return "데이터 부족";
+};
+
+const valuationLabelMeta = (
+  label: "UNDERVALUED" | "FAIR" | "OVERVALUED" | "N/A",
+): { text: string; className: string } => {
+  if (label === "UNDERVALUED") return { text: "상대 저평가", className: "signal-tag positive" };
+  if (label === "OVERVALUED") return { text: "상대 고평가", className: "signal-tag negative" };
+  if (label === "FAIR") return { text: "중립 구간", className: "signal-tag neutral" };
+  return { text: "데이터 부족", className: "signal-tag muted" };
+};
+
+const flowLabelMeta = (
+  label: "BUYING" | "BALANCED" | "SELLING" | "N/A",
+): { text: string; className: string } => {
+  if (label === "BUYING") return { text: "매수 우위", className: "signal-tag positive" };
+  if (label === "SELLING") return { text: "매도 우위", className: "signal-tag negative" };
+  if (label === "BALANCED") return { text: "중립", className: "signal-tag neutral" };
+  return { text: "데이터 부족", className: "signal-tag muted" };
+};
 
 type ReasonTone = "positive" | "negative";
 
@@ -239,6 +280,7 @@ export default function App() {
   const [backtestError, setBacktestError] = useState("");
   const [backtestSignal, setBacktestSignal] = useState<Overall>("GOOD");
   const [backtestHoldBars, setBacktestHoldBars] = useState(10);
+  const [profile, setProfile] = useState<InvestmentProfile>("short");
   const [riskBreakdownOpen, setRiskBreakdownOpen] = useState(false);
   const [activeTf, setActiveTf] = useState<Timeframe>("day");
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -259,16 +301,21 @@ export default function App() {
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
 
-  const fetchAnalysis = async (value: string, lookback: number) => {
+  const fetchAnalysis = async (
+    value: string,
+    lookback: number,
+    profileMode: InvestmentProfile,
+  ) => {
     setLoading(true);
     setError("");
     try {
-      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi`;
+      const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi&profile=${profileMode}`;
       const response = await fetch(url);
       const data = (await response.json()) as MultiAnalysisResponse | { error: string };
       if (!response.ok) throw new Error("error" in data ? data.error : "분석 요청 실패");
       const payload = data as MultiAnalysisResponse;
       setResult(payload);
+      setProfile(payload.meta.profile);
       setActiveTf((prev) => (payload.timeframes[prev] ? prev : pickDefaultTf(payload)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
@@ -306,8 +353,9 @@ export default function App() {
     lookback: number,
     holdBars: number,
     signalOverall: Overall,
+    profileMode: InvestmentProfile,
   ) => {
-    void fetchAnalysis(value, lookback);
+    void fetchAnalysis(value, lookback, profileMode);
     void fetchBacktest(value, lookback, holdBars, signalOverall);
   };
 
@@ -316,7 +364,7 @@ export default function App() {
     const normalized = query.trim();
     if (!normalized) return;
     setShowSuggestions(false);
-    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal);
+    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal, profile);
   };
 
   const onSelectSuggestion = (stock: StockLookup) => {
@@ -334,11 +382,11 @@ export default function App() {
     setPageMode("analysis");
     setQuery(code);
     setShowSuggestions(false);
-    fetchDashboard(code, days, backtestHoldBars, backtestSignal);
+    fetchDashboard(code, days, backtestHoldBars, backtestSignal, profile);
   };
 
   useEffect(() => {
-    fetchDashboard("005930", 180, 10, "GOOD");
+    fetchDashboard("005930", 180, 10, "GOOD", "short");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -726,6 +774,8 @@ export default function App() {
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
+  const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
+  const flowSignal = activeAnalysis?.signals.flow ?? null;
   const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
     .slice(-10)
     .reverse();
@@ -734,6 +784,9 @@ export default function App() {
   const tradePlan = activeAnalysis?.tradePlan ?? null;
   const backtestSummary = backtest?.summary ?? null;
   const rsiDisabledMessage = "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
+  const momentumSignal = activeAnalysis?.signals.momentum ?? null;
+  const riskSignal = activeAnalysis?.signals.risk ?? null;
+  const profileScore = activeAnalysis?.profile ?? result?.final.profile ?? null;
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -828,6 +881,17 @@ export default function App() {
         </form>
         <div className="backtest-controls">
           <label>
+            투자 성향
+            <select
+              value={profile}
+              onChange={(e) => setProfile(e.target.value as InvestmentProfile)}
+              aria-label="투자 성향"
+            >
+              <option value="short">단기(모멘텀 중심)</option>
+              <option value="mid">중기(추세/리스크 중심)</option>
+            </select>
+          </label>
+          <label>
             백테스트 진입 신호
             <select
               value={backtestSignal}
@@ -865,7 +929,7 @@ export default function App() {
                   {result.meta.name} ({result.meta.symbol})
                 </h2>
                 <p className="meta">
-                  {result.meta.market} · {result.meta.asOf} · 출처 {result.meta.source}
+                  {result.meta.market} · {result.meta.asOf} · 성향 {PROFILE_LABEL[result.meta.profile]} · 출처 {result.meta.source}
                 </p>
               </div>
               <div className="summary-right">
@@ -922,6 +986,148 @@ export default function App() {
                     <strong>{activeAnalysis.scores.risk}</strong>
                   </article>
                 </div>
+
+                {profileScore && (
+                  <div className="card">
+                    <h3>투자 성향 맞춤 전략</h3>
+                    <div className="profile-grid">
+                      <div className="plan-item">
+                        <span>성향</span>
+                        <strong>{PROFILE_LABEL[profileScore.mode]}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>가중 점수</span>
+                        <strong>{profileScore.score}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>가중 판정</span>
+                        <strong>{overallLabel(profileScore.overall)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>가중치(추세/모멘텀/위험)</span>
+                        <strong>
+                          {profileScore.weights.trend}/{profileScore.weights.momentum}/{profileScore.weights.risk}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="plan-note">{profileScore.description}</p>
+                  </div>
+                )}
+
+                {momentumSignal && riskSignal && (
+                  <div className="card">
+                    <h3>기술적 분석 (Technical)</h3>
+                    <div className="tech-grid">
+                      <div className="tech-item">
+                        <strong>RSI</strong>
+                        <p>
+                          {momentumSignal.rsi != null ? momentumSignal.rsi.toFixed(2) : "-"} ·{" "}
+                          {rsiSignalLabel(momentumSignal.rsiBand)}
+                        </p>
+                      </div>
+                      <div className="tech-item">
+                        <strong>MACD</strong>
+                        <p>
+                          {formatSignedDecimal(momentumSignal.macd)} / 시그널{" "}
+                          {formatSignedDecimal(momentumSignal.macdSignal)} / 히스토그램{" "}
+                          {formatSignedDecimal(momentumSignal.macdHist)}
+                        </p>
+                        <small className={momentumSignal.macdBullish ? "tech-positive" : "tech-negative"}>
+                          {momentumSignal.macdBullish
+                            ? "MACD 우위(상승 모멘텀)"
+                            : "Signal 우위(하락/둔화 모멘텀)"}
+                        </small>
+                      </div>
+                      <div className="tech-item">
+                        <strong>볼린저</strong>
+                        <p>{bbSignalLabel(riskSignal.bbPosition)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {fundamentalSignal && (
+                  <div className="card">
+                    <h3>펀더멘털 분석 (Fundamental)</h3>
+                    <div className="fund-grid">
+                      <div className="plan-item">
+                        <span>PER</span>
+                        <strong>{formatRatio(fundamentalSignal.per)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>PBR</span>
+                        <strong>{formatRatio(fundamentalSignal.pbr)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>EPS</span>
+                        <strong>{formatPrice(fundamentalSignal.eps)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>BPS</span>
+                        <strong>{formatPrice(fundamentalSignal.bps)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>시가총액</span>
+                        <strong>{formatPrice(fundamentalSignal.marketCap)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>결산월 / 밸류에이션</span>
+                        <strong className="fund-label-wrap">
+                          {fundamentalSignal.settlementMonth ?? "-"}
+                          <small className={valuationLabelMeta(fundamentalSignal.label).className}>
+                            {valuationLabelMeta(fundamentalSignal.label).text}
+                          </small>
+                        </strong>
+                      </div>
+                    </div>
+                    <ul className="volume-reasons">
+                      {fundamentalSignal.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {flowSignal && (
+                  <div className="card">
+                    <h3>수급 분석 (Flow)</h3>
+                    <div className="fund-grid">
+                      <div className="plan-item">
+                        <span>외국인 순매수</span>
+                        <strong>{formatSignedQty(flowSignal.foreignNet)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>기관 순매수</span>
+                        <strong>{formatSignedQty(flowSignal.institutionNet)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>개인 순매수</span>
+                        <strong>{formatSignedQty(flowSignal.individualNet)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>프로그램 순매수</span>
+                        <strong>{formatSignedQty(flowSignal.programNet)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>외국인 보유율</span>
+                        <strong>{formatPercent(flowSignal.foreignHoldRate)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>수급 레이블</span>
+                        <strong>
+                          <small className={flowLabelMeta(flowSignal.label).className}>
+                            {flowLabelMeta(flowSignal.label).text}
+                          </small>
+                        </strong>
+                      </div>
+                    </div>
+                    <ul className="volume-reasons">
+                      {flowSignal.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {volumeSignal && (
                   <div className="card">

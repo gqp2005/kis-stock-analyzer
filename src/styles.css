@@ -84,7 +84,7 @@ h1 {
 .backtest-controls {
   margin: -10px 0 16px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 220px)) 1fr;
+  grid-template-columns: repeat(3, minmax(0, 220px)) 1fr;
   gap: 10px;
   align-items: end;
 }
@@ -371,6 +371,45 @@ h2 {
   margin: 0 0 10px;
 }
 
+.tech-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tech-item {
+  border: 1px solid rgba(87, 163, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(12, 24, 36, 0.55);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.tech-item strong {
+  font-size: 13px;
+  color: #d9e8f8;
+}
+
+.tech-item p {
+  margin: 0;
+  color: #bdd1e6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tech-item small {
+  font-size: 11px;
+}
+
+.tech-positive {
+  color: #9bf8de;
+}
+
+.tech-negative {
+  color: #ffd1d9;
+}
+
 .collapsible-head {
   display: flex;
   align-items: center;
@@ -535,6 +574,62 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.fund-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.fund-label-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid;
+}
+
+.signal-tag.positive {
+  color: #b3ffee;
+  border-color: rgba(0, 179, 134, 0.7);
+  background: rgba(0, 179, 134, 0.2);
+}
+
+.signal-tag.negative {
+  color: #ffd0d9;
+  border-color: rgba(255, 90, 118, 0.7);
+  background: rgba(255, 90, 118, 0.2);
+}
+
+.signal-tag.neutral {
+  color: #ffe7b2;
+  border-color: rgba(226, 173, 34, 0.7);
+  background: rgba(226, 173, 34, 0.2);
+}
+
+.signal-tag.muted {
+  color: #d5dfeb;
+  border-color: rgba(155, 176, 198, 0.55);
+  background: rgba(155, 176, 198, 0.12);
 }
 
 .volume-grid {
@@ -1074,8 +1169,20 @@ h2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fund-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .volume-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tech-grid {
+    grid-template-columns: 1fr;
   }
 
   .pattern-row {

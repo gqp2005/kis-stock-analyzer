@@ -1,5 +1,6 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
 import {
+  fetchMarketSnapshot,
   fetchTimeframeCandles,
   resampleDayToMonthCandles,
   resampleDayToWeekCandles,
@@ -16,6 +17,9 @@ import type {
   AnalysisPayload,
   Candle,
   Env,
+  FlowSignal,
+  FundamentalSignal,
+  InvestmentProfile,
   MultiAnalysisPayload,
   Timeframe,
   TimeframeAnalysis,
@@ -56,6 +60,12 @@ const visibleCount = (tf: Timeframe, dayCount: number): number => {
   return 80;
 };
 
+const parseProfile = (raw: string | null): InvestmentProfile => {
+  const value = (raw ?? "short").toLowerCase();
+  if (value === "mid") return "mid";
+  return "short";
+};
+
 const singleTfCount = (tf: Timeframe, dayCount: number): number => {
   if (tf === "day") return Math.max(dayCount, 200);
   if (tf === "week") return 200;
@@ -83,6 +93,21 @@ const ensureMinCandles = (
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
+const withSnapshotSignals = (
+  analysis: TimeframeAnalysis,
+  snapshot: { fundamental: FundamentalSignal; flow: FlowSignal } | null,
+): TimeframeAnalysis => {
+  if (!snapshot) return analysis;
+  return {
+    ...analysis,
+    signals: {
+      ...analysis.signals,
+      fundamental: snapshot.fundamental,
+      flow: snapshot.flow,
+    },
+  };
+};
+
 const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAnalysis => ({
   ...analysis,
   candles: analysis.candles.slice(-count),
@@ -98,6 +123,12 @@ const sliceAnalysis = (analysis: TimeframeAnalysis, count: number): TimeframeAna
       upper: analysis.indicators.bb.upper.slice(-count),
       mid: analysis.indicators.bb.mid.slice(-count),
       lower: analysis.indicators.bb.lower.slice(-count),
+    },
+    macd: {
+      ...analysis.indicators.macd,
+      line: analysis.indicators.macd.line.slice(-count),
+      signal: analysis.indicators.macd.signal.slice(-count),
+      hist: analysis.indicators.macd.hist.slice(-count),
     },
   },
 });
@@ -139,6 +170,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       ) || "";
     const tfParam = parseTf(url.searchParams.get("tf"));
     const dayCount = parseDayCount(url);
+    const profile = parseProfile(url.searchParams.get("profile"));
     const higherTfSource = (url.searchParams.get("higher_tf_source") ?? "resample").toLowerCase();
     const useResampledHigherTf = higherTfSource !== "kis";
 
@@ -155,7 +187,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const cache = await caches.open("kis-analyzer-cache-v3");
     const cacheKey = `https://cache.local/analysis/v5?code=${encodeURIComponent(
       resolved.code,
-    )}&tf=${tfParam}&count=${dayCount}&src=${useResampledHigherTf ? "resample" : "kis"}`;
+    )}&tf=${tfParam}&count=${dayCount}&profile=${profile}&src=${useResampledHigherTf ? "resample" : "kis"}`;
 
     if (tfParam === "multi") {
       const cached = await getCachedJson<MultiAnalysisPayload>(cache, cacheKey);
@@ -172,6 +204,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const warnings: string[] = [];
       const fetchCtx = { env: context.env, cache, symbol: resolved.code, metrics };
+      let snapshot: { fundamental: FundamentalSignal; flow: FlowSignal } | null = null;
+      try {
+        snapshot = (await fetchMarketSnapshot(context.env, cache, resolved.code, metrics)).snapshot;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        warnings.push(`펀더멘털/수급 조회 실패: ${message}`);
+      }
 
       const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
       const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
@@ -205,9 +244,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       const weekCandles = ensureMinCandles("week", weekCandlesRaw, MIN_MULTI.week, warnings);
       const monthCandles = ensureMinCandles("month", monthCandlesRaw, MIN_MULTI.month, warnings);
 
-      const dayAnalysis = dayCandles ? analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 160))) : null;
-      const weekAnalysis = weekCandles ? analyzeTimeframe("week", weekCandles.slice(-200)) : null;
-      const monthAnalysis = monthCandles ? analyzeTimeframe("month", monthCandles.slice(-120)) : null;
+      const dayAnalysis = dayCandles
+        ? withSnapshotSignals(
+            analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 160)), profile),
+            snapshot,
+          )
+        : null;
+      const weekAnalysis = weekCandles
+        ? withSnapshotSignals(analyzeTimeframe("week", weekCandles.slice(-200), profile), snapshot)
+        : null;
+      const monthAnalysis = monthCandles
+        ? withSnapshotSignals(analyzeTimeframe("month", monthCandles.slice(-120), profile), snapshot)
+        : null;
 
       const timeframes: MultiAnalysisPayload["timeframes"] = {
         month: monthAnalysis
@@ -228,6 +276,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         timeframes.month,
         timeframes.week,
         timeframes.day,
+        profile,
       );
       const payload: MultiAnalysisPayload = {
         meta: {
@@ -242,11 +291,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           asOf: nowIsoKst(),
           source: "KIS",
           cacheTtlSec: ttlSec,
+          profile,
         },
         final: {
           overall: final.overall,
           confidence: final.confidence,
           summary: final.summary,
+          profile: final.profile,
         },
         timeframes,
         warnings: dedupeWarnings([...warnings, ...final.warnings]),
@@ -285,7 +336,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return finalize(badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`, context.request));
     }
 
-    const analysis = analyzeTimeframe(tf, candlesForAnalysis);
+    let snapshot: { fundamental: FundamentalSignal; flow: FlowSignal } | null = null;
+    try {
+      snapshot = (await fetchMarketSnapshot(context.env, cache, resolved.code, metrics)).snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      console.warn(`[snapshot-fallback] symbol=${resolved.code} ${message}`);
+    }
+
+    const analysis = withSnapshotSignals(analyzeTimeframe(tf, candlesForAnalysis, profile), snapshot);
     const chartCount = visibleCount(tf, dayCount);
     const analysisForChart = sliceAnalysis(analysis, chartCount);
     const payload: AnalysisPayload = {
@@ -300,8 +359,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         candleCount: analysisForChart.candles.length,
         summaryText: analysisForChart.summaryText,
         tf,
+        profile,
       },
       scores: analysisForChart.scores,
+      profile: analysisForChart.profile,
       signals: analysisForChart.signals,
       reasons: analysisForChart.reasons.slice(0, 6),
       levels: analysisForChart.levels,

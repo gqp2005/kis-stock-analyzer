@@ -1,10 +1,12 @@
-import { atr, bollingerBands, rsi, sma } from "./indicators";
+import { atr, bollingerBands, macd, rsi, sma } from "./indicators";
 import type {
   Candle,
   IndicatorPoint,
   IndicatorSeries,
   IndicatorLevels,
+  InvestmentProfile,
   Overall,
+  ProfileScore,
   Regime,
   Scores,
   Signals,
@@ -230,6 +232,55 @@ const overallFromScores = (trend: number, momentum: number, risk: number): Overa
   if (trend >= 70 && momentum >= 55 && risk >= 45) return "GOOD";
   if (trend >= 40 && risk >= 35) return "NEUTRAL";
   return "CAUTION";
+};
+
+const profileOverallFromScore = (score: number): Overall => {
+  if (score >= 70) return "GOOD";
+  if (score >= 45) return "NEUTRAL";
+  return "CAUTION";
+};
+
+const PROFILE_WEIGHTS: Record<
+  InvestmentProfile,
+  { trend: number; momentum: number; risk: number; description: string }
+> = {
+  short: {
+    trend: 0.3,
+    momentum: 0.5,
+    risk: 0.2,
+    description: "단기 성향: 모멘텀/수급 비중을 높여 빠른 변화를 우선합니다.",
+  },
+  mid: {
+    trend: 0.5,
+    momentum: 0.2,
+    risk: 0.3,
+    description: "중기 성향: 추세/리스크 비중을 높여 안정적인 흐름을 우선합니다.",
+  },
+};
+
+const buildProfileScore = (
+  profile: InvestmentProfile,
+  trend: number,
+  momentum: number,
+  risk: number,
+): ProfileScore => {
+  const weights = PROFILE_WEIGHTS[profile];
+  const score = clamp(
+    Math.round(trend * weights.trend + momentum * weights.momentum + risk * weights.risk),
+    0,
+    100,
+  );
+  return {
+    mode: profile,
+    score,
+    overall: profileOverallFromScore(score),
+    weights: {
+      trend: Math.round(weights.trend * 100),
+      momentum: Math.round(weights.momentum * 100),
+      risk: Math.round(weights.risk * 100),
+    },
+    description: weights.description,
+  };
 };
 
 const trendLabel = (trend: number): string => {
@@ -677,7 +728,11 @@ const buildVolumeSignals = (
   };
 };
 
-const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): TimeframeAnalysis => {
+const analyzeWithConfig = (
+  candles: Candle[],
+  config: TimeframeConfig,
+  profile: InvestmentProfile,
+): TimeframeAnalysis => {
   const closes = candles.map((c) => c.close);
   const volumes = candles.map((c) => c.volume);
   const latest = candles[candles.length - 1];
@@ -691,6 +746,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   const rsi14Series = rsi(closes, 14);
   const bb = bollingerBands(closes, 20, 2);
   const atr14Series = atr(candles, 14);
+  const macdSeries = macd(closes, 12, 26, 9);
 
   const maFast = lastValue(maFastSeries);
   const maMid = lastValue(maMidSeries);
@@ -700,6 +756,11 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   const maMidPrev5 = valueAt(maMidSeries, 5);
   const rsi14 = lastValue(rsi14Series);
   const rsiPrev5 = valueAt(rsi14Series, 5);
+  const macdLine = lastValue(macdSeries.line);
+  const macdSignalLine = lastValue(macdSeries.signal);
+  const macdHist = lastValue(macdSeries.hist);
+  const macdBullish =
+    macdLine != null && macdSignalLine != null ? macdLine >= macdSignalLine : false;
   const bbUpper = lastValue(bb.upper);
   const bbMid = lastValue(bb.mid);
   const bbLower = lastValue(bb.lower);
@@ -800,6 +861,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   );
 
   const overall = overallFromScores(trend, momentum, risk);
+  const profileScore = buildProfileScore(profile, trend, momentum, risk);
   const summaryText = `${trendLabel(trend)} · ${momentumLabel(momentum)} · ${riskLabel(risk)}`;
 
   const reasons: string[] = [
@@ -877,6 +939,14 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
       mid: toIndicatorPoints(candles, bb.mid),
       lower: toIndicatorPoints(candles, bb.lower),
     },
+    macd: {
+      fastPeriod: 12,
+      slowPeriod: 26,
+      signalPeriod: 9,
+      line: toIndicatorPoints(candles, macdSeries.line),
+      signal: toIndicatorPoints(candles, macdSeries.signal),
+      hist: toIndicatorPoints(candles, macdSeries.hist),
+    },
   };
 
   const signals: Signals = {
@@ -894,6 +964,10 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
       closeAboveFast,
       returnNPositive,
       volumeAboveMa20,
+      macd: round2(macdLine),
+      macdSignal: round2(macdSignalLine),
+      macdHist: round2(macdHist),
+      macdBullish,
     },
     risk: {
       atrPercent: round2(atrPct),
@@ -912,6 +986,25 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     },
     volumePatterns: volumeSignal.volumePatterns,
     volume: volumeSignal.volume,
+    fundamental: {
+      per: null,
+      pbr: null,
+      eps: null,
+      bps: null,
+      marketCap: null,
+      settlementMonth: null,
+      label: "N/A",
+      reasons: ["펀더멘털 데이터가 아직 제공되지 않았습니다."],
+    },
+    flow: {
+      foreignNet: null,
+      institutionNet: null,
+      individualNet: null,
+      programNet: null,
+      foreignHoldRate: null,
+      label: "N/A",
+      reasons: ["수급 데이터가 아직 제공되지 않았습니다."],
+    },
   };
 
   return {
@@ -919,6 +1012,7 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
     regime: regimeFromTrend(trend),
     summaryText,
     scores: { trend, momentum, risk, overall },
+    profile: profileScore,
     signals,
     reasons: reasons.slice(0, 6),
     levels,
@@ -928,24 +1022,30 @@ const analyzeWithConfig = (candles: Candle[], config: TimeframeConfig): Timefram
   };
 };
 
-export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAnalysis => {
+export const analyzeTimeframe = (
+  tf: Timeframe,
+  candles: Candle[],
+  profile: InvestmentProfile = "short",
+): TimeframeAnalysis => {
   const config = TF_CONFIG[tf];
-  return analyzeWithConfig(candles, config);
+  return analyzeWithConfig(candles, config, profile);
 };
 
 export const computeMultiFinal = (
   month: TimeframeAnalysis | null,
   week: TimeframeAnalysis | null,
   day: TimeframeAnalysis | null,
+  profile: InvestmentProfile = "short",
 ): {
   overall: Overall;
   confidence: number;
   summary: string;
+  profile: ProfileScore | null;
   warnings: string[];
 } => {
   const warnings: string[] = [];
   const base = day ?? week ?? month;
-  let overall: Overall = base?.scores.overall ?? "CAUTION";
+  let overall: Overall = base?.profile.overall ?? base?.scores.overall ?? "CAUTION";
 
   if (!day) {
     warnings.push("일봉 데이터 부족: final은 제한적으로 계산");
@@ -990,11 +1090,14 @@ export const computeMultiFinal = (
   confidence = clamp(Math.round(confidence), 0, 100);
 
   const summaryBase = day?.summaryText ?? week?.summaryText ?? month?.summaryText ?? "분석 데이터 부족";
+  const profileText = profile === "short" ? "단기 성향" : "중기 성향";
+  const profileScore = day?.profile ?? base?.profile ?? null;
 
   return {
     overall,
     confidence,
-    summary: summaryBase,
+    summary: `${summaryBase} · ${profileText}`,
+    profile: profileScore,
     warnings,
   };
 };
@@ -1004,6 +1107,7 @@ export const analyzeCandles = (
   candles: Candle[],
 ): {
   scores: Scores;
+  profile: ProfileScore;
   signals: Signals;
   reasons: string[];
   levels: IndicatorLevels;
@@ -1012,6 +1116,7 @@ export const analyzeCandles = (
   const day = analyzeTimeframe("day", candles);
   return {
     scores: day.scores,
+    profile: day.profile,
     signals: day.signals,
     reasons: day.reasons,
     levels: day.levels,

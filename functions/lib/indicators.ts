@@ -17,6 +17,81 @@ export const sma = (values: number[], period: number): Array<number | null> => {
   return out;
 };
 
+export const ema = (values: number[], period: number): Array<number | null> => {
+  const out: Array<number | null> = Array(values.length).fill(null);
+  if (period <= 0 || values.length === 0) return out;
+  if (values.length < period) return out;
+
+  const seed = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  const alpha = 2 / (period + 1);
+  let prev = seed;
+  out[period - 1] = seed;
+
+  for (let i = period; i < values.length; i += 1) {
+    prev = (values[i] - prev) * alpha + prev;
+    out[i] = prev;
+  }
+
+  return out;
+};
+
+const emaFromNullable = (values: Array<number | null>, period: number): Array<number | null> => {
+  const out: Array<number | null> = Array(values.length).fill(null);
+  if (period <= 0) return out;
+
+  let window: number[] = [];
+  let prev: number | null = null;
+  const alpha = 2 / (period + 1);
+
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i];
+    if (value == null) {
+      window = [];
+      prev = null;
+      continue;
+    }
+
+    if (prev == null) {
+      window.push(value);
+      if (window.length < period) continue;
+      if (window.length === period) {
+        prev = window.reduce((sum, item) => sum + item, 0) / period;
+        out[i] = prev;
+      }
+      continue;
+    }
+
+    prev = (value - prev) * alpha + prev;
+    out[i] = prev;
+  }
+
+  return out;
+};
+
+export const macd = (
+  closes: number[],
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9,
+): {
+  line: Array<number | null>;
+  signal: Array<number | null>;
+  hist: Array<number | null>;
+} => {
+  const fast = ema(closes, fastPeriod);
+  const slow = ema(closes, slowPeriod);
+  const line = closes.map((_, index) => {
+    if (fast[index] == null || slow[index] == null) return null;
+    return (fast[index] as number) - (slow[index] as number);
+  });
+  const signal = emaFromNullable(line, signalPeriod);
+  const hist = closes.map((_, index) => {
+    if (line[index] == null || signal[index] == null) return null;
+    return (line[index] as number) - (signal[index] as number);
+  });
+  return { line, signal, hist };
+};
+
 export const rsi = (closes: number[], period = 14): Array<number | null> => {
   const out: Array<number | null> = Array(closes.length).fill(null);
   if (closes.length <= period) return out;
@@ -100,4 +175,3 @@ export const atr = (candles: Candle[], period = 14): Array<number | null> => {
 
   return out;
 };
-

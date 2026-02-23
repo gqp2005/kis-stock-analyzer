@@ -65,8 +65,34 @@ describe("analysis scoring extras", () => {
     const day = analyzeTimeframe("day", candles);
     const final = computeMultiFinal(null, null, day);
 
-    expect(final.overall).toBe(day.scores.overall);
-    expect(final.summary).toBe(day.summaryText);
+    expect(final.overall).toBe(day.profile.overall);
+    expect(final.summary.includes(day.summaryText)).toBe(true);
+    expect(final.summary.includes("단기 성향")).toBe(true);
+  });
+
+  it("should branch weighted profile score between short and mid", () => {
+    const candles: Candle[] = [];
+    let price = 100;
+    for (let i = 0; i < 180; i += 1) {
+      const drift = Math.sin(i / 6) * 0.8 + 0.18;
+      const open = price;
+      const close = Math.max(10, price + drift);
+      candles.push({
+        time: `2025-05-${String((i % 28) + 1).padStart(2, "0")}`,
+        open,
+        high: Math.max(open, close) + 0.8,
+        low: Math.min(open, close) - 0.8,
+        close,
+        volume: 90000 + (i % 13) * 700,
+      });
+      price = close;
+    }
+
+    const short = analyzeTimeframe("day", candles, "short");
+    const mid = analyzeTimeframe("day", candles, "mid");
+    expect(short.profile.mode).toBe("short");
+    expect(mid.profile.mode).toBe("mid");
+    expect(short.profile.score).not.toBe(mid.profile.score);
   });
 
   it("should detect breakout pattern and raise volume score", () => {

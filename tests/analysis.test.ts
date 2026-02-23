@@ -10,6 +10,30 @@ vi.mock("../functions/lib/kis", () => ({
   fetchTimeframeCandles: vi.fn(),
   resampleDayToWeekCandles: vi.fn(),
   resampleDayToMonthCandles: vi.fn(),
+  fetchMarketSnapshot: vi.fn(async () => ({
+    snapshot: {
+      fundamental: {
+        per: 12,
+        pbr: 1.4,
+        eps: 5000,
+        bps: 42000,
+        marketCap: 1000000,
+        settlementMonth: "12",
+        label: "FAIR",
+        reasons: ["PER 12배", "PBR 1.4배"],
+      },
+      flow: {
+        foreignNet: 100000,
+        institutionNet: 50000,
+        individualNet: -150000,
+        programNet: 20000,
+        foreignHoldRate: 52,
+        label: "BUYING",
+        reasons: ["외국인 순매수 100,000주"],
+      },
+    },
+    cacheTtlSec: 60,
+  })),
 }));
 
 vi.mock("../functions/lib/stockResolver", () => ({
@@ -23,6 +47,7 @@ vi.mock("../functions/lib/stockResolver", () => ({
 
 import { onRequestGet } from "../functions/api/analysis";
 import {
+  fetchMarketSnapshot,
   fetchTimeframeCandles,
   resampleDayToMonthCandles,
   resampleDayToWeekCandles,
@@ -31,6 +56,7 @@ import {
 const fetchMock = vi.mocked(fetchTimeframeCandles);
 const resampleWeekMock = vi.mocked(resampleDayToWeekCandles);
 const resampleMonthMock = vi.mocked(resampleDayToMonthCandles);
+const snapshotMock = vi.mocked(fetchMarketSnapshot);
 
 const makeDayCandles = (count: number): Candle[] =>
   Array.from({ length: count }, (_, index) => {
@@ -63,6 +89,30 @@ const makeContext = (url: string): Parameters<typeof onRequestGet>[0] =>
 describe("/api/analysis multi fallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    snapshotMock.mockResolvedValue({
+      snapshot: {
+        fundamental: {
+          per: 12,
+          pbr: 1.4,
+          eps: 5000,
+          bps: 42000,
+          marketCap: 1000000,
+          settlementMonth: "12",
+          label: "FAIR",
+          reasons: ["PER 12배", "PBR 1.4배"],
+        },
+        flow: {
+          foreignNet: 100000,
+          institutionNet: 50000,
+          individualNet: -150000,
+          programNet: 20000,
+          foreignHoldRate: 52,
+          label: "BUYING",
+          reasons: ["외국인 순매수 100,000주"],
+        },
+      },
+      cacheTtlSec: 60,
+    });
     (globalThis as unknown as { caches: unknown }).caches = {
       open: vi.fn(async () => ({}) as unknown as Cache),
     };
@@ -80,7 +130,8 @@ describe("/api/analysis multi fallback", () => {
       makeContext("http://localhost/api/analysis?query=005930&tf=multi&count=180"),
     );
     const body = (await response.json()) as {
-      final: { overall: string };
+      meta: { profile: string };
+      final: { overall: string; profile: { mode: string } | null };
       timeframes: {
         day: object | null;
         week: object | null;
@@ -95,7 +146,30 @@ describe("/api/analysis multi fallback", () => {
     expect(body.timeframes.week).not.toBeNull();
     expect(body.timeframes.month).not.toBeNull();
     expect(Object.keys(body.timeframes).sort()).toEqual(["day", "month", "week"]);
+    expect(body.meta.profile).toBe("short");
+    expect(body.final.profile?.mode).toBe("short");
     expect(typeof body.final.overall).toBe("string");
+  });
+
+  it("applies profile=mid to final profile payload", async () => {
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(260), cacheTtlSec: 60 };
+      throw new Error("unexpected tf");
+    });
+    resampleWeekMock.mockReturnValue(makeDayCandles(200));
+    resampleMonthMock.mockReturnValue(makeDayCandles(80));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/analysis?query=005930&tf=multi&count=180&profile=mid"),
+    );
+    const body = (await response.json()) as {
+      meta: { profile: string };
+      final: { profile: { mode: string } | null };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.profile).toBe("mid");
+    expect(body.final.profile?.mode).toBe("mid");
   });
 
   it("nulls week/month when resampled candles are insufficient", async () => {

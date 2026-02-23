@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { atr, bollingerBands, rsi } from "../functions/lib/indicators";
+import { atr, bollingerBands, macd, rsi } from "../functions/lib/indicators";
 import type { Candle } from "../functions/lib/types";
 
 describe("indicator calculations", () => {
@@ -31,5 +31,13 @@ describe("indicator calculations", () => {
     expect(result[2]).toBeCloseTo(2, 6); // initial ATR=(2+2+2)/3
     expect(result[3]).toBeCloseTo(8 / 3, 6); // (2*2 + 4)/3
   });
-});
 
+  it("MACD should stay positive on steadily rising prices", () => {
+    const closes = Array.from({ length: 80 }, (_, idx) => 100 + idx * 0.6);
+    const result = macd(closes, 12, 26, 9);
+    const last = result.line[result.line.length - 1] ?? 0;
+    const lastSignal = result.signal[result.signal.length - 1] ?? 0;
+    expect(last).toBeGreaterThan(0);
+    expect(lastSignal).toBeGreaterThan(0);
+  });
+});

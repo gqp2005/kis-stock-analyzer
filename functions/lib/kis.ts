@@ -5,8 +5,14 @@ import {
   timeframeCacheTtlSec,
 } from "./market";
 import { bumpMetric, type RequestMetrics } from "./observability";
-import type { Candle, Env, Timeframe } from "./types";
-import { parseKisDate, toNumber } from "./utils";
+import type {
+  Candle,
+  Env,
+  FlowSignal,
+  FundamentalSignal,
+  Timeframe,
+} from "./types";
+import { parseKisDate, round2, toNumber } from "./utils";
 
 interface TokenCacheRecord {
   token: string;
@@ -22,6 +28,19 @@ interface KisResponseBase {
 interface KisDailyChartResponse extends KisResponseBase {
   output1?: Record<string, string>;
   output2?: Array<Record<string, string>>;
+}
+
+interface KisPriceResponse extends KisResponseBase {
+  output?: Record<string, string>;
+}
+
+interface KisInvestorResponse extends KisResponseBase {
+  output?: Array<Record<string, string>> | Record<string, string>;
+}
+
+export interface KisMarketSnapshot {
+  fundamental: FundamentalSignal;
+  flow: FlowSignal;
 }
 
 const TOKEN_BUFFER_MS = 10 * 60 * 1000;
@@ -178,6 +197,246 @@ const kisGet = async <T extends KisResponseBase>(
   }
 
   throw new Error("KIS API 호출 실패: 토큰 재발급 후에도 요청이 실패했습니다.");
+};
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized || normalized === "-" || normalized === "--" || normalized === "N/A") {
+      return null;
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const pickNumber = (
+  row: Record<string, string> | null,
+  candidates: string[],
+): number | null => {
+  if (!row) return null;
+  for (const key of candidates) {
+    if (key in row) {
+      const value = toNullableNumber(row[key]);
+      if (value != null) return value;
+    }
+  }
+  return null;
+};
+
+const pickText = (
+  row: Record<string, string> | null,
+  candidates: string[],
+): string | null => {
+  if (!row) return null;
+  for (const key of candidates) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+};
+
+const outputRows = (
+  output: Array<Record<string, string>> | Record<string, string> | undefined,
+): Array<Record<string, string>> => {
+  if (Array.isArray(output)) return output.filter((row) => row && typeof row === "object");
+  if (output && typeof output === "object") return [output];
+  return [];
+};
+
+const pickLatestInvestorRow = (
+  output: Array<Record<string, string>> | Record<string, string> | undefined,
+): Record<string, string> | null => {
+  const rows = outputRows(output);
+  if (rows.length === 0) return null;
+  return [...rows].sort((a, b) => String(b.stck_bsop_date ?? "").localeCompare(String(a.stck_bsop_date ?? "")))[0];
+};
+
+const buildFundamentalSignal = (
+  priceRow: Record<string, string> | null,
+  errorMessage?: string,
+): FundamentalSignal => {
+  const per = pickNumber(priceRow, ["per"]);
+  const pbr = pickNumber(priceRow, ["pbr"]);
+  const eps = pickNumber(priceRow, ["eps"]);
+  const bps = pickNumber(priceRow, ["bps"]);
+  const marketCap = pickNumber(priceRow, ["hts_avls", "acml_tr_pbmn"]);
+  const settlementMonth = pickText(priceRow, ["stac_month"]);
+
+  let label: FundamentalSignal["label"] = "N/A";
+  if (per != null && pbr != null) {
+    if (per > 0 && per <= 10 && pbr <= 1.2) label = "UNDERVALUED";
+    else if (per >= 25 || pbr >= 3) label = "OVERVALUED";
+    else label = "FAIR";
+  }
+
+  const reasons: string[] = [];
+  if (per != null) reasons.push(`PER ${round2(per)}배`);
+  if (pbr != null) reasons.push(`PBR ${round2(pbr)}배`);
+  if (eps != null) reasons.push(`EPS ${Math.round(eps).toLocaleString("ko-KR")}`);
+  if (bps != null) reasons.push(`BPS ${Math.round(bps).toLocaleString("ko-KR")}`);
+  if (marketCap != null) reasons.push(`시가총액 ${Math.round(marketCap).toLocaleString("ko-KR")}`);
+  if (settlementMonth) reasons.push(`결산월 ${settlementMonth}`);
+
+  if (reasons.length === 0) {
+    reasons.push(errorMessage ? `펀더멘털 조회 실패: ${errorMessage}` : "펀더멘털 데이터가 부족합니다.");
+  }
+
+  return {
+    per: round2(per),
+    pbr: round2(pbr),
+    eps: round2(eps),
+    bps: round2(bps),
+    marketCap: round2(marketCap),
+    settlementMonth,
+    label,
+    reasons: reasons.slice(0, 5),
+  };
+};
+
+const buildFlowSignal = (
+  priceRow: Record<string, string> | null,
+  investorRow: Record<string, string> | null,
+  errorMessage?: string,
+): FlowSignal => {
+  const foreignNet = pickNumber(investorRow, ["frgn_ntby_qty"]) ?? pickNumber(priceRow, ["frgn_ntby_qty"]);
+  const institutionNet = pickNumber(investorRow, ["orgn_ntby_qty"]);
+  const individualNet = pickNumber(investorRow, ["prsn_ntby_qty"]);
+  const programNet = pickNumber(priceRow, ["pgtr_ntby_qty"]);
+  const foreignHoldRate = pickNumber(priceRow, ["frgn_hldn_rate", "hts_frgn_ehrt"]);
+
+  let score = 0;
+  if (foreignNet != null) score += foreignNet > 0 ? 1 : foreignNet < 0 ? -1 : 0;
+  if (institutionNet != null) score += institutionNet > 0 ? 1 : institutionNet < 0 ? -1 : 0;
+  if (programNet != null) score += programNet > 0 ? 0.5 : programNet < 0 ? -0.5 : 0;
+
+  let label: FlowSignal["label"] = "N/A";
+  if (score >= 1.5) label = "BUYING";
+  else if (score <= -1.5) label = "SELLING";
+  else if (foreignNet != null || institutionNet != null || individualNet != null || programNet != null) {
+    label = "BALANCED";
+  }
+
+  const reasons: string[] = [];
+  if (foreignNet != null) {
+    reasons.push(`외국인 순매수 ${Math.round(foreignNet).toLocaleString("ko-KR")}주`);
+  }
+  if (institutionNet != null) {
+    reasons.push(`기관 순매수 ${Math.round(institutionNet).toLocaleString("ko-KR")}주`);
+  }
+  if (individualNet != null) {
+    reasons.push(`개인 순매수 ${Math.round(individualNet).toLocaleString("ko-KR")}주`);
+  }
+  if (programNet != null) {
+    reasons.push(`프로그램 순매수 ${Math.round(programNet).toLocaleString("ko-KR")}주`);
+  }
+  if (foreignHoldRate != null) {
+    reasons.push(`외국인 보유율 ${round2(foreignHoldRate)}%`);
+  }
+
+  if (reasons.length === 0) {
+    reasons.push(errorMessage ? `수급 조회 실패: ${errorMessage}` : "수급 데이터가 부족합니다.");
+  }
+
+  return {
+    foreignNet: round2(foreignNet),
+    institutionNet: round2(institutionNet),
+    individualNet: round2(individualNet),
+    programNet: round2(programNet),
+    foreignHoldRate: round2(foreignHoldRate),
+    label,
+    reasons: reasons.slice(0, 5),
+  };
+};
+
+const snapshotCacheKey = (symbol: string): string =>
+  `https://cache.local/kis/snapshot/v1?symbol=${encodeURIComponent(symbol)}`;
+
+export const fetchMarketSnapshot = async (
+  env: Env,
+  cache: Cache,
+  symbol: string,
+  metrics?: RequestMetrics,
+): Promise<{ snapshot: KisMarketSnapshot; cacheTtlSec: number }> => {
+  const ttlSec = timeframeCacheTtlSec("day");
+  const cacheKey = snapshotCacheKey(symbol);
+  const cached = await getCachedJson<KisMarketSnapshot>(cache, cacheKey);
+  if (cached) {
+    console.log(`[data-cache-hit] snapshot symbol=${symbol}`);
+    bumpMetric(metrics, "dataCacheHits");
+    return { snapshot: cached, cacheTtlSec: ttlSec };
+  }
+
+  console.log(`[data-cache-miss] snapshot symbol=${symbol}`);
+  bumpMetric(metrics, "dataCacheMisses");
+
+  const [priceResult, investorResult] = await Promise.allSettled([
+    kisGet<KisPriceResponse>(
+      env,
+      cache,
+      "/uapi/domestic-stock/v1/quotations/inquire-price",
+      "FHKST01010100",
+      {
+        FID_COND_MRKT_DIV_CODE: "J",
+        FID_INPUT_ISCD: symbol,
+      },
+      metrics,
+    ),
+    kisGet<KisInvestorResponse>(
+      env,
+      cache,
+      "/uapi/domestic-stock/v1/quotations/inquire-investor",
+      "FHKST01010900",
+      {
+        FID_COND_MRKT_DIV_CODE: "J",
+        FID_INPUT_ISCD: symbol,
+      },
+      metrics,
+    ),
+  ]);
+
+  const priceRow = priceResult.status === "fulfilled" ? priceResult.value.output ?? null : null;
+  const investorRow =
+    investorResult.status === "fulfilled"
+      ? pickLatestInvestorRow(investorResult.value.output)
+      : null;
+
+  if (!priceRow && !investorRow) {
+    const priceErr = priceResult.status === "rejected" ? priceResult.reason : null;
+    const invErr = investorResult.status === "rejected" ? investorResult.reason : null;
+    const message = [
+      priceErr instanceof Error ? `price=${priceErr.message}` : null,
+      invErr instanceof Error ? `investor=${invErr.message}` : null,
+    ]
+      .filter((item): item is string => Boolean(item))
+      .join(", ");
+    throw new Error(message ? `KIS 시세/수급 조회 실패: ${message}` : "KIS 시세/수급 조회 실패");
+  }
+
+  const snapshot: KisMarketSnapshot = {
+    fundamental: buildFundamentalSignal(
+      priceRow,
+      priceResult.status === "rejected" && priceResult.reason instanceof Error
+        ? priceResult.reason.message
+        : undefined,
+    ),
+    flow: buildFlowSignal(
+      priceRow,
+      investorRow,
+      investorResult.status === "rejected" && investorResult.reason instanceof Error
+        ? investorResult.reason.message
+        : undefined,
+    ),
+  };
+
+  await putCachedJson(cache, cacheKey, snapshot, ttlSec);
+  return { snapshot, cacheTtlSec: ttlSec };
 };
 
 const fetchPeriodChunk = async (
