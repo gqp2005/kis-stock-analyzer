@@ -20,7 +20,7 @@ jobs:
           SCREENER_ADMIN_TOKEN: ${{ secrets.SCREENER_ADMIN_TOKEN }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           BATCH_SIZE: "20"
-          MAX_ATTEMPTS: "45"
+          MAX_ATTEMPTS: "90"
           SLEEP_SEC: "5"
         run: |
           set -euo pipefail
@@ -85,6 +85,10 @@ jobs:
             processed="$(echo "${body}" | jq -r '.progress.processed // 0')"
             total="$(echo "${body}" | jq -r '.progress.total // 0')"
             echo "Progress: ${processed}/${total}, inProgress=${in_progress}"
+
+            if [ "${in_progress}" = "true" ] && [ "${processed}" = "0" ] && [ "${total}" = "0" ]; then
+              echo "Lock-only state detected (progress unavailable). Waiting for lock release..."
+            fi
 
             if [ "${in_progress}" = "false" ]; then
               echo "Rebuild completed."
