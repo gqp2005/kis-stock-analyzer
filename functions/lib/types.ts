@@ -6,6 +6,8 @@ export interface Env {
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
   ADMIN_TOKEN?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
 }
 
 export type Timeframe = "month" | "week" | "day";
@@ -328,6 +330,44 @@ export interface MultiAnalysisPayload {
     week: TimeframeAnalysis | null;
     day: TimeframeAnalysis | null;
   };
+  warnings: string[];
+}
+
+export interface CommentaryRequestPayload {
+  meta: {
+    symbol: string;
+    name: string;
+    market: string;
+    asOf: string;
+    profile: InvestmentProfile;
+  };
+  final: {
+    overall: Overall;
+    confidence: number;
+    summary: string;
+  };
+  timeframe: {
+    tf: Timeframe;
+    trend: number;
+    momentum: number;
+    risk: number;
+    reasons: string[];
+    volumeScore?: number | null;
+    volRatio?: number | null;
+  };
+}
+
+export interface CommentaryPayload {
+  meta: {
+    symbol: string;
+    name: string;
+    asOf: string;
+    source: "OPENAI" | "RULE";
+    model: string | null;
+    cacheTtlSec: number;
+  };
+  comment: string;
+  disclaimer: string;
   warnings: string[];
 }
 

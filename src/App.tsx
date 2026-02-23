@@ -11,6 +11,8 @@ import {
 } from "lightweight-charts";
 import type {
   BacktestResponse,
+  CommentaryRequestPayload,
+  CommentaryResponse,
   IndicatorPoint,
   InvestmentProfile,
   MultiAnalysisResponse,
@@ -171,6 +173,16 @@ const findCandleIndexByPatternTime = (
 const pickDefaultTf = (payload: MultiAnalysisResponse): Timeframe =>
   TF_FALLBACK_ORDER.find((tf) => payload.timeframes[tf] !== null) ?? "day";
 
+const pickCommentaryTarget = (
+  payload: MultiAnalysisResponse,
+): { tf: Timeframe; analysis: TimeframeAnalysis } | null => {
+  for (const tf of TF_FALLBACK_ORDER) {
+    const analysis = payload.timeframes[tf];
+    if (analysis) return { tf, analysis };
+  }
+  return null;
+};
+
 const toLineData = (points: IndicatorPoint[]): Array<LineData<Time> | WhitespaceData<Time>> =>
   points.map((point) =>
     point.value == null ? { time: toChartTime(point.time) } : { time: toChartTime(point.time), value: point.value },
@@ -296,16 +308,92 @@ export default function App() {
   const [showPatternReferenceLevel, setShowPatternReferenceLevel] = useState(true);
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
+  const [commentary, setCommentary] = useState<CommentaryResponse | null>(null);
+  const [commentaryLoading, setCommentaryLoading] = useState(false);
+  const [commentaryError, setCommentaryError] = useState("");
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
   const rsiChartRef = useRef<HTMLDivElement | null>(null);
   const queryInputRef = useRef<HTMLInputElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
+  const commentaryRequestSeqRef = useRef(0);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
+
+  const toCommentaryRequest = (payload: MultiAnalysisResponse): CommentaryRequestPayload | null => {
+    const target = pickCommentaryTarget(payload);
+    if (!target) return null;
+
+    return {
+      meta: {
+        symbol: payload.meta.symbol,
+        name: payload.meta.name,
+        market: payload.meta.market,
+        asOf: payload.meta.asOf,
+        profile: payload.meta.profile,
+      },
+      final: {
+        overall: payload.final.overall,
+        confidence: payload.final.confidence,
+        summary: payload.final.summary,
+      },
+      timeframe: {
+        tf: target.tf,
+        trend: target.analysis.scores.trend,
+        momentum: target.analysis.scores.momentum,
+        risk: target.analysis.scores.risk,
+        reasons: target.analysis.reasons.slice(0, 6),
+        volumeScore: target.analysis.signals.volume?.volumeScore ?? null,
+        volRatio: target.analysis.signals.volume?.volRatio ?? null,
+      },
+    };
+  };
+
+  const fetchCommentary = async (payload: MultiAnalysisResponse) => {
+    const requestPayload = toCommentaryRequest(payload);
+    if (!requestPayload) {
+      setCommentary(null);
+      setCommentaryError("한줄평 생성을 위한 데이터가 부족합니다.");
+      setCommentaryLoading(false);
+      return;
+    }
+
+    const requestSeq = commentaryRequestSeqRef.current + 1;
+    commentaryRequestSeqRef.current = requestSeq;
+    setCommentaryLoading(true);
+    setCommentaryError("");
+
+    try {
+      const response = await fetch(`${apiBase}/api/commentary`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(requestPayload),
+      });
+      const data = (await response.json()) as CommentaryResponse | { error: string };
+      if (!response.ok) {
+        throw new Error("error" in data ? data.error : "한줄평 요청 실패");
+      }
+      if (commentaryRequestSeqRef.current !== requestSeq) return;
+      setCommentary(data as CommentaryResponse);
+    } catch (e) {
+      if (commentaryRequestSeqRef.current !== requestSeq) return;
+      setCommentary(null);
+      setCommentaryError(e instanceof Error ? e.message : "한줄평 생성 실패");
+    } finally {
+      if (commentaryRequestSeqRef.current === requestSeq) {
+        setCommentaryLoading(false);
+      }
+    }
+  };
 
   const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
     setError("");
+    commentaryRequestSeqRef.current += 1;
+    setCommentary(null);
+    setCommentaryError("");
+    setCommentaryLoading(false);
     try {
       const url = `${apiBase}/api/analysis?query=${encodeURIComponent(value)}&count=${lookback}&tf=multi&view=multi&profile=${ANALYSIS_PROFILE}`;
       const response = await fetch(url);
@@ -314,9 +402,13 @@ export default function App() {
       const payload = data as MultiAnalysisResponse;
       setResult(payload);
       setActiveTf((prev) => (payload.timeframes[prev] ? prev : pickDefaultTf(payload)));
+      void fetchCommentary(payload);
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
       setResult(null);
+      setCommentary(null);
+      setCommentaryError("");
+      setCommentaryLoading(false);
     } finally {
       setLoading(false);
     }
@@ -987,6 +1079,32 @@ export default function App() {
                 <p className="summary-text">{result.final.summary}</p>
               </div>
             </div>
+
+            {(commentaryLoading || commentary || commentaryError) && (
+              <div className="commentary-box">
+                <div className="commentary-head">
+                  <strong>AI 한줄평</strong>
+                  {commentary && (
+                    <small className={commentary.meta.source === "OPENAI" ? "reason-tag positive" : "reason-tag negative"}>
+                      {commentary.meta.source === "OPENAI"
+                        ? `AI ${commentary.meta.model ?? ""}`.trim()
+                        : "규칙 기반"}
+                    </small>
+                  )}
+                </div>
+                {commentaryLoading && <p className="plan-note">한줄평 생성 중...</p>}
+                {!commentaryLoading && commentary && <p className="commentary-line">{commentary.comment}</p>}
+                {!commentaryLoading && commentaryError && <p className="commentary-error">{commentaryError}</p>}
+                {!commentaryLoading && commentary && (
+                  <>
+                    <p className="plan-note">{commentary.disclaimer}</p>
+                    {commentary.warnings.length > 0 && (
+                      <p className="plan-note">{commentary.warnings.join(" · ")}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {result.warnings.length > 0 && (
               <div className="warning-box">

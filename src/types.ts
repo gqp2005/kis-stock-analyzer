@@ -291,6 +291,44 @@ export interface MultiAnalysisResponse {
   warnings: string[];
 }
 
+export interface CommentaryRequestPayload {
+  meta: {
+    symbol: string;
+    name: string;
+    market: string;
+    asOf: string;
+    profile: InvestmentProfile;
+  };
+  final: {
+    overall: Overall;
+    confidence: number;
+    summary: string;
+  };
+  timeframe: {
+    tf: Timeframe;
+    trend: number;
+    momentum: number;
+    risk: number;
+    reasons: string[];
+    volumeScore?: number | null;
+    volRatio?: number | null;
+  };
+}
+
+export interface CommentaryResponse {
+  meta: {
+    symbol: string;
+    name: string;
+    asOf: string;
+    source: "OPENAI" | "RULE";
+    model: string | null;
+    cacheTtlSec: number;
+  };
+  comment: string;
+  disclaimer: string;
+  warnings: string[];
+}
+
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
 export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS";
 export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
