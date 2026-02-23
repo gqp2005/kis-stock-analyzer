@@ -6,15 +6,19 @@ on:
     - cron: "0 21 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: screener-daily-rebuild
+  cancel-in-progress: false
+
 jobs:
   rebuild:
     runs-on: ubuntu-latest
-    if: ${{ secrets.SCREENER_REBUILD_URL != '' && secrets.ADMIN_TOKEN != '' }}
+    if: ${{ secrets.SCREENER_REBUILD_URL != '' && (secrets.SCREENER_ADMIN_TOKEN != '' || secrets.ADMIN_TOKEN != '') }}
     steps:
       - name: Trigger screener rebuild until completion
         env:
           REBUILD_URL: ${{ secrets.SCREENER_REBUILD_URL }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.SCREENER_ADMIN_TOKEN != '' && secrets.SCREENER_ADMIN_TOKEN || secrets.ADMIN_TOKEN }}
           BATCH_SIZE: "20"
           MAX_ATTEMPTS: "45"
           SLEEP_SEC: "5"
