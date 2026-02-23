@@ -277,12 +277,31 @@ const outputRows = (
   return [];
 };
 
+const INVESTOR_NET_KEYS = [
+  "prsn_ntby_qty",
+  "frgn_ntby_qty",
+  "orgn_ntby_qty",
+  "prsn_ntby_tr_pbmn",
+  "frgn_ntby_tr_pbmn",
+  "orgn_ntby_tr_pbmn",
+];
+
+const hasInvestorNetData = (row: Record<string, string>): boolean =>
+  INVESTOR_NET_KEYS.some((key) => toNullableNumber(row[key]) != null);
+
 const pickLatestInvestorRow = (
   output: Array<Record<string, string>> | Record<string, string> | undefined,
 ): Record<string, string> | null => {
   const rows = outputRows(output);
   if (rows.length === 0) return null;
-  return [...rows].sort((a, b) => String(b.stck_bsop_date ?? "").localeCompare(String(a.stck_bsop_date ?? "")))[0];
+
+  const sorted = [...rows].sort((a, b) =>
+    String(b.stck_bsop_date ?? "").localeCompare(String(a.stck_bsop_date ?? "")),
+  );
+
+  // KIS는 최신 영업일 행이 빈 문자열로 내려오는 경우가 있어,
+  // 값이 실제로 존재하는 가장 최신 행을 우선 선택한다.
+  return sorted.find((row) => hasInvestorNetData(row)) ?? sorted[0];
 };
 
 const buildFundamentalSignal = (
@@ -332,11 +351,15 @@ const buildFlowSignal = (
   investorRow: Record<string, string> | null,
   errorMessage?: string,
 ): FlowSignal => {
-  const foreignNet = pickNumber(investorRow, ["frgn_ntby_qty"]) ?? pickNumber(priceRow, ["frgn_ntby_qty"]);
+  const foreignNet = pickNumber(investorRow, ["frgn_ntby_qty"]);
   const institutionNet = pickNumber(investorRow, ["orgn_ntby_qty"]);
   const individualNet = pickNumber(investorRow, ["prsn_ntby_qty"]);
   const programNet = pickNumber(priceRow, ["pgtr_ntby_qty"]);
   const foreignHoldRate = pickNumber(priceRow, ["frgn_hldn_rate", "hts_frgn_ehrt"]);
+  const investorAsOf = pickText(investorRow, ["stck_bsop_date"]);
+  const todayYmd = nowIsoKst().slice(0, 10).replace(/-/g, "");
+  const investorQtyMissing =
+    foreignNet == null && institutionNet == null && individualNet == null;
 
   let score = 0;
   if (foreignNet != null) score += foreignNet > 0 ? 1 : foreignNet < 0 ? -1 : 0;
@@ -351,6 +374,11 @@ const buildFlowSignal = (
   }
 
   const reasons: string[] = [];
+  if (investorAsOf && investorAsOf !== todayYmd) {
+    reasons.push(`투자자 순매수는 최근 영업일(${investorAsOf}) 기준입니다.`);
+  } else if (investorAsOf === todayYmd && investorQtyMissing) {
+    reasons.push("당일 투자자 순매수는 장 마감 후 반영될 수 있습니다.");
+  }
   if (foreignNet != null) {
     reasons.push(`외국인 순매수 ${Math.round(foreignNet).toLocaleString("ko-KR")}주`);
   }
@@ -378,12 +406,12 @@ const buildFlowSignal = (
     programNet: round2(programNet),
     foreignHoldRate: round2(foreignHoldRate),
     label,
-    reasons: reasons.slice(0, 5),
+    reasons: reasons.slice(0, 6),
   };
 };
 
 const snapshotCacheKey = (symbol: string): string =>
-  `https://cache.local/kis/snapshot/v1?symbol=${encodeURIComponent(symbol)}`;
+  `https://cache.local/kis/snapshot/v2?symbol=${encodeURIComponent(symbol)}`;
 
 export const fetchMarketSnapshot = async (
   env: Env,
