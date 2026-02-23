@@ -200,7 +200,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const ttlSec = analysisTtlByTf(tfParam);
     const cache = await caches.open("kis-analyzer-cache-v3");
-    const cacheKey = `https://cache.local/analysis/v6?code=${encodeURIComponent(
+    const cacheKey = `https://cache.local/analysis/v7?code=${encodeURIComponent(
       resolved.code,
     )}&tf=${tfParam}&count=${dayCount}&profile=${profile}&src=${useResampledHigherTf ? "resample" : "kis"}&view=${viewParam}`;
 
