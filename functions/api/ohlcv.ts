@@ -9,7 +9,8 @@ import { normalizeInput } from "../lib/utils";
 
 const parseTf = (raw: string | null): Timeframe => {
   const tf = (raw ?? "day").toLowerCase();
-  if (tf === "month" || tf === "week" || tf === "day" || tf === "min15") return tf;
+  if (tf === "min15") return "min5"; // backward compatibility
+  if (tf === "month" || tf === "week" || tf === "day" || tf === "min5") return tf;
   return "day";
 };
 

@@ -61,11 +61,11 @@ const TF_LABEL: Record<Timeframe, string> = {
   month: "월봉",
   week: "주봉",
   day: "일봉",
-  min15: "15분",
+  min5: "5분",
 };
 
-const TF_TABS: Timeframe[] = ["month", "week", "day", "min15"];
-const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min15"];
+const TF_TABS: Timeframe[] = ["month", "week", "day", "min5"];
+const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month", "min5"];
 const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
   BreakoutConfirmed: "돌파 확인(A)",
   Upthrust: "불트랩(B)",
@@ -427,7 +427,7 @@ export default function App() {
       },
       timeScale: {
         borderColor: "#30445a",
-        timeVisible: activeTf === "min15",
+        timeVisible: activeTf === "min5",
         secondsVisible: false,
       },
     });
@@ -449,7 +449,7 @@ export default function App() {
       })),
     );
 
-    const showMaOverlay = activeTf !== "min15";
+    const showMaOverlay = activeTf !== "min5";
     if (showMaOverlay) {
       const maDefs = [
         {
@@ -643,7 +643,7 @@ export default function App() {
         },
         timeScale: {
           borderColor: "#30445a",
-          timeVisible: activeTf === "min15",
+          timeVisible: activeTf === "min5",
           secondsVisible: false,
         },
       });
@@ -749,8 +749,8 @@ export default function App() {
   const tradePlan = activeAnalysis?.tradePlan ?? null;
   const backtestSummary = backtest?.summary ?? null;
   const rsiDisabledMessage =
-    activeTf === "min15"
-      ? "15분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
+    activeTf === "min5"
+      ? "5분봉 RSI(14) 데이터가 부족해 패널이 비활성입니다."
       : "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
 
   useEffect(() => {
@@ -767,7 +767,7 @@ export default function App() {
         <header className="hero">
           <p className="eyebrow">KIS 개발자 오픈API</p>
           <h1>한국 주식 시그널 보드</h1>
-          <p className="subtitle">멀티 타임프레임(월/주/일/15분) 스코어링으로 종목 상태를 확인합니다.</p>
+          <p className="subtitle">멀티 타임프레임(월/주/일/5분) 스코어링으로 종목 상태를 확인합니다.</p>
         </header>
 
         <div className="mode-tabs">
@@ -1159,12 +1159,12 @@ export default function App() {
                   )}
                 </div>
 
-                {activeTf === "min15" && (
+                {activeTf === "min5" && (
                   <div className="timing-box">
                     {activeAnalysis.timing ? (
                       <>
                         <h3>
-                          15분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
+                          5분 타이밍: {activeAnalysis.timing.timingScore} ({activeAnalysis.timing.timingLabel})
                         </h3>
                         <ul>
                           {activeAnalysis.timing.reasons.map((reason) => (
@@ -1179,7 +1179,7 @@ export default function App() {
                         </ul>
                       </>
                     ) : (
-                      <h3>15분봉은 장중/당일 데이터가 없어 타이밍 분석이 비활성입니다.</h3>
+                      <h3>5분봉은 장중/당일 데이터가 없어 타이밍 분석이 비활성입니다.</h3>
                     )}
                   </div>
                 )}
@@ -1203,7 +1203,7 @@ export default function App() {
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
                   {maInfo && (
                     <div className="indicator-controls">
-                      {activeTf !== "min15" && (
+                      {activeTf !== "min5" && (
                         <>
                           <label>
                             <input

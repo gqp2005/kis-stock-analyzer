@@ -1,5 +1,5 @@
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
-export type Timeframe = "month" | "week" | "day" | "min15";
+export type Timeframe = "month" | "week" | "day" | "min5";
 export type Regime = "UP" | "SIDE" | "DOWN";
 
 export interface Candle {
@@ -178,7 +178,7 @@ export interface MultiAnalysisResponse {
     month: TimeframeAnalysis | null;
     week: TimeframeAnalysis | null;
     day: TimeframeAnalysis | null;
-    min15: TimeframeAnalysis | null;
+    min5: TimeframeAnalysis | null;
   };
   warnings: string[];
 }

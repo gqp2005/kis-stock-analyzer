@@ -8,12 +8,12 @@ export interface Env {
   ADMIN_TOKEN?: string;
 }
 
-export type Timeframe = "month" | "week" | "day" | "min15";
+export type Timeframe = "month" | "week" | "day" | "min5";
 export type Regime = "UP" | "SIDE" | "DOWN";
 export type Overall = "GOOD" | "NEUTRAL" | "CAUTION";
 
 export interface Candle {
-  time: string; // day/week/month: YYYY-MM-DD, min15: ISO datetime string
+  time: string; // day/week/month: YYYY-MM-DD, min5: ISO datetime string
   open: number;
   high: number;
   low: number;
@@ -214,7 +214,7 @@ export interface MultiAnalysisPayload {
     month: TimeframeAnalysis | null;
     week: TimeframeAnalysis | null;
     day: TimeframeAnalysis | null;
-    min15: TimeframeAnalysis | null;
+    min5: TimeframeAnalysis | null;
   };
   warnings: string[];
 }

@@ -409,7 +409,7 @@ const fetchMinuteCandlesToday = async (
   return { name: latestName, candles };
 };
 
-const resampleTo15m = (minuteCandles: Candle[]): Candle[] => {
+const resampleTo5m = (minuteCandles: Candle[]): Candle[] => {
   if (minuteCandles.length === 0) return [];
 
   const buckets = new Map<string, Candle>();
@@ -420,7 +420,7 @@ const resampleTo15m = (minuteCandles: Candle[]): Candle[] => {
     const day = candle.time.slice(0, 10);
     const hh = Number(candle.time.slice(11, 13));
     const mm = Number(candle.time.slice(14, 16));
-    const minuteBucket = Math.floor(mm / 15) * 15;
+    const minuteBucket = Math.floor(mm / 5) * 5;
     const key = `${day}T${String(hh).padStart(2, "0")}:${String(minuteBucket).padStart(2, "0")}:00+09:00`;
 
     const current = buckets.get(key);
@@ -446,7 +446,7 @@ const resampleTo15m = (minuteCandles: Candle[]): Candle[] => {
 };
 
 const cacheKeyForTf = (symbol: string, tf: Timeframe, minCount: number): string => {
-  if (tf === "min15") {
+  if (tf === "min5") {
     return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&date=${nowKstDateYmd()}`;
   }
   return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&min=${minCount}`;
@@ -478,7 +478,7 @@ export const fetchTimeframeCandles = async (
     const minute = await fetchMinuteCandlesToday(env, cache, symbol, metrics);
     data = {
       name: minute.name,
-      candles: resampleTo15m(minute.candles),
+      candles: resampleTo5m(minute.candles),
     };
   }
 

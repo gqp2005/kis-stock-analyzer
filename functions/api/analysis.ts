@@ -9,7 +9,7 @@ import { attachMetrics, createRequestMetrics, type RequestMetrics } from "../lib
 import { badRequest, json, serverError } from "../lib/response";
 import {
   analyzeTimeframe,
-  buildDisabledMin15Analysis,
+  buildDisabledMin5Analysis,
   computeMultiFinal,
 } from "../lib/scoring";
 import { resolveStock } from "../lib/stockResolver";
@@ -23,26 +23,27 @@ import type {
 } from "../lib/types";
 import { normalizeInput } from "../lib/utils";
 
-const VALID_TFS: Timeframe[] = ["day", "week", "month", "min15"];
+const VALID_TFS: Timeframe[] = ["day", "week", "month", "min5"];
 type TfParam = Timeframe | "multi";
 
 const MIN_MULTI = {
   month: 60,
   week: 160,
   day: 40,
-  min15: 40,
+  min5: 40,
 } as const;
 
 const TARGET_MULTI = {
   month: 80,
   week: 200,
-  min15: 180,
+  min5: 180,
 } as const;
 
 const parseTf = (raw: string | null): TfParam => {
   if (!raw) return "day";
   const tf = raw.toLowerCase();
   if (tf === "multi") return "multi";
+  if (tf === "min15") return "min5"; // backward compatibility
   if ((VALID_TFS as string[]).includes(tf)) return tf as Timeframe;
   return "day";
 };
@@ -88,7 +89,7 @@ const ensureMinCandles = (
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
-const isMin15SoftFail = (message: string): boolean => {
+const isMin5SoftFail = (message: string): boolean => {
   const lower = message.toLowerCase();
   return (
     lower.includes("egw00201") ||
@@ -189,27 +190,27 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
       const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
-      let min15Raw: { name: string; candles: Candle[]; cacheTtlSec: number } | null = null;
-      let min15DisabledReason: string | null = null;
+      let min5Raw: { name: string; candles: Candle[]; cacheTtlSec: number } | null = null;
+      let min5DisabledReason: string | null = null;
 
       if (!isKrxRegularSession()) {
-        min15DisabledReason = "15분봉은 장중 데이터 기반이라 현재 시간에는 비활성입니다.";
+        min5DisabledReason = "5분봉은 장중 데이터 기반이라 현재 시간에는 비활성입니다.";
       } else {
         try {
-          min15Raw = await fetchTimeframeCandles(
+          min5Raw = await fetchTimeframeCandles(
             fetchCtx.env,
             fetchCtx.cache,
             fetchCtx.symbol,
-            "min15",
-            TARGET_MULTI.min15,
+            "min5",
+            TARGET_MULTI.min5,
             fetchCtx.metrics,
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
-          if (isMin15SoftFail(message)) {
-            min15DisabledReason = "15분봉은 API 제약/당일 데이터 부족으로 비활성입니다.";
+          if (isMin5SoftFail(message)) {
+            min5DisabledReason = "5분봉은 API 제약/당일 데이터 부족으로 비활성입니다.";
           } else {
-            warnings.push(`min15 조회 실패: ${message}`);
+            warnings.push(`min5 조회 실패: ${message}`);
           }
         }
       }
@@ -247,18 +248,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       const weekAnalysis = weekCandles ? analyzeTimeframe("week", weekCandles.slice(-200)) : null;
       const monthAnalysis = monthCandles ? analyzeTimeframe("month", monthCandles.slice(-120)) : null;
 
-      let min15Analysis: TimeframeAnalysis | null = null;
-      if (min15DisabledReason) {
-        warnings.push(min15DisabledReason);
-        min15Analysis = buildDisabledMin15Analysis([]);
-      } else if (!min15Raw || min15Raw.candles.length === 0) {
-        warnings.push("15분봉은 장중/당일 데이터가 없어서 비활성");
-        min15Analysis = buildDisabledMin15Analysis([]);
-      } else if (min15Raw.candles.length < MIN_MULTI.min15) {
-        warnings.push(`15분봉 데이터 부족 (${min15Raw.candles.length}/${MIN_MULTI.min15})`);
-        min15Analysis = buildDisabledMin15Analysis(min15Raw.candles);
+      let min5Analysis: TimeframeAnalysis | null = null;
+      if (min5DisabledReason) {
+        warnings.push(min5DisabledReason);
+        min5Analysis = buildDisabledMin5Analysis([]);
+      } else if (!min5Raw || min5Raw.candles.length === 0) {
+        warnings.push("5분봉은 장중/당일 데이터가 없어서 비활성");
+        min5Analysis = buildDisabledMin5Analysis([]);
+      } else if (min5Raw.candles.length < MIN_MULTI.min5) {
+        warnings.push(`5분봉 데이터 부족 (${min5Raw.candles.length}/${MIN_MULTI.min5})`);
+        min5Analysis = buildDisabledMin5Analysis(min5Raw.candles);
       } else {
-        min15Analysis = analyzeTimeframe("min15", min15Raw.candles.slice(-180));
+        min5Analysis = analyzeTimeframe("min5", min5Raw.candles.slice(-180));
       }
 
       const timeframes: MultiAnalysisPayload["timeframes"] = {
@@ -271,19 +272,19 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         day: dayAnalysis
           ? sliceAnalysis(dayAnalysis, visibleCount("day", dayCount))
           : null,
-        min15: min15Analysis
-          ? sliceAnalysis(min15Analysis, visibleCount("min15", dayCount))
+        min5: min5Analysis
+          ? sliceAnalysis(min5Analysis, visibleCount("min5", dayCount))
           : null,
       };
       warnings.push(
-        `timeframes.candles.length month=${timeframes.month?.candles.length ?? 0}, week=${timeframes.week?.candles.length ?? 0}, day=${timeframes.day?.candles.length ?? 0}, min15=${timeframes.min15?.candles.length ?? 0}`,
+        `timeframes.candles.length month=${timeframes.month?.candles.length ?? 0}, week=${timeframes.week?.candles.length ?? 0}, day=${timeframes.day?.candles.length ?? 0}, min5=${timeframes.min5?.candles.length ?? 0}`,
       );
 
       const final = computeMultiFinal(
         timeframes.month,
         timeframes.week,
         timeframes.day,
-        timeframes.min15,
+        timeframes.min5,
       );
       const payload: MultiAnalysisPayload = {
         meta: {
@@ -293,7 +294,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             dayRaw?.name ??
             weekName ??
             monthName ??
-            min15Raw?.name ??
+            min5Raw?.name ??
             resolved.name,
           market: resolved.market,
           asOf: nowIsoKst(),
@@ -338,7 +339,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       metrics,
     );
     const candlesForAnalysis = fetched.candles.slice(-Math.max(minCount, 140));
-    if (candlesForAnalysis.length < (tf === "min15" ? 40 : 70)) {
+    if (candlesForAnalysis.length < (tf === "min5" ? 40 : 70)) {
       return finalize(badRequest(`${tf} 분석에 필요한 데이터가 부족합니다.`, context.request));
     }
 

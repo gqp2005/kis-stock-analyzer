@@ -63,7 +63,7 @@ export const analysisTtlSec = (date = new Date()): number => {
 };
 
 export const timeframeCacheTtlSec = (
-  tf: "month" | "week" | "day" | "min15",
+  tf: "month" | "week" | "day" | "min5",
   date = new Date(),
 ): number => {
   const kst = toKstDate(date);
@@ -71,7 +71,7 @@ export const timeframeCacheTtlSec = (
   const weekend = day === 0 || day === 6;
   const regular = isKrxRegularSession(date);
 
-  if (tf === "day" || tf === "min15") {
+  if (tf === "day" || tf === "min5") {
     if (regular) return 60;
     if (weekend) return 6 * 60 * 60; // 6h
     return 30 * 60; // 30m

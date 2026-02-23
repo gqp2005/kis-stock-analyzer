@@ -46,9 +46,9 @@ const makeDayCandles = (count: number): Candle[] =>
     };
   });
 
-const makeMin15Candles = (count: number): Candle[] =>
+const makeMin5Candles = (count: number): Candle[] =>
   Array.from({ length: count }, (_, index) => {
-    const time = new Date(Date.UTC(2025, 0, 2, 0, index * 15));
+    const time = new Date(Date.UTC(2025, 0, 2, 0, index * 5));
     const base = 80 + index * 0.08;
     return {
       time: `${time.toISOString().slice(0, 16)}:00+09:00`,
@@ -82,10 +82,10 @@ describe("/api/analysis multi fallback", () => {
     };
   });
 
-  it("returns partial success with min15 disabled warning", async () => {
+  it("returns partial success with min5 disabled warning", async () => {
     fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
       if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(260), cacheTtlSec: 60 };
-      if (tf === "min15") throw new Error("당일 분봉 없음");
+      if (tf === "min5") throw new Error("당일 분봉 없음");
       throw new Error("unexpected tf");
     });
     resampleWeekMock.mockReturnValue(makeDayCandles(200));
@@ -100,21 +100,21 @@ describe("/api/analysis multi fallback", () => {
         day: object | null;
         week: object | null;
         month: object | null;
-        min15: { timing?: unknown } | null;
+        min5: { timing?: unknown } | null;
       };
       warnings: string[];
     };
 
     expect(response.status).toBe(200);
     expect(body.timeframes.day).not.toBeNull();
-    expect(body.timeframes.min15).not.toBeNull();
-    expect(body.timeframes.min15?.timing ?? null).toBeNull();
+    expect(body.timeframes.min5).not.toBeNull();
+    expect(body.timeframes.min5?.timing ?? null).toBeNull();
     expect(
       body.warnings.some(
         (w) =>
-          w.includes("15분봉은 장중/당일 데이터가 없어서 비활성") ||
-          w.includes("15분봉은 장중 데이터 기반이라 현재 시간에는 비활성") ||
-          w.includes("15분봉은 API 제약/당일 데이터 부족으로 비활성"),
+          w.includes("5분봉은 장중/당일 데이터가 없어서 비활성") ||
+          w.includes("5분봉은 장중 데이터 기반이라 현재 시간에는 비활성") ||
+          w.includes("5분봉은 API 제약/당일 데이터 부족으로 비활성"),
       ),
     ).toBe(true);
     expect(typeof body.final.overall).toBe("string");
@@ -123,7 +123,7 @@ describe("/api/analysis multi fallback", () => {
   it("nulls week/month when resampled candles are insufficient", async () => {
     fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
       if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(70), cacheTtlSec: 60 };
-      if (tf === "min15") return { name: "삼성전자", candles: makeMin15Candles(80), cacheTtlSec: 60 };
+      if (tf === "min5") return { name: "삼성전자", candles: makeMin5Candles(80), cacheTtlSec: 60 };
       throw new Error("unexpected tf");
     });
     resampleWeekMock.mockReturnValue(makeDayCandles(40));
@@ -156,7 +156,7 @@ describe("/api/analysis multi fallback", () => {
       if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(280), cacheTtlSec: 60 };
       if (tf === "week") return { name: "삼성전자", candles: makeDayCandles(220), cacheTtlSec: 60 };
       if (tf === "month") return { name: "삼성전자", candles: makeDayCandles(90), cacheTtlSec: 60 };
-      if (tf === "min15") return { name: "삼성전자", candles: makeMin15Candles(120), cacheTtlSec: 60 };
+      if (tf === "min5") return { name: "삼성전자", candles: makeMin5Candles(120), cacheTtlSec: 60 };
       throw new Error("unexpected tf");
     });
 
@@ -169,5 +169,22 @@ describe("/api/analysis multi fallback", () => {
     const monthCall = fetchMock.mock.calls.find((call) => call[3] === "month");
     expect(weekCall?.[4]).toBe(200);
     expect(monthCall?.[4]).toBe(80);
+  });
+
+  it("supports tf=min15 alias and normalizes to min5", async () => {
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "min5") return { name: "삼성전자", candles: makeMin5Candles(120), cacheTtlSec: 60 };
+      throw new Error(`unexpected tf: ${tf}`);
+    });
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/analysis?query=005930&tf=min15&count=120"),
+    );
+    const body = (await response.json()) as { meta: { tf: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.tf).toBe("min5");
+    const min5Call = fetchMock.mock.calls.find((call) => call[3] === "min5");
+    expect(min5Call).toBeDefined();
   });
 });

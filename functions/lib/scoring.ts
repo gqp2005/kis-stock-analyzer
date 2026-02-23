@@ -75,8 +75,8 @@ const TF_CONFIG: Record<Timeframe, TimeframeConfig> = {
       breakout: 10,
     },
   },
-  min15: {
-    tf: "min15",
+  min5: {
+    tf: "min5",
     maFast: 20,
     maMid: 60,
     breakoutLookback: 20,
@@ -1009,7 +1009,7 @@ const computeTiming = (candles: Candle[], levels: IndicatorLevels): TimingInfo =
 export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAnalysis => {
   const config = TF_CONFIG[tf];
   const base = analyzeWithConfig(candles, config);
-  if (tf === "min15") {
+  if (tf === "min5") {
     return {
       ...base,
       timing: computeTiming(candles, base.levels),
@@ -1018,7 +1018,7 @@ export const analyzeTimeframe = (tf: Timeframe, candles: Candle[]): TimeframeAna
   return base;
 };
 
-export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAnalysis => {
+export const buildDisabledMin5Analysis = (candles: Candle[] = []): TimeframeAnalysis => {
   const nullPoints = candles.map((candle) => ({ time: candle.time, value: null }));
 
   const nullLevels: IndicatorLevels = {
@@ -1084,9 +1084,9 @@ export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAna
   };
 
   return {
-    tf: "min15",
+    tf: "min5",
     regime: "SIDE",
-    summaryText: "15분봉 비활성",
+    summaryText: "5분봉 비활성",
     scores: {
       trend: 0,
       momentum: 0,
@@ -1094,7 +1094,7 @@ export const buildDisabledMin15Analysis = (candles: Candle[] = []): TimeframeAna
       overall: "NEUTRAL",
     },
     signals: emptySignals,
-    reasons: ["15분봉은 장중/당일 데이터가 없어서 비활성"],
+    reasons: ["5분봉은 장중/당일 데이터가 없어서 비활성"],
     levels: nullLevels,
     tradePlan: {
       entry: null,
@@ -1128,7 +1128,7 @@ export const computeMultiFinal = (
   month: TimeframeAnalysis | null,
   week: TimeframeAnalysis | null,
   day: TimeframeAnalysis | null,
-  min15: TimeframeAnalysis | null,
+  min5: TimeframeAnalysis | null,
 ): {
   overall: Overall;
   confidence: number;
@@ -1136,7 +1136,7 @@ export const computeMultiFinal = (
   warnings: string[];
 } => {
   const warnings: string[] = [];
-  const base = day ?? week ?? month ?? min15;
+  const base = day ?? week ?? month ?? min5;
   let overall: Overall = base?.scores.overall ?? "CAUTION";
 
   if (!day) {
@@ -1182,7 +1182,7 @@ export const computeMultiFinal = (
   confidence = clamp(Math.round(confidence), 0, 100);
 
   const summaryBase = day?.summaryText ?? week?.summaryText ?? month?.summaryText ?? "분석 데이터 부족";
-  const timingText = min15?.timing ? min15.timing.timingLabel : "15분 타이밍 비활성";
+  const timingText = min5?.timing ? min5.timing.timingLabel : "5분 타이밍 비활성";
   const summary = `${summaryBase} · ${timingText}`;
 
   return {
