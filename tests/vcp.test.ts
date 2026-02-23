@@ -5,7 +5,7 @@ import type { Candle } from "../functions/lib/types";
 const makeCandles = (tailLastClose: number, tailLastVolume = 100_000): Candle[] => {
   const base = Array.from({ length: 200 }, (_, index) => 88 + index * 0.24);
   const prefix = [
-    140, 145, 152, 160, 170, 166, 158, 150, 145, 142, 147, 153, 159, 164, 161, 156, 152, 150,
+    140, 145, 152, 160, 170, 166, 158, 150, 145, 142, 147, 153, 159, 164, 161, 156, 154, 152,
     154, 158, 161, 159, 156, 154,
   ];
   const rampCount = 36;
@@ -32,6 +32,19 @@ const makeCandles = (tailLastClose: number, tailLastVolume = 100_000): Candle[] 
   });
 };
 
+const makeKospiBenchmark = (count: number): Candle[] =>
+  Array.from({ length: count }, (_, index) => {
+    const close = 2500 + index * 0.6;
+    return {
+      time: new Date(Date.UTC(2024, 0, 1 + index)).toISOString().slice(0, 10),
+      open: close - 1,
+      high: close + 2,
+      low: close - 2,
+      close,
+      volume: 1_000_000 + index * 1000,
+    };
+  });
+
 describe("VCP detector", () => {
   it("returns safe fallback when candles are insufficient", () => {
     const candles = makeCandles(156).slice(-120);
@@ -45,7 +58,8 @@ describe("VCP detector", () => {
 
   it("detects potential VCP with shrinking contractions near resistance", () => {
     const candles = makeCandles(160, 100_000);
-    const vcp = detectVcpPattern(candles);
+    const benchmark = makeKospiBenchmark(candles.length);
+    const vcp = detectVcpPattern(candles, { index: "KOSPI", candles: benchmark });
 
     expect(vcp.detected).toBe(true);
     expect(vcp.state).toBe("POTENTIAL");
@@ -54,17 +68,23 @@ describe("VCP detector", () => {
     expect(vcp.distanceToR).not.toBeNull();
     expect(vcp.distanceToR!).toBeGreaterThanOrEqual(0);
     expect(vcp.distanceToR!).toBeLessThanOrEqual(0.08);
+    expect(vcp.leadership.label === "STRONG" || vcp.leadership.label === "OK").toBe(true);
+    expect(vcp.pivot.label).not.toBe("NONE");
+    expect(vcp.risk.riskGrade).not.toBe("BAD");
   });
 
   it("detects confirmed VCP breakout when close is above R with volume expansion", () => {
     const candles = makeCandles(175, 260_000);
-    const vcp = detectVcpPattern(candles);
+    const benchmark = makeKospiBenchmark(candles.length);
+    const vcp = detectVcpPattern(candles, { index: "KOSPI", candles: benchmark });
 
     expect(vcp.detected).toBe(true);
     expect(vcp.state).toBe("CONFIRMED");
     expect(vcp.breakDate).toBe(candles[candles.length - 1].time);
     expect(vcp.score).toBeGreaterThanOrEqual(70);
-    expect(vcp.resistanceR).not.toBeNull();
-    expect(candles[candles.length - 1].close).toBeGreaterThan(vcp.resistanceR!);
+    expect(vcp.resistance.price).not.toBeNull();
+    expect(candles[candles.length - 1].close).toBeGreaterThan(vcp.resistance.price!);
+    expect(vcp.pivot.label).toBe("BREAKOUT_CONFIRMED");
+    expect(vcp.breakout.confirmed).toBe(true);
   });
 });

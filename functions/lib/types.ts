@@ -161,7 +161,7 @@ export interface FlowSignal {
 
 export type OverlayLineGroup = "level" | "zone";
 export type OverlaySegmentKind = "trendlineUp" | "trendlineDown" | "channelLow" | "channelHigh";
-export type OverlayMarkerType = VolumePatternType | "VCPPeak" | "VCPTrough";
+export type OverlayMarkerType = VolumePatternType | "VCPPeak" | "VCPTrough" | "VCPBreakout";
 
 export interface OverlayPriceLine {
   id: string;
@@ -343,21 +343,79 @@ export interface VcpContraction {
   peak: number;
   trough: number;
   depth: number;
+  durationBars: number;
 }
+
+export type VcpLeadershipLabel = "STRONG" | "OK" | "WEAK";
+export type VcpPivotLabel =
+  | "NONE"
+  | "PIVOT_READY"
+  | "PIVOT_NEAR_52W"
+  | "PIVOT_52W_BREAK"
+  | "BREAKOUT_CONFIRMED";
+export type VcpRiskGrade = "N/A" | "OK" | "HIGH" | "BAD";
 
 export interface VcpHit {
   detected: boolean;
   state: PatternState;
   score: number;
-  resistanceR: number | null;
+  resistance: {
+    price: number | null;
+    zoneLow: number | null;
+    zoneHigh: number | null;
+    touches: number;
+  };
   distanceToR: number | null;
   breakDate: string | null;
   contractions: VcpContraction[];
-  atrShrink: boolean;
-  volumeDryUp: boolean;
+  atr: {
+    atrPct20: number | null;
+    atrPct120: number | null;
+    shrink: boolean;
+  };
+  leadership: {
+    label: VcpLeadershipLabel;
+    ret63: number | null;
+    ret126: number | null;
+  };
+  pivot: {
+    label: VcpPivotLabel;
+    nearHigh52: boolean;
+    newHigh52: boolean;
+    pivotReady: boolean;
+  };
+  volume: {
+    dryUp: boolean;
+    dryUpStrength: "NONE" | "WEAK" | "STRONG";
+    volRatioLast: number | null;
+    volRatioAvg10: number | null;
+  };
+  rs: {
+    index: "KOSPI";
+    ok: boolean;
+    rsVsMa90: boolean;
+    rsRet63: number | null;
+  };
+  risk: {
+    invalidLow: number | null;
+    entryRef: number | null;
+    riskPct: number | null;
+    riskGrade: VcpRiskGrade;
+  };
+  breakout: {
+    confirmed: boolean;
+    rule: string;
+  };
   trendPass: boolean;
-  atrPctMean20: number | null;
-  atrPctMean120: number | null;
+  quality: {
+    baseWidthOk: boolean;
+    depthShrinkOk: boolean;
+    durationOk: boolean;
+    baseSpanBars: number | null;
+    baseLenOk: boolean;
+    baseDepthMax: number | null;
+    gapCrashFlags: number;
+  };
   reasons: string[];
 }
 

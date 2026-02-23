@@ -30,6 +30,11 @@ interface KisDailyChartResponse extends KisResponseBase {
   output2?: Array<Record<string, string>>;
 }
 
+interface KisIndexChartResponse extends KisResponseBase {
+  output1?: Record<string, string>;
+  output2?: Array<Record<string, string>>;
+}
+
 interface KisPriceResponse extends KisResponseBase {
   output?: Record<string, string>;
 }
@@ -595,6 +600,141 @@ export const resampleDayToMonthCandles = (dayCandles: Candle[]): Candle[] =>
 
 const cacheKeyForTf = (symbol: string, tf: Timeframe, minCount: number): string => {
   return `https://cache.local/kis/ohlcv/v2?symbol=${encodeURIComponent(symbol)}&tf=${tf}&min=${minCount}`;
+};
+
+const cacheKeyForBenchmark = (index: "KOSPI", minCount: number): string =>
+  `https://cache.local/kis/index/v1?index=${index}&min=${minCount}`;
+
+const parseIndexDailyRow = (row: Record<string, string>): Candle | null => {
+  const dateRaw =
+    row.stck_bsop_date ??
+    row.bstp_bsop_date ??
+    row.bas_dt ??
+    "";
+  if (!/^\d{8}$/.test(String(dateRaw))) return null;
+
+  const open = toNumber(row.bstp_oprc ?? row.stck_oprc ?? row.oprc ?? row.open_pric);
+  const high = toNumber(row.bstp_hgpr ?? row.stck_hgpr ?? row.hgpr ?? row.high_pric);
+  const low = toNumber(row.bstp_lwpr ?? row.stck_lwpr ?? row.lwpr ?? row.low_pric);
+  const close = toNumber(
+    row.bstp_nmix_prpr ??
+      row.stck_clpr ??
+      row.clpr ??
+      row.prpr ??
+      row.close_pric,
+  );
+  const volume = toNumber(
+    row.acml_vol ?? row.acml_tr_pbmn ?? row.cntg_vol ?? row.cntg_qty ?? "0",
+  );
+
+  if (close <= 0 || high < low) return null;
+
+  return {
+    time: parseKisDate(String(dateRaw)),
+    open: open > 0 ? open : close,
+    high,
+    low,
+    close,
+    volume: volume > 0 ? volume : 0,
+  };
+};
+
+const fetchIndexPeriodChunk = async (
+  env: Env,
+  cache: Cache,
+  indexCode: string,
+  startDate: string,
+  endDate: string,
+  metrics?: RequestMetrics,
+): Promise<KisIndexChartResponse> => {
+  return kisGet<KisIndexChartResponse>(
+    env,
+    cache,
+    "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice",
+    "FHKUP03500100",
+    {
+      FID_COND_MRKT_DIV_CODE: "U",
+      FID_INPUT_ISCD: indexCode,
+      FID_INPUT_DATE_1: startDate,
+      FID_INPUT_DATE_2: endDate,
+      FID_PERIOD_DIV_CODE: "D",
+    },
+    metrics,
+  );
+};
+
+const fetchIndexCandles = async (
+  env: Env,
+  cache: Cache,
+  indexCode: string,
+  minCount: number,
+  metrics?: RequestMetrics,
+): Promise<Candle[]> => {
+  const targetCount = Math.max(minCount, 280);
+  const maxPage = Math.max(4, Math.ceil(targetCount / 90) + 2);
+  const windowDays = 420;
+  const candleByDate = new Map<string, Candle>();
+  let endDate = formatKstDate(new Date());
+  let lastOldest = "";
+
+  for (let page = 0; page < maxPage && candleByDate.size < targetCount; page += 1) {
+    const startDate = addDaysToYmd(endDate, -windowDays);
+    const data = await fetchIndexPeriodChunk(env, cache, indexCode, startDate, endDate, metrics);
+    const rows = Array.isArray(data.output2) ? data.output2 : [];
+    if (rows.length === 0) break;
+
+    let oldest = "99999999";
+    for (const row of rows) {
+      const dateRaw =
+        row.stck_bsop_date ??
+        row.bstp_bsop_date ??
+        row.bas_dt ??
+        "";
+      if (!/^\d{8}$/.test(String(dateRaw))) continue;
+      if (String(dateRaw) < oldest) oldest = String(dateRaw);
+
+      const candle = parseIndexDailyRow(row);
+      if (!candle) continue;
+      candleByDate.set(String(dateRaw), candle);
+    }
+
+    if (!/^\d{8}$/.test(oldest) || oldest === lastOldest) break;
+    lastOldest = oldest;
+    const nextEnd = addDaysToYmd(oldest, -1);
+    if (nextEnd >= endDate) break;
+    endDate = nextEnd;
+  }
+
+  const candles = [...candleByDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map((entry) => entry[1]);
+  if (candles.length === 0) {
+    throw new Error("KOSPI 지수 일봉 조회 결과가 비었습니다.");
+  }
+  return candles;
+};
+
+export const fetchKospiIndexCandles = async (
+  env: Env,
+  cache: Cache,
+  minCount: number,
+  metrics?: RequestMetrics,
+): Promise<{ index: "KOSPI"; candles: Candle[]; cacheTtlSec: number }> => {
+  const index = "KOSPI";
+  const ttlSec = timeframeCacheTtlSec("day");
+  const cacheKey = cacheKeyForBenchmark(index, minCount);
+  const cached = await getCachedJson<{ candles: Candle[] }>(cache, cacheKey);
+  if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+    console.log("[data-cache-hit] benchmark=KOSPI");
+    bumpMetric(metrics, "dataCacheHits");
+    return { index, candles: cached.candles, cacheTtlSec: ttlSec };
+  }
+
+  console.log("[data-cache-miss] benchmark=KOSPI");
+  bumpMetric(metrics, "dataCacheMisses");
+  const candles = await fetchIndexCandles(env, cache, "0001", minCount, metrics);
+  await putCachedJson(cache, cacheKey, { candles }, ttlSec);
+  return { index, candles, cacheTtlSec: ttlSec };
 };
 
 export const fetchTimeframeCandles = async (

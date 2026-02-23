@@ -1,9 +1,9 @@
 import { getCachedJson, putCachedJson } from "../../lib/cache";
-import { fetchTimeframeCandles } from "../../lib/kis";
+import { fetchKospiIndexCandles, fetchTimeframeCandles } from "../../lib/kis";
 import { nowIsoKst } from "../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../lib/observability";
 import { errorJson, json, serverError } from "../../lib/response";
-import { analyzeScreenerRawCandidate } from "../../lib/screener";
+import { analyzeScreenerRawCandidate, type ScreenerBenchmarkInput } from "../../lib/screener";
 import {
   REBUILD_LOCK_TTL_SEC,
   SCREENER_CACHE_TTL_SEC,
@@ -233,6 +233,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const universeLoad = await loadUniverseSnapshot(cache, date);
     const universe = universeLoad.snapshot.items.slice(0, TARGET_UNIVERSE);
+    let benchmark: ScreenerBenchmarkInput | null = null;
+    const benchmarkWarnings: string[] = [];
+    try {
+      const kospi = await fetchKospiIndexCandles(context.env, cache, 320, metrics);
+      benchmark = { index: kospi.index, candles: kospi.candles };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      benchmarkWarnings.push(`KOSPI 지수 조회 실패로 RS 필터를 비활성 처리했습니다: ${message}`);
+    }
 
     const prevProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     let progress =
@@ -241,6 +250,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         : createProgress(date, universe.length, [
             ...universeLoad.providerWarnings,
             ...universeLoad.snapshot.warnings,
+            ...benchmarkWarnings,
           ]);
 
     const start = Math.max(0, Math.min(progress.cursor, universe.length));
@@ -257,7 +267,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           280,
           metrics,
         );
-        const candidate = analyzeScreenerRawCandidate(entry, fetched.candles.slice(-280), false);
+        const candidate = analyzeScreenerRawCandidate(
+          entry,
+          fetched.candles.slice(-280),
+          false,
+          benchmark,
+        );
         if (!candidate) {
           return { kind: "insufficient" as const, candidate: null };
         }
@@ -285,6 +300,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       ...progress.warnings,
       ...universeLoad.providerWarnings,
       ...universeLoad.snapshot.warnings,
+      ...benchmarkWarnings,
       progress.insufficientData > 0
         ? `데이터 부족 ${progress.insufficientData}종목 제외`
         : "",

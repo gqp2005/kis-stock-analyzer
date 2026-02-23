@@ -20,6 +20,18 @@ vi.mock("../functions/lib/kis", () => ({
     })) as Candle[],
     cacheTtlSec: 60,
   })),
+  fetchKospiIndexCandles: vi.fn(async () => ({
+    index: "KOSPI",
+    candles: Array.from({ length: 320 }, (_, index) => ({
+      time: new Date(Date.UTC(2024, 0, 1 + index)).toISOString().slice(0, 10),
+      open: 2500 + index * 0.5,
+      high: 2505 + index * 0.5,
+      low: 2495 + index * 0.5,
+      close: 2502 + index * 0.5,
+      volume: 1000000 + index * 1000,
+    })) as Candle[],
+    cacheTtlSec: 60,
+  })),
 }));
 
 vi.mock("../functions/lib/universe", () => ({
@@ -68,8 +80,13 @@ vi.mock("../functions/lib/screener", () => ({
       vcp: {
         detected: true,
         state: "POTENTIAL",
-        score: 68,
-        resistanceR: 101000,
+        score: 82,
+        resistance: {
+          price: 101000,
+          zoneLow: 100400,
+          zoneHigh: 101600,
+          touches: 3,
+        },
         distanceToR: 0.02,
         breakDate: null,
         contractions: [
@@ -79,6 +96,7 @@ vi.mock("../functions/lib/screener", () => ({
             peak: 103000,
             trough: 92000,
             depth: 0.107,
+            durationBars: 6,
           },
           {
             peakTime: "2025-01-06",
@@ -86,13 +104,57 @@ vi.mock("../functions/lib/screener", () => ({
             peak: 101500,
             trough: 95500,
             depth: 0.059,
+            durationBars: 5,
           },
         ],
-        atrShrink: true,
-        volumeDryUp: true,
+        atr: {
+          atrPct20: 0.017,
+          atrPct120: 0.028,
+          shrink: true,
+        },
+        leadership: {
+          label: "OK",
+          ret63: 0.07,
+          ret126: 0.13,
+        },
+        pivot: {
+          label: "PIVOT_NEAR_52W",
+          nearHigh52: true,
+          newHigh52: false,
+          pivotReady: false,
+        },
+        volume: {
+          dryUp: true,
+          dryUpStrength: "WEAK",
+          volRatioLast: 1.22,
+          volRatioAvg10: 0.69,
+        },
+        rs: {
+          index: "KOSPI",
+          ok: true,
+          rsVsMa90: true,
+          rsRet63: 0.08,
+        },
+        risk: {
+          invalidLow: 97200,
+          entryRef: 101600,
+          riskPct: 0.043,
+          riskGrade: "OK",
+        },
+        breakout: {
+          confirmed: false,
+          rule: "close>R && volRatio>=1.5",
+        },
         trendPass: true,
-        atrPctMean20: 0.017,
-        atrPctMean120: 0.028,
+        quality: {
+          baseWidthOk: true,
+          depthShrinkOk: true,
+          durationOk: true,
+          baseSpanBars: 44,
+          baseLenOk: true,
+          baseDepthMax: 0.107,
+          gapCrashFlags: 0,
+        },
         reasons: ["VCP 테스트"],
       },
     },
@@ -101,7 +163,7 @@ vi.mock("../functions/lib/screener", () => ({
       volume: { score: 75, confidence: 70 },
       hs: { score: 20, confidence: 30 },
       ihs: { score: 78, confidence: 74 },
-      vcp: { score: 68, confidence: 69 },
+      vcp: { score: 82, confidence: 79 },
     },
     reasons: {
       all: ["테스트 all"],

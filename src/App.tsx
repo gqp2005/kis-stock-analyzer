@@ -136,7 +136,7 @@ const BASIC_PATTERN_TYPES = new Set<OverlayMarkerType>([
   "PullbackReaccumulation",
 ]);
 const isVcpMarkerType = (type: OverlayMarkerType): boolean =>
-  type === "VCPPeak" || type === "VCPTrough";
+  type === "VCPPeak" || type === "VCPTrough" || type === "VCPBreakout";
 
 const canShowMarkerByType = (
   type: OverlayMarkerType,
@@ -1610,6 +1610,9 @@ export default function App() {
                   )}
                   {activeTf === "day" && showMarkers && !selectedPattern && (
                     <p className="marker-detail-hint">차트 마커를 클릭하면 패턴 상세가 표시됩니다.</p>
+                  )}
+                  {activeTf === "day" && (
+                    <p className="plan-note">CONFIRMED 조건: close&gt;R &amp;&amp; volRatio&gt;=1.5</p>
                   )}
                 </div>
 

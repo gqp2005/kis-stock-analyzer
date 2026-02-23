@@ -144,9 +144,19 @@ VCP 응답 핵심 필드:
 - `hits.vcp.detected`: 감지 여부
 - `hits.vcp.state`: `NONE|POTENTIAL|CONFIRMED`
 - `hits.vcp.score`: 0~100
-- `hits.vcp.resistanceR`: VCP 저항선
-- `hits.vcp.contractions[]`: 최근 컨트랙션(고점/저점/깊이)
-- `hits.vcp.atrShrink`, `hits.vcp.volumeDryUp`, `hits.vcp.reasons[]`
+- `hits.vcp.resistance`: `{price,zoneLow,zoneHigh,touches}`
+- `hits.vcp.distanceToR`: 저항까지 거리(비율)
+- `hits.vcp.contractions[]`: 최근 컨트랙션(고점/저점/깊이/기간)
+- `hits.vcp.atr`: `{atrPct20,atrPct120,shrink}`
+- `hits.vcp.leadership`: `{label,ret63,ret126}` (`STRONG|OK|WEAK`)
+- `hits.vcp.pivot`: `{label,nearHigh52,newHigh52,pivotReady}`
+- `hits.vcp.volume`: `{dryUp,dryUpStrength,volRatioLast,volRatioAvg10}`
+- `hits.vcp.rs`: `{index,ok,rsVsMa90,rsRet63}`
+- `hits.vcp.risk`: `{invalidLow,entryRef,riskPct,riskGrade}`
+- `hits.vcp.quality`: `{baseWidthOk,depthShrinkOk,durationOk,baseSpanBars,baseLenOk,baseDepthMax,gapCrashFlags}`
+- `hits.vcp.breakout`: `{confirmed,rule}`
+- `hits.vcp.reasons[]`
+- VCP 후보 컷(v1.2): `detected=true && score>=80` (strong 후보는 `>=92`)
 
 ### `POST /api/admin/rebuild-screener?token=...`
 - 스크리너 배치 재빌드 실행 (관리자용)
@@ -220,7 +230,9 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - `view`(선택): `multi` 사용 시 다중 관점 오버레이(`overlays/confluence/explanations`) 포함
   - day `view=multi`에서 VCP 감지 시:
     - `overlays.priceLines`에 `VCP 저항R` 라인 추가
+    - `overlays.priceLines`에 `VCP 무효화` 라인(Invalidation) 추가
     - `overlays.markers`에 최근 컨트랙션 고점/저점(`VCPPeak/VCPTrough`) 마커 추가
+    - `CONFIRMED`이면 돌파 마커(`VCPBreakout`) 추가
 - `profile`(선택): `short|mid` (기본 `short`)
   - `short`: 추세 30 / 모멘텀 50 / 위험 20
   - `mid`: 추세 50 / 모멘텀 20 / 위험 30

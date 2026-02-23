@@ -1168,6 +1168,42 @@ h2 {
   font-size: 12px;
 }
 
+.vcp-card {
+  border-color: rgba(246, 199, 95, 0.35);
+  background: linear-gradient(180deg, rgba(35, 28, 12, 0.5), rgba(12, 24, 36, 0.7));
+}
+
+.vcp-kpi-row {
+  margin: 6px 0;
+}
+
+.vcp-kpi-row small {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 199, 95, 0.25);
+  background: rgba(20, 33, 47, 0.55);
+}
+
+.vcp-reasons {
+  margin: 8px 0 4px;
+  padding-left: 18px;
+}
+
+.vcp-reasons li {
+  margin: 4px 0;
+}
+
+.vcp-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.vcp-strip .reason-tag {
+  font-size: 11px;
+}
+
 .screener-warning-list {
   display: grid;
   gap: 6px;

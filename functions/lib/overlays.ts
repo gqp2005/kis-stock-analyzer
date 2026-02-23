@@ -391,7 +391,7 @@ const buildVcpContractionMarkers = (signals: Signals): OverlayMarker[] => {
   if (!signals.vcp.detected || signals.vcp.contractions.length === 0) return [];
 
   const recentContractions = signals.vcp.contractions.slice(-4);
-  return recentContractions.flatMap((contraction, index) => {
+  const contractionMarkers = recentContractions.flatMap((contraction, index) => {
     const order = index + 1;
     return [
       {
@@ -420,6 +420,23 @@ const buildVcpContractionMarkers = (signals: Signals): OverlayMarker[] => {
       },
     ];
   });
+
+  if (signals.vcp.breakout.confirmed && signals.vcp.breakDate) {
+    contractionMarkers.push({
+      id: `marker-vcp-breakout-${signals.vcp.breakDate}`,
+      t: signals.vcp.breakDate,
+      type: "VCPBreakout",
+      label: "VCP 돌파",
+      desc: "VCP CONFIRMED (close>R && volRatio>=1.5)",
+      position: "aboveBar",
+      shape: "arrowUp",
+      text: "BRK",
+      color: "#00b386",
+      strength: 92,
+    });
+  }
+
+  return contractionMarkers;
 };
 
 const buildConfluenceBands = (
@@ -480,9 +497,9 @@ const buildConfluenceBands = (
       });
     }
   }
-  if (signals.vcp.detected && signals.vcp.resistanceR != null) {
+  if (signals.vcp.detected && signals.vcp.resistance.price != null) {
     candidates.push({
-      price: signals.vcp.resistanceR,
+      price: signals.vcp.resistance.price,
       weight: 2.2,
       reason: "VCP 저항 R",
     });
@@ -568,10 +585,18 @@ const buildExplanations = (
       `컨플루언스: 최강 구간 ${confluence[0].bandLow.toLocaleString("ko-KR")}~${confluence[0].bandHigh.toLocaleString("ko-KR")}`,
     );
   }
-  if (signals.vcp.detected && signals.vcp.resistanceR != null) {
+  if (signals.vcp.detected && signals.vcp.resistance.price != null) {
     list.push(
-      `VCP: 저항 R ${Math.round(signals.vcp.resistanceR).toLocaleString("ko-KR")}원 · 컨트랙션 ${signals.vcp.contractions.length}회`,
+      `VCP: 저항 R ${Math.round(signals.vcp.resistance.price).toLocaleString("ko-KR")}원 · 컨트랙션 ${signals.vcp.contractions.length}회`,
     );
+    if (signals.vcp.risk.invalidLow != null) {
+      list.push(
+        `VCP 무효화 기준 ${Math.round(signals.vcp.risk.invalidLow).toLocaleString("ko-KR")}원 · 리스크 ${signals.vcp.risk.riskGrade}`,
+      );
+    }
+  }
+  if (signals.vcp.breakout.confirmed) {
+    list.push(`VCP CONFIRMED 조건: ${signals.vcp.breakout.rule}`);
   }
   return list.slice(0, 6);
 };
@@ -615,15 +640,48 @@ export const buildMultiViewArtifacts = (
         label: "저항 레벨",
         color: "#ff5a76",
       },
-      ...(signals.vcp.detected && signals.vcp.resistanceR != null
+      ...(signals.vcp.detected && signals.vcp.resistance.price != null
         ? [
             {
               id: "level-vcp-resistance",
               group: "level" as const,
-              price: round2(signals.vcp.resistanceR) ?? signals.vcp.resistanceR,
+              price: round2(signals.vcp.resistance.price) ?? signals.vcp.resistance.price,
               label: "VCP 저항R",
               color: "#f6c75f",
             },
+            ...(signals.vcp.resistance.zoneLow != null
+              ? [
+                  {
+                    id: "zone-vcp-r-low",
+                    group: "zone" as const,
+                    price: round2(signals.vcp.resistance.zoneLow) ?? signals.vcp.resistance.zoneLow,
+                    label: "VCP R-zone 하단",
+                    color: "rgba(246,199,95,0.8)",
+                  },
+                ]
+              : []),
+            ...(signals.vcp.resistance.zoneHigh != null
+              ? [
+                  {
+                    id: "zone-vcp-r-high",
+                    group: "zone" as const,
+                    price: round2(signals.vcp.resistance.zoneHigh) ?? signals.vcp.resistance.zoneHigh,
+                    label: "VCP R-zone 상단",
+                    color: "rgba(246,199,95,0.8)",
+                  },
+                ]
+              : []),
+            ...(signals.vcp.risk.invalidLow != null
+              ? [
+                  {
+                    id: "level-vcp-invalid-low",
+                    group: "level" as const,
+                    price: round2(signals.vcp.risk.invalidLow) ?? signals.vcp.risk.invalidLow,
+                    label: "VCP 무효화",
+                    color: "rgba(255,132,132,0.9)",
+                  },
+                ]
+              : []),
           ]
         : []),
       ...zoneItems.flatMap((zone) => [

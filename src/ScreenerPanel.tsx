@@ -2,6 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   Overall,
   PatternState,
+  VcpLeadershipLabel,
+  VcpPivotLabel,
+  VcpRiskGrade,
   ScreenerItem,
   ScreenerMarketFilter,
   ScreenerResponse,
@@ -61,6 +64,47 @@ const vcpStateLabel = (state: PatternState): string => {
 
 const formatDepth = (value: number | null): string =>
   value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+
+const formatSignedPercent = (value: number | null): string =>
+  value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+
+const formatDistancePercent = (value: number | null): string =>
+  value == null ? "-" : `${(Math.abs(value) * 100).toFixed(2)}%`;
+
+const formatRatioPercent = (value: number | null): string =>
+  value == null ? "-" : `${(value * 100).toFixed(2)}%`;
+
+const dryUpStrengthLabel = (value: "NONE" | "WEAK" | "STRONG"): string => {
+  if (value === "STRONG") return "강함";
+  if (value === "WEAK") return "보통";
+  return "약함";
+};
+
+const leadershipLabel = (value: VcpLeadershipLabel): string => {
+  if (value === "STRONG") return "STRONG";
+  if (value === "OK") return "OK";
+  return "WEAK";
+};
+
+const pivotLabel = (value: VcpPivotLabel): string => {
+  if (value === "PIVOT_READY") return "PIVOT_READY";
+  if (value === "PIVOT_NEAR_52W") return "PIVOT_NEAR_52W";
+  if (value === "PIVOT_52W_BREAK") return "PIVOT_52W_BREAK";
+  if (value === "BREAKOUT_CONFIRMED") return "CONFIRMED";
+  return "NONE";
+};
+
+const riskGradeLabel = (value: VcpRiskGrade): string => {
+  if (value === "OK") return "OK";
+  if (value === "HIGH") return "HIGH";
+  if (value === "BAD") return "BAD";
+  return "N/A";
+};
+
+const atrShrinkPercent = (atr20: number | null, atr120: number | null): string => {
+  if (atr20 == null || atr120 == null || atr120 <= 0) return "-";
+  return `${((1 - atr20 / atr120) * 100).toFixed(1)}%`;
+};
 
 const sortItems = (items: ScreenerItem[], sortKey: SortKey): ScreenerItem[] => {
   const cloned = [...items];
@@ -202,7 +246,10 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
 
           <div className="screener-grid">
             {rankedItems.map((item) => (
-              <article key={`${item.market}-${item.code}`} className="screener-card">
+              <article
+                key={`${item.market}-${item.code}`}
+                className={strategy === "VCP" ? "screener-card vcp-card" : "screener-card"}
+              >
                 <div className="screener-card-head">
                   <div>
                     <h3>
@@ -213,69 +260,130 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     </p>
                   </div>
                   <div className="final-badges">
-                    <span className={overallClass(item.overallLabel)}>{overallLabel(item.overallLabel)}</span>
-                    <span className="confidence neutral">점수 {item.scoreTotal}</span>
-                    <span className="confidence good">신뢰도 {item.confidence}</span>
+                    {strategy === "VCP" ? (
+                      <>
+                        <span className="confidence neutral">VCPScore {item.hits.vcp.score}</span>
+                        <span className={item.hits.vcp.pivot.label === "BREAKOUT_CONFIRMED" ? "badge good" : "badge neutral"}>
+                          {pivotLabel(item.hits.vcp.pivot.label)}
+                        </span>
+                        <span className={item.hits.vcp.state === "CONFIRMED" ? "badge good" : "badge neutral"}>
+                          {vcpStateLabel(item.hits.vcp.state)}
+                        </span>
+                        {item.hits.vcp.score >= 92 && <span className="reason-tag positive">Strong</span>}
+                      </>
+                    ) : (
+                      <>
+                        <span className={overallClass(item.overallLabel)}>{overallLabel(item.overallLabel)}</span>
+                        <span className="confidence neutral">점수 {item.scoreTotal}</span>
+                        <span className="confidence good">신뢰도 {item.confidence}</span>
+                      </>
+                    )}
                   </div>
                 </div>
-                <div className="screener-hit-row">
-                  <span className="reason-tag positive">
-                    거래량 {formatScore(item.hits.volume.score)} / {item.hits.volume.confidence}
-                  </span>
-                  <span className={item.hits.vcp.detected ? "reason-tag positive" : "reason-tag neutral"}>
-                    VCP {vcpStateLabel(item.hits.vcp.state)} / {item.hits.vcp.score}
-                  </span>
-                  <span className="reason-tag negative">
-                    H&S {hsStateLabel(item.hits.hs.state)} / {item.hits.hs.score}
-                  </span>
-                  <span className="reason-tag positive">
-                    IHS {hsStateLabel(item.hits.ihs.state)} / {item.hits.ihs.score}
-                  </span>
-                </div>
-                <div className="screener-hit-row">
-                  {item.hits.volume.patterns.length > 0 ? (
-                    item.hits.volume.patterns.slice(0, 3).map((type) => (
-                      <small key={type} className="reason-tag positive">
-                        {patternTypeLabel(type)}
+                {strategy === "VCP" ? (
+                  <>
+                    <div className="screener-levels vcp-kpi-row">
+                      <small>
+                        R-zone {formatPrice(item.hits.vcp.resistance.zoneLow)} ~{" "}
+                        {formatPrice(item.hits.vcp.resistance.zoneHigh)}
                       </small>
-                    ))
-                  ) : (
-                    <small className="volume-empty">거래량 패턴 없음</small>
-                  )}
-                </div>
-                <ul>
-                  {item.reasons.slice(0, 3).map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
-                </ul>
-                <div className="screener-levels">
-                  <small>지지 {formatPrice(item.levels.support)}</small>
-                  <small>저항 {formatPrice(item.levels.resistance)}</small>
-                  <small>넥라인 {formatPrice(item.levels.neckline)}</small>
-                </div>
-                {(strategy === "VCP" || item.hits.vcp.detected) && (
-                  <div className="screener-levels">
-                    <small>VCPScore {formatScore(item.hits.vcp.score)}</small>
-                    <small>상태 {vcpStateLabel(item.hits.vcp.state)}</small>
-                    <small>저항R {formatPrice(item.hits.vcp.resistanceR)}</small>
-                    <small>
-                      마지막 축소폭{" "}
-                      {formatDepth(
-                        item.hits.vcp.contractions.length > 0
-                          ? item.hits.vcp.contractions[item.hits.vcp.contractions.length - 1].depth
-                          : null,
+                      <small>R까지 거리 {formatDistancePercent(item.hits.vcp.distanceToR)}</small>
+                      <small>
+                        컨트랙션 {item.hits.vcp.contractions.length}회 ·{" "}
+                        {item.hits.vcp.contractions.length > 0
+                          ? item.hits.vcp.contractions
+                              .map((contraction) => formatDepth(contraction.depth))
+                              .join(" → ")
+                          : "-"}
+                      </small>
+                    </div>
+                    <div className="screener-levels vcp-kpi-row">
+                      <small>
+                        DryUp {dryUpStrengthLabel(item.hits.vcp.volume.dryUpStrength)} (
+                        {item.hits.vcp.volume.volRatioAvg10 != null
+                          ? `${item.hits.vcp.volume.volRatioAvg10.toFixed(2)}배`
+                          : "-"}
+                        )
+                      </small>
+                      <small>
+                        Leadership {leadershipLabel(item.hits.vcp.leadership.label)} (
+                        {formatSignedPercent(
+                          item.hits.vcp.leadership.ret63 != null
+                            ? item.hits.vcp.leadership.ret63 * 100
+                            : null,
+                        )}
+                        )
+                      </small>
+                      <small>
+                        Risk {riskGradeLabel(item.hits.vcp.risk.riskGrade)} (
+                        {formatRatioPercent(item.hits.vcp.risk.riskPct)} / 무효화{" "}
+                        {formatPrice(item.hits.vcp.risk.invalidLow)})
+                      </small>
+                    </div>
+                    <div className="vcp-strip">
+                      <small
+                        className={item.hits.vcp.pivot.nearHigh52 ? "reason-tag positive" : "reason-tag neutral"}
+                        title="close >= 0.90 * high52w"
+                      >
+                        52W 근접 {item.hits.vcp.pivot.nearHigh52 ? "Y" : "N"}
+                      </small>
+                      <small
+                        className={item.hits.vcp.pivot.pivotReady ? "reason-tag positive" : "reason-tag neutral"}
+                        title="distance<=3% && dryUp STRONG && depth_last<=8%"
+                      >
+                        Pivot Ready {item.hits.vcp.pivot.pivotReady ? "Y" : "N"}
+                      </small>
+                      <small className="reason-tag neutral" title={item.hits.vcp.breakout.rule}>
+                        돌파 조건 {item.hits.vcp.breakout.confirmed ? "충족" : "대기"}
+                      </small>
+                      <small className="reason-tag neutral">
+                        ATR 축소 {atrShrinkPercent(item.hits.vcp.atr.atrPct20, item.hits.vcp.atr.atrPct120)}
+                      </small>
+                    </div>
+                    <ul className="vcp-reasons">
+                      {item.hits.vcp.reasons.slice(0, 3).map((reason) => (
+                        <li key={`${item.code}-vcp-${reason}`}>✅ {reason}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <>
+                    <div className="screener-hit-row">
+                      <span className="reason-tag positive">
+                        거래량 {formatScore(item.hits.volume.score)} / {item.hits.volume.confidence}
+                      </span>
+                      <span className={item.hits.vcp.detected ? "reason-tag positive" : "reason-tag neutral"}>
+                        VCP {vcpStateLabel(item.hits.vcp.state)} / {item.hits.vcp.score}
+                      </span>
+                      <span className="reason-tag negative">
+                        H&S {hsStateLabel(item.hits.hs.state)} / {item.hits.hs.score}
+                      </span>
+                      <span className="reason-tag positive">
+                        IHS {hsStateLabel(item.hits.ihs.state)} / {item.hits.ihs.score}
+                      </span>
+                    </div>
+                    <div className="screener-hit-row">
+                      {item.hits.volume.patterns.length > 0 ? (
+                        item.hits.volume.patterns.slice(0, 3).map((type) => (
+                          <small key={type} className="reason-tag positive">
+                            {patternTypeLabel(type)}
+                          </small>
+                        ))
+                      ) : (
+                        <small className="volume-empty">거래량 패턴 없음</small>
                       )}
-                    </small>
-                    <small>ATR축소 {item.hits.vcp.atrShrink ? "예" : "아니오"}</small>
-                    <small>거래량드라이업 {item.hits.vcp.volumeDryUp ? "예" : "아니오"}</small>
-                  </div>
-                )}
-                {(strategy === "VCP" || item.hits.vcp.detected) && (
-                  <ul>
-                    {item.hits.vcp.reasons.slice(0, 3).map((reason) => (
-                      <li key={`${item.code}-vcp-${reason}`}>{reason}</li>
-                    ))}
-                  </ul>
+                    </div>
+                    <ul>
+                      {item.reasons.slice(0, 3).map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                    <div className="screener-levels">
+                      <small>지지 {formatPrice(item.levels.support)}</small>
+                      <small>저항 {formatPrice(item.levels.resistance)}</small>
+                      <small>넥라인 {formatPrice(item.levels.neckline)}</small>
+                    </div>
+                  </>
                 )}
                 {item.backtestSummary && (
                   <div className="screener-backtest">

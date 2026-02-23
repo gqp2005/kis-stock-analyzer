@@ -28,6 +28,11 @@ export interface ScreenerUniverseEntry {
   market: string;
 }
 
+export interface ScreenerBenchmarkInput {
+  index: "KOSPI";
+  candles: Candle[];
+}
+
 interface PatternCandidate {
   hit: PatternHit;
   recencyScore: number;
@@ -107,15 +112,63 @@ const defaultVcpHit = (reason: string): VcpHit => ({
   detected: false,
   state: "NONE",
   score: 0,
-  resistanceR: null,
+  resistance: {
+    price: null,
+    zoneLow: null,
+    zoneHigh: null,
+    touches: 0,
+  },
   distanceToR: null,
   breakDate: null,
   contractions: [],
-  atrShrink: false,
-  volumeDryUp: false,
+  atr: {
+    atrPct20: null,
+    atrPct120: null,
+    shrink: false,
+  },
+  leadership: {
+    label: "WEAK",
+    ret63: null,
+    ret126: null,
+  },
+  pivot: {
+    label: "NONE",
+    nearHigh52: false,
+    newHigh52: false,
+    pivotReady: false,
+  },
+  volume: {
+    dryUp: false,
+    dryUpStrength: "NONE",
+    volRatioLast: null,
+    volRatioAvg10: null,
+  },
+  rs: {
+    index: "KOSPI",
+    ok: false,
+    rsVsMa90: false,
+    rsRet63: null,
+  },
+  risk: {
+    invalidLow: null,
+    entryRef: null,
+    riskPct: null,
+    riskGrade: "N/A",
+  },
+  breakout: {
+    confirmed: false,
+    rule: "close>R && volRatio>=1.5",
+  },
   trendPass: false,
-  atrPctMean20: null,
-  atrPctMean120: null,
+  quality: {
+    baseWidthOk: false,
+    depthShrinkOk: false,
+    durationOk: false,
+    baseSpanBars: null,
+    baseLenOk: false,
+    baseDepthMax: null,
+    gapCrashFlags: 0,
+  },
   reasons: [reason],
 });
 
@@ -506,8 +559,15 @@ const computeVcpConfidence = (vcp: VcpHit): number => {
   if (vcp.trendPass) confidence += 12;
   if (vcp.detected) confidence += 16;
   if (vcp.state === "CONFIRMED") confidence += 15;
-  if (vcp.atrShrink) confidence += 10;
-  if (vcp.volumeDryUp) confidence += 10;
+  if (vcp.atr.shrink) confidence += 10;
+  if (vcp.volume.dryUp) confidence += vcp.volume.dryUpStrength === "STRONG" ? 13 : 8;
+  if (vcp.rs.ok) confidence += 10;
+  if ((vcp.rs.rsRet63 ?? -1) > 0) confidence += 5;
+  if (vcp.rs.rsVsMa90) confidence += 6;
+  if (vcp.leadership.label === "STRONG") confidence += 12;
+  else if (vcp.leadership.label === "OK") confidence += 6;
+  if (vcp.pivot.pivotReady) confidence += 10;
+  if (vcp.pivot.label === "BREAKOUT_CONFIRMED") confidence += 8;
   if (vcp.contractions.length >= 4) confidence += 12;
   else if (vcp.contractions.length === 3) confidence += 8;
   else if (vcp.contractions.length === 2) confidence += 5;
@@ -517,6 +577,11 @@ const computeVcpConfidence = (vcp: VcpHit): number => {
     if (absDistance <= 0.03) confidence += 10;
     else if (absDistance <= 0.08) confidence += 6;
   }
+  if (vcp.risk.riskGrade === "HIGH") confidence -= 8;
+  else if (vcp.risk.riskGrade === "BAD") confidence -= 20;
+  if (!vcp.quality.baseLenOk) confidence -= 5;
+  if ((vcp.quality.baseDepthMax ?? 0) > 0.35) confidence -= 12;
+  if (vcp.quality.gapCrashFlags >= 2) confidence -= 15;
   return clamp(Math.round(confidence), 0, 100);
 };
 
@@ -661,6 +726,7 @@ export const analyzeScreenerRawCandidate = (
   stock: ScreenerUniverseEntry,
   candles: Candle[],
   includeBacktest: boolean,
+  benchmark: ScreenerBenchmarkInput | null = null,
 ): ScreenerStoredCandidate | null => {
   if (candles.length < 140) return null;
 
@@ -668,7 +734,7 @@ export const analyzeScreenerRawCandidate = (
   const hs = detectHeadShouldersPattern(day.candles);
   const ihs = detectInverseHeadShouldersPattern(day.candles);
   const volume = computeVolumeHit(day);
-  const vcp = detectVcpPattern(day.candles);
+  const vcp = detectVcpPattern(day.candles, benchmark);
 
   const dataAdj = getDataAdjustment(day.candles);
   const liquidityAdj = getLiquidityAdjustment(day.candles);
@@ -703,6 +769,21 @@ export const analyzeScreenerRawCandidate = (
     sharedReasons.push(
       `VCP ${vcp.state === "CONFIRMED" ? "돌파 확정" : "잠재"} 패턴(${vcp.score}점)이 포착되었습니다.`,
     );
+  }
+  if (vcp.pivot.pivotReady) {
+    sharedReasons.push("VCP 피벗 준비 조건(distance/dry-up/depth)이 충족되었습니다.");
+  }
+  if (vcp.risk.riskGrade === "HIGH") {
+    sharedReasons.push("VCP 리스크가 다소 높은 구간(10~12%)입니다.");
+  }
+  if (vcp.risk.riskGrade === "BAD") {
+    sharedReasons.push("VCP 리스크가 과도한 구간(>12%)으로 후보 우선순위를 낮췄습니다.");
+  }
+  if (vcp.quality.gapCrashFlags >= 2) {
+    sharedReasons.push("최근 급락 플래그가 누적되어 품질 필터가 보수적으로 작동했습니다.");
+  }
+  if (!vcp.rs.ok) {
+    sharedReasons.push("VCP RS 필터가 미충족이거나 지수 데이터가 부족합니다.");
   }
 
   const allReasons = [
@@ -740,7 +821,7 @@ export const analyzeScreenerRawCandidate = (
     lastDate: day.candles[day.candles.length - 1].time,
     levels: {
       support: day.levels.support,
-      resistance: vcp.resistanceR ?? day.levels.resistance,
+      resistance: vcp.resistance.price ?? day.levels.resistance,
       neckline: ihs.neckline ?? hs.neckline,
     },
     hits: {
@@ -843,7 +924,7 @@ export const buildScreenerView = (
   );
   const items =
     strategy === "VCP"
-      ? rawItems.filter((item) => item.hits.vcp.detected)
+      ? rawItems.filter((item) => item.hits.vcp.detected && item.hits.vcp.score >= 80)
       : rawItems;
 
   if (strategy === "HS") {
