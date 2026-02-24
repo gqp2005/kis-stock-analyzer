@@ -1,3 +1,8 @@
 name = "kis-stock-analyzer"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "./dist"
+
+[[kv_namespaces]]
+binding = "KIS_KV"
+id = "35990b05d18549f4b5538d5b647e9ae5"
+preview_id = "35990b05d18549f4b5538d5b647e9ae5"
