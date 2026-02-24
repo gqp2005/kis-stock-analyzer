@@ -46,6 +46,7 @@ const MAX_BATCH_SIZE = 120;
 const PARALLEL_PER_BATCH = 2;
 const ITEM_MAX_RETRIES = 2;
 const LOCK_STALE_SEC = 5 * 60;
+const LOCK_WITHOUT_PROGRESS_STALE_SEC = 90;
 const MAX_FAILED_ITEMS_KEEP = 40;
 const CHANGE_BASIS_TOP_N = 30;
 const PERSIST_HISTORY_TTL_SEC = 180 * 24 * 60 * 60; // 180d
@@ -129,10 +130,26 @@ const parseTimeMs = (iso: string | undefined): number => {
   return Number.isFinite(ts) ? ts : 0;
 };
 
-const isLockStale = (startedAt: string | undefined): boolean => {
+const lockAgeSec = (startedAt: string | undefined): number | null => {
   const startedAtMs = parseTimeMs(startedAt);
-  if (!startedAtMs) return true;
-  return Date.now() - startedAtMs > LOCK_STALE_SEC * 1000;
+  if (!startedAtMs) return null;
+  return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+};
+
+const isLockStale = (startedAt: string | undefined): boolean => {
+  const ageSec = lockAgeSec(startedAt);
+  if (ageSec == null) return true;
+  return ageSec > LOCK_STALE_SEC;
+};
+
+const shouldRecoverLockOnlyState = (
+  startedAt: string | undefined,
+  progress: RebuildProgressSnapshot | null,
+): boolean => {
+  if (progress) return false;
+  const ageSec = lockAgeSec(startedAt);
+  if (ageSec == null) return true;
+  return ageSec >= LOCK_WITHOUT_PROGRESS_STALE_SEC;
 };
 
 const loadUniverseSnapshot = async (
@@ -563,54 +580,66 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (existingLock && !isLockStale(existingLock.startedAt)) {
     const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     const progress = cachedProgress ? normalizeProgress(cachedProgress) : null;
-    return finalize(
-      json(
-        {
-          ok: true,
-          inProgress: true,
-          rebuiltAt: null,
-          universe: {
-            label: "거래대금 상위 500",
-            source: "KIS",
-            count: progress?.universeCount ?? TARGET_UNIVERSE,
-            cacheHit: true,
+    if (!shouldRecoverLockOnlyState(existingLock.startedAt, progress)) {
+      return finalize(
+        json(
+          {
+            ok: true,
+            inProgress: true,
+            rebuiltAt: null,
+            universe: {
+              label: "거래대금 상위 500",
+              source: "KIS",
+              count: progress?.universeCount ?? TARGET_UNIVERSE,
+              cacheHit: true,
+            },
+            storage: {
+              backend: persistBackend,
+              enabled: persistBackend !== "none",
+            },
+            alertOptions,
+            progress: progress
+              ? {
+                  processed: progress.cursor,
+                  total: progress.universeCount,
+                  remaining: Math.max(0, progress.universeCount - progress.cursor),
+                  batchSize: parseBatchSize(url),
+                  nextCursor: progress.cursor,
+                  failedCount: progress.failedItems.length,
+                  retryStats: progress.retryStats,
+                  lastBatch: progress.lastBatch,
+                }
+              : null,
+            summary: progress
+              ? {
+                  processedCount: progress.processedCount,
+                  candidateCount: progress.candidates.length,
+                  durationMs: null,
+                  kisCalls: metrics.kisCalls,
+                  failedCount: progress.failedItems.length,
+                  retryStats: progress.retryStats,
+                }
+              : null,
+            warnings: progress?.warnings ?? [],
+            message: "이미 rebuild가 실행 중입니다. 잠시 후 같은 엔드포인트를 다시 호출하세요.",
           },
-          storage: {
-            backend: persistBackend,
-            enabled: persistBackend !== "none",
-          },
-          alertOptions,
-          progress: progress
-            ? {
-                processed: progress.cursor,
-                total: progress.universeCount,
-                remaining: Math.max(0, progress.universeCount - progress.cursor),
-                batchSize: parseBatchSize(url),
-                nextCursor: progress.cursor,
-                failedCount: progress.failedItems.length,
-                retryStats: progress.retryStats,
-                lastBatch: progress.lastBatch,
-              }
-            : null,
-          summary: progress
-            ? {
-                processedCount: progress.processedCount,
-                candidateCount: progress.candidates.length,
-                durationMs: null,
-                kisCalls: metrics.kisCalls,
-                failedCount: progress.failedItems.length,
-                retryStats: progress.retryStats,
-              }
-            : null,
-          warnings: progress?.warnings ?? [],
-          message: "이미 rebuild가 실행 중입니다. 잠시 후 같은 엔드포인트를 다시 호출하세요.",
-        },
-        202,
-      ),
+          202,
+        ),
+      );
+    }
+
+    const ageSec = lockAgeSec(existingLock.startedAt);
+    console.log(
+      `[rebuild-screener-lock-recover] reason=lock-only-no-progress ageSec=${ageSec ?? -1}`,
     );
+    await cache.delete(lockReq);
   }
 
   if (existingLock && isLockStale(existingLock.startedAt)) {
+    const ageSec = lockAgeSec(existingLock.startedAt);
+    console.log(
+      `[rebuild-screener-lock-recover] reason=stale-lock ageSec=${ageSec ?? -1}`,
+    );
     await cache.delete(lockReq);
   }
 
@@ -618,16 +647,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let lockAcquired = false;
 
   try {
+    const lockStartedAt = nowIsoKst();
     await putCachedJson(
       cache,
       lockKey,
       {
-        startedAt: nowIsoKst(),
+        startedAt: lockStartedAt,
         ttlSec: REBUILD_LOCK_TTL_SEC,
       },
       REBUILD_LOCK_TTL_SEC,
     );
     lockAcquired = true;
+
+    const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
+    let prevProgress = cachedProgress ? normalizeProgress(cachedProgress) : null;
+    if (!prevProgress) {
+      prevProgress = createProgress(date, TARGET_UNIVERSE, [
+        "리빌드 초기화 중입니다. 잠시 후 진행률이 갱신됩니다.",
+      ]);
+      prevProgress.startedAt = lockStartedAt;
+      prevProgress.updatedAt = lockStartedAt;
+      await putCachedJson(cache, progressKey, prevProgress, SCREENER_CACHE_TTL_SEC);
+    }
 
     const batchSize = parseBatchSize(url);
 
@@ -653,10 +694,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       }
     }
 
-    const prevProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     let progress =
-      prevProgress && prevProgress.universeCount === universe.length
-        ? normalizeProgress(prevProgress)
+      prevProgress.universeCount === universe.length
+        ? prevProgress
         : createProgress(date, universe.length, [
             ...universeLoad.providerWarnings,
             ...universeLoad.snapshot.warnings,
