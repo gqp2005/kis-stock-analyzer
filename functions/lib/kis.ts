@@ -15,9 +15,14 @@ import type {
 } from "./types";
 import { parseKisDate, round2, toNumber } from "./utils";
 
-interface TokenCacheRecord {
-  token: string;
-  expiresAt: number;
+interface KisTokenRecord {
+  access_token: string;
+  expires_at: number; // epoch seconds
+}
+
+interface KisTokenLockRecord {
+  owner: string;
+  expires_at: number; // epoch seconds
 }
 
 interface KisResponseBase {
@@ -49,8 +54,12 @@ export interface KisMarketSnapshot {
   flow: FlowSignal;
 }
 
-const TOKEN_BUFFER_MS = 10 * 60 * 1000;
-let memoryToken: (TokenCacheRecord & { cacheIdentity: string }) | null = null;
+const TOKEN_REFRESH_WINDOW_SEC = 2 * 60 * 60; // 2h
+const TOKEN_LOCK_TTL_SEC = 30;
+const TOKEN_LOCK_RETRY_DELAYS_MS = [200, 400, 800];
+const KIS_TOKEN_KEY = "kis:token";
+const KIS_TOKEN_LOCK_KEY = "kis:token:lock";
+let memoryToken: (KisTokenRecord & { cacheIdentity: string }) | null = null;
 
 const normalizeBaseUrl = (raw?: string): string | null => {
   if (!raw) return null;
@@ -86,23 +95,36 @@ const parseTokenExpiry = (raw: unknown): number | null => {
   if (!m) return null;
   const [_, y, mo, d, h, mi, s] = m;
 
-  return Date.UTC(
-    Number(y),
-    Number(mo) - 1,
-    Number(d),
-    Number(h) - 9,
-    Number(mi),
-    Number(s),
-  );
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h) - 9, Number(mi), Number(s));
+  return Math.floor(ms / 1000);
 };
 
-const getTokenCacheKey = (env: Env): string => {
+const getTokenCacheIdentity = (env: Env): string => {
   const base = getBaseUrl(env);
   const app = env.KIS_APP_KEY?.slice(0, 6) || "app";
-  return `https://cache.local/kis/token?base=${encodeURIComponent(base)}&app=${encodeURIComponent(app)}`;
+  return `${base}:${app}`;
 };
 
-const fetchNewToken = async (env: Env, metrics?: RequestMetrics): Promise<TokenCacheRecord> => {
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+const normalizeTokenRecord = (raw: unknown): KisTokenRecord | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const accessToken = typeof row.access_token === "string" ? row.access_token : "";
+  const expiresAt = Number(row.expires_at);
+  if (!accessToken || !Number.isFinite(expiresAt) || expiresAt <= 0) return null;
+  return {
+    access_token: accessToken,
+    expires_at: Math.floor(expiresAt),
+  };
+};
+
+const fetchNewToken = async (env: Env, metrics?: RequestMetrics): Promise<KisTokenRecord> => {
   if (!env.KIS_APP_KEY || !env.KIS_APP_SECRET) {
     throw new Error("KIS_APP_KEY / KIS_APP_SECRET env가 필요합니다.");
   }
@@ -130,101 +152,244 @@ const fetchNewToken = async (env: Env, metrics?: RequestMetrics): Promise<TokenC
   const token = typeof data.access_token === "string" ? data.access_token : "";
   if (!token) throw new Error("KIS 토큰 발급 응답에 access_token이 없습니다.");
 
-  const now = Date.now();
+  const now = nowSec();
+  const expiresInRaw = Number(data.expires_in);
   const expiryFromSeconds =
-    typeof data.expires_in === "number" ? now + data.expires_in * 1000 : null;
+    Number.isFinite(expiresInRaw) && expiresInRaw > 0
+      ? now + Math.floor(expiresInRaw)
+      : null;
   const expiryFromDate = parseTokenExpiry(data.access_token_token_expired);
-  const expiresAt = expiryFromSeconds ?? expiryFromDate ?? now + 23 * 60 * 60 * 1000;
+  const expiresAt = expiryFromSeconds ?? expiryFromDate ?? now + 23 * 60 * 60;
 
-  return { token, expiresAt };
+  return {
+    access_token: token,
+    expires_at: expiresAt,
+  };
+};
+
+const readTokenFromKv = async (env: Env): Promise<KisTokenRecord | null> => {
+  if (!env.KIS_KV) return null;
+  const raw = await env.KIS_KV.get(KIS_TOKEN_KEY, { type: "json" });
+  return normalizeTokenRecord(raw);
+};
+
+const writeTokenToKv = async (env: Env, token: KisTokenRecord): Promise<void> => {
+  if (!env.KIS_KV) return;
+  const ttl = Math.max(60, token.expires_at - nowSec() + 3600);
+  await env.KIS_KV.put(KIS_TOKEN_KEY, JSON.stringify(token), {
+    expirationTtl: ttl,
+  });
+};
+
+const readTokenLock = async (env: Env): Promise<KisTokenLockRecord | null> => {
+  if (!env.KIS_KV) return null;
+  const raw = await env.KIS_KV.get(KIS_TOKEN_LOCK_KEY, { type: "json" });
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const owner = typeof row.owner === "string" ? row.owner : "";
+  const expiresAt = Number(row.expires_at);
+  if (!owner || !Number.isFinite(expiresAt)) return null;
+  return {
+    owner,
+    expires_at: Math.floor(expiresAt),
+  };
+};
+
+const acquireTokenLock = async (env: Env): Promise<string | null> => {
+  if (!env.KIS_KV) return null;
+
+  for (let attempt = 0; attempt <= TOKEN_LOCK_RETRY_DELAYS_MS.length; attempt += 1) {
+    const now = nowSec();
+    const existing = await readTokenLock(env);
+    if (existing && existing.expires_at > now) {
+      if (attempt < TOKEN_LOCK_RETRY_DELAYS_MS.length) {
+        await sleep(TOKEN_LOCK_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      return null;
+    }
+
+    const owner = crypto.randomUUID();
+    const record: KisTokenLockRecord = {
+      owner,
+      expires_at: now + TOKEN_LOCK_TTL_SEC,
+    };
+    await env.KIS_KV.put(KIS_TOKEN_LOCK_KEY, JSON.stringify(record), {
+      expirationTtl: TOKEN_LOCK_TTL_SEC,
+    });
+    const confirmed = await readTokenLock(env);
+    if (confirmed?.owner === owner) return owner;
+
+    if (attempt < TOKEN_LOCK_RETRY_DELAYS_MS.length) {
+      await sleep(TOKEN_LOCK_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  return null;
+};
+
+const releaseTokenLock = async (env: Env, owner: string | null): Promise<void> => {
+  if (!env.KIS_KV || !owner) return;
+  const current = await readTokenLock(env);
+  if (current?.owner === owner) {
+    await env.KIS_KV.delete(KIS_TOKEN_LOCK_KEY);
+  }
 };
 
 const getAccessToken = async (
   env: Env,
-  cache: Cache,
   forceRefresh = false,
   metrics?: RequestMetrics,
 ): Promise<string> => {
-  const cacheIdentity = getTokenCacheKey(env);
-  const now = Date.now();
+  const cacheIdentity = getTokenCacheIdentity(env);
+  const now = nowSec();
 
   if (!forceRefresh && memoryToken && memoryToken.cacheIdentity === cacheIdentity) {
-    if (memoryToken.expiresAt - now > TOKEN_BUFFER_MS) {
+    if (memoryToken.expires_at - now > TOKEN_REFRESH_WINDOW_SEC) {
       bumpMetric(metrics, "tokenCacheHits");
-      return memoryToken.token;
+      return memoryToken.access_token;
     }
   }
 
   if (!forceRefresh) {
-    const cached = await getCachedJson<TokenCacheRecord>(cache, cacheIdentity);
-    if (cached && cached.expiresAt - now > TOKEN_BUFFER_MS) {
-      memoryToken = { ...cached, cacheIdentity };
+    const fromKv = await readTokenFromKv(env);
+    if (fromKv && fromKv.expires_at - now > TOKEN_REFRESH_WINDOW_SEC) {
+      memoryToken = { ...fromKv, cacheIdentity };
       bumpMetric(metrics, "tokenCacheHits");
-      return cached.token;
+      return fromKv.access_token;
     }
   }
 
-  bumpMetric(metrics, "tokenCacheMisses");
-  bumpMetric(metrics, "tokenRefreshes");
-  const fresh = await fetchNewToken(env, metrics);
-  memoryToken = { ...fresh, cacheIdentity };
-  const ttl = Math.max(60, Math.floor((fresh.expiresAt - now) / 1000));
-  await putCachedJson(cache, cacheIdentity, fresh, ttl);
-  return fresh.token;
+  if (!env.KIS_KV) {
+    // KV 미연결 시 런타임 메모리 기반으로만 토큰을 유지한다.
+    bumpMetric(metrics, "tokenCacheMisses");
+    bumpMetric(metrics, "tokenRefreshes");
+    const fresh = await fetchNewToken(env, metrics);
+    memoryToken = { ...fresh, cacheIdentity };
+    return fresh.access_token;
+  }
+
+  const lockOwner = await acquireTokenLock(env);
+  if (!lockOwner) {
+    const latest = await readTokenFromKv(env);
+    if (latest) {
+      memoryToken = { ...latest, cacheIdentity };
+      bumpMetric(metrics, "tokenCacheHits");
+      return latest.access_token;
+    }
+    throw new Error("KIS 토큰 잠금 대기 후에도 유효 토큰을 확보하지 못했습니다.");
+  }
+
+  try {
+    const latest = await readTokenFromKv(env);
+    const remain = latest ? latest.expires_at - nowSec() : -1;
+    if (!forceRefresh && latest && remain > TOKEN_REFRESH_WINDOW_SEC) {
+      memoryToken = { ...latest, cacheIdentity };
+      bumpMetric(metrics, "tokenCacheHits");
+      return latest.access_token;
+    }
+
+    bumpMetric(metrics, "tokenCacheMisses");
+    bumpMetric(metrics, "tokenRefreshes");
+    const fresh = await fetchNewToken(env, metrics);
+    await writeTokenToKv(env, fresh);
+    memoryToken = { ...fresh, cacheIdentity };
+    return fresh.access_token;
+  } finally {
+    await releaseTokenLock(env, lockOwner);
+  }
 };
 
-const isTokenRelatedError = (data: KisResponseBase): boolean => {
-  const msg = `${data.msg_cd} ${data.msg1}`.toLowerCase();
+const isTokenRelatedError = (data: unknown): boolean => {
+  if (!data || typeof data !== "object") return false;
+  const row = data as Partial<KisResponseBase>;
+  const msg = `${row.msg_cd ?? ""} ${row.msg1 ?? ""}`.toLowerCase();
   return msg.includes("token") || msg.includes("토큰") || msg.includes("authorization");
+};
+
+interface KisFetchOptions {
+  method?: "GET" | "POST";
+  trId?: string;
+  params?: Record<string, string>;
+  body?: unknown;
+  headers?: Record<string, string>;
+  metrics?: RequestMetrics;
+}
+
+const kisFetch = async <T extends KisResponseBase>(
+  env: Env,
+  path: string,
+  options: KisFetchOptions,
+): Promise<{ response: Response; data: T }> => {
+  const baseUrl = getBaseUrl(env);
+  const method = options.method ?? "GET";
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = await getAccessToken(env, attempt === 1, options.metrics);
+    const url = new URL(`${baseUrl}${path}`);
+    for (const [key, value] of Object.entries(options.params ?? {})) {
+      url.searchParams.set(key, value);
+    }
+
+    console.log(`[kis-call] ${path}${options.trId ? ` tr_id=${options.trId}` : ""}`);
+    bumpMetric(options.metrics, "kisCalls");
+    const response = await fetch(url.toString(), {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        appkey: env.KIS_APP_KEY,
+        appsecret: env.KIS_APP_SECRET,
+        custtype: "P",
+        "content-type": "application/json",
+        ...(options.trId ? { tr_id: options.trId } : {}),
+        ...(options.headers ?? {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = {
+        rt_cd: "1",
+        msg_cd: `HTTP_${response.status}`,
+        msg1: "KIS 응답(JSON 아님)",
+      } satisfies KisResponseBase;
+    }
+
+    const tokenIssue = response.status === 401 || isTokenRelatedError(data);
+    if (attempt === 0 && tokenIssue) {
+      continue;
+    }
+
+    return {
+      response,
+      data: data as T,
+    };
+  }
+
+  throw new Error("KIS API 호출 실패: 토큰 재발급 후에도 요청이 실패했습니다.");
 };
 
 const kisGet = async <T extends KisResponseBase>(
   env: Env,
-  cache: Cache,
+  _cache: Cache,
   path: string,
   trId: string,
   params: Record<string, string>,
   metrics?: RequestMetrics,
 ): Promise<T> => {
-  const baseUrl = getBaseUrl(env);
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const token = await getAccessToken(env, cache, attempt === 1, metrics);
-    const url = new URL(`${baseUrl}${path}`);
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value);
-    }
-
-    console.log(`[kis-call] ${path} tr_id=${trId}`);
-    bumpMetric(metrics, "kisCalls");
-    const response = await fetch(url.toString(), {
-      headers: {
-        authorization: `Bearer ${token}`,
-        appkey: env.KIS_APP_KEY,
-        appsecret: env.KIS_APP_SECRET,
-        tr_id: trId,
-        custtype: "P",
-        "content-type": "application/json",
-      },
-    });
-
-    const json = (await response.json()) as T;
-    if (response.status === 401 && attempt === 0) {
-      continue;
-    }
-
-    if (json.rt_cd === "0") {
-      return json;
-    }
-
-    if (attempt === 0 && isTokenRelatedError(json)) {
-      continue;
-    }
-
-    throw new Error(`KIS API 오류(${json.msg_cd}): ${json.msg1}`);
+  const { data: json } = await kisFetch<T>(env, path, {
+    method: "GET",
+    trId,
+    params,
+    metrics,
+  });
+  if (json.rt_cd === "0") {
+    return json;
   }
-
-  throw new Error("KIS API 호출 실패: 토큰 재발급 후에도 요청이 실패했습니다.");
+  throw new Error(`KIS API 오류(${json.msg_cd}): ${json.msg1}`);
 };
 
 const toNullableNumber = (value: unknown): number | null => {

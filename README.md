@@ -94,6 +94,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `KIS_APP_SECRET` (필수)
 - `KIS_BASE_URL` (선택, 기본: 실전 URL)
 - `KIS_ENV` (선택, `real|demo`)
+- `KIS_KV` (선택, KIS access_token 저장 KV 바인딩명)
 - `RATE_LIMIT_MAX_REQUESTS` (선택, 기본 `120`)
 - `RATE_LIMIT_WINDOW_SEC` (선택, 기본 `60`)
 - `ADMIN_TOKEN` (선택, `/api/admin/rebuild-screener` 보호용)
@@ -106,6 +107,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - 키/시크릿은 반드시 Functions env에서만 읽습니다.
 - 브라우저 코드에는 노출하지 않습니다.
 - `KIS_BASE_URL`은 KIS 도메인(`openapi*.koreainvestment.com`)만 사용하세요. 잘못된 값이면 서버가 기본 KIS URL로 폴백합니다.
+- `KIS_KV` 바인딩이 있으면 KIS 토큰을 `kis:token` 키에 저장/재사용하며, 만료 2시간 전 자동 갱신합니다.
 - `SCREENER_KV`/`SCREENER_DB`는 문자열 env가 아니라 Cloudflare Pages의 Binding으로 연결합니다.
   - 둘 다 없으면 스크리너는 Cache API만 사용하며, 캐시 소실 시 히스토리/마지막 성공 복원이 제한됩니다.
 - 자동 부트스트랩 동작:
@@ -129,6 +131,7 @@ npm run cf:dev
 3. Build output: `dist`
 4. Environment variables: `KIS_APP_KEY`, `KIS_APP_SECRET` (필수), `ADMIN_TOKEN`(관리자 API 사용 시) 설정
 5. (선택) Bindings:
+   - KV Namespace 바인딩명: `KIS_KV` (KIS 토큰 재사용/갱신용)
    - KV Namespace 바인딩명: `SCREENER_KV`
    - D1 Database 바인딩명: `SCREENER_DB`
    - 권장: 최소 하나는 연결해 스크리너 snapshot/히스토리 영속 보관
@@ -374,6 +377,24 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
   "timestamp": "ISO-8601"
 }
 ```
+
+## KIS 토큰 런타임 관리
+
+- 토큰은 빌드/커밋 시 발급하지 않고, 런타임에서만 처리합니다.
+- KV 바인딩 `KIS_KV` 사용 시:
+  - 토큰 key: `kis:token`
+  - lock key: `kis:token:lock` (TTL 30초)
+  - 저장 포맷: `{ access_token, expires_at }` (`expires_at`는 epoch seconds)
+- 갱신 규칙:
+  - `expires_at - now <= 7200초` 이면 `/oauth2/tokenP` 재발급 후 KV 갱신
+  - `> 7200초` 이면 기존 토큰 재사용
+  - KIS가 “기존 토큰 재반환”해도 만료시간과 함께 KV를 갱신
+- 동시성:
+  - lock 충돌 시 200/400/800ms 백오프 재시도
+  - 실패 시 KV 토큰을 다시 읽어 사용(유효 토큰이 없으면 오류)
+- API 호출:
+  - `kisFetch`가 항상 `Authorization: Bearer <token>` 헤더를 적용
+  - 401/토큰오류 응답이면 1회 강제 갱신 후 재시도(무한루프 없음)
 
 ## 데이터 수집 로직
 

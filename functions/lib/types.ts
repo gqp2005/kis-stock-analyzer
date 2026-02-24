@@ -6,6 +6,7 @@ export interface Env {
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
   ADMIN_TOKEN?: string;
+  KIS_KV?: KVNamespace;
   SCREENER_AUTO_BOOTSTRAP?: string;
   SCREENER_AUTO_BOOTSTRAP_BATCH?: string;
   SCREENER_KV?: KVNamespace;
