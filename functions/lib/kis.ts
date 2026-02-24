@@ -55,7 +55,8 @@ export interface KisMarketSnapshot {
 }
 
 const TOKEN_REFRESH_WINDOW_SEC = 2 * 60 * 60; // 2h
-const TOKEN_LOCK_TTL_SEC = 30;
+const TOKEN_LOCK_EXPIRE_SEC = 30;
+const TOKEN_LOCK_KV_TTL_SEC = 60; // Cloudflare KV minimum expirationTtl
 const TOKEN_LOCK_RETRY_DELAYS_MS = [200, 400, 800];
 const KIS_TOKEN_KEY = "kis:token";
 const KIS_TOKEN_LOCK_KEY = "kis:token:lock";
@@ -212,10 +213,10 @@ const acquireTokenLock = async (env: Env): Promise<string | null> => {
     const owner = crypto.randomUUID();
     const record: KisTokenLockRecord = {
       owner,
-      expires_at: now + TOKEN_LOCK_TTL_SEC,
+      expires_at: now + TOKEN_LOCK_EXPIRE_SEC,
     };
     await env.KIS_KV.put(KIS_TOKEN_LOCK_KEY, JSON.stringify(record), {
-      expirationTtl: TOKEN_LOCK_TTL_SEC,
+      expirationTtl: TOKEN_LOCK_KV_TTL_SEC,
     });
     const confirmed = await readTokenLock(env);
     if (confirmed?.owner === owner) return owner;
