@@ -18,6 +18,29 @@ const formatDateTime = (value: string | null | undefined): string => {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const compactText = (raw: string, max = 180): string =>
+  raw.replace(/\s+/g, " ").trim().slice(0, max);
+
+const readJsonBody = async <T,>(response: Response, endpoint: string): Promise<T> => {
+  const raw = await response.text();
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    const preview = compactText(raw);
+    throw new Error(
+      `API가 JSON이 아닌 응답을 반환했습니다 (${response.status}) [${endpoint}] ${preview || "empty body"}`,
+    );
+  }
+};
+
+const pickApiError = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== "object") return fallback;
+  const record = payload as Record<string, unknown>;
+  const error = typeof record.error === "string" ? record.error : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  return error || message || fallback;
+};
+
 const toPercent = (processed: number, total: number): number => {
   if (!Number.isFinite(processed) || !Number.isFinite(total) || total <= 0) return 0;
   return Math.max(0, Math.min(100, (processed / total) * 100));
@@ -44,19 +67,26 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
     setLoading(true);
     setError("");
     try {
-      const [statusResp, historyResp] = await Promise.all([
-        fetch(`${apiBase}/api/admin/rebuild-screener/status?token=${encodeURIComponent(trimmed)}`),
-        fetch(
-          `${apiBase}/api/admin/rebuild-screener/history?token=${encodeURIComponent(trimmed)}&limit=${historyLimit}`,
-        ),
-      ]);
-      const statusJson = (await statusResp.json()) as AdminRebuildStatusResponse | { error: string };
-      const historyJson = (await historyResp.json()) as AdminRebuildHistoryResponse | { error: string };
+      const statusUrl = `${apiBase}/api/admin/rebuild-screener/status?token=${encodeURIComponent(trimmed)}`;
+      const historyUrl = `${apiBase}/api/admin/rebuild-screener/history?token=${encodeURIComponent(trimmed)}&limit=${historyLimit}`;
+      const [statusResp, historyResp] = await Promise.all([fetch(statusUrl), fetch(historyUrl)]);
+      const statusJson = await readJsonBody<AdminRebuildStatusResponse | { error?: string; message?: string }>(
+        statusResp,
+        "/api/admin/rebuild-screener/status",
+      );
+      const historyJson = await readJsonBody<AdminRebuildHistoryResponse | { error?: string; message?: string }>(
+        historyResp,
+        "/api/admin/rebuild-screener/history",
+      );
       if (!statusResp.ok) {
-        throw new Error("error" in statusJson ? statusJson.error : "상태 조회 실패");
+        throw new Error(
+          pickApiError(statusJson, `상태 조회 실패 (HTTP ${statusResp.status})`),
+        );
       }
       if (!historyResp.ok) {
-        throw new Error("error" in historyJson ? historyJson.error : "히스토리 조회 실패");
+        throw new Error(
+          pickApiError(historyJson, `히스토리 조회 실패 (HTTP ${historyResp.status})`),
+        );
       }
       setStatusData(statusJson as AdminRebuildStatusResponse);
       setHistoryData(historyJson as AdminRebuildHistoryResponse);
@@ -81,19 +111,19 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
     setRebuildLoading(true);
     setError("");
     try {
+      const rebuildUrl = `${apiBase}/api/admin/rebuild-screener?batch=${batchSize}&token=${encodeURIComponent(trimmed)}`;
       for (let attempt = 1; attempt <= REBUILD_MAX_ATTEMPTS; attempt += 1) {
-        const response = await fetch(
-          `${apiBase}/api/admin/rebuild-screener?batch=${batchSize}&token=${encodeURIComponent(trimmed)}`,
-          { method: "POST" },
-        );
-        const body = (await response.json()) as {
+        const response = await fetch(rebuildUrl, { method: "POST" });
+        const body = await readJsonBody<{
           ok?: boolean;
           inProgress?: boolean;
           error?: string;
           message?: string;
-        };
+        }>(response, "/api/admin/rebuild-screener");
         if (!response.ok || body.ok === false) {
-          throw new Error(body.error ?? body.message ?? "rebuild 실행 실패");
+          throw new Error(
+            pickApiError(body, `rebuild 실행 실패 (HTTP ${response.status})`),
+          );
         }
 
         await loadDashboard();
