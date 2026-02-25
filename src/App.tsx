@@ -276,7 +276,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
   const [pageMode, setPageMode] = useState<"analysis" | "screener" | "admin">("analysis");
-  const [query, setQuery] = useState("005930");
+  const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -386,11 +386,6 @@ export default function App() {
     setShowSuggestions(false);
     fetchDashboard(code, days, backtestHoldBars, backtestSignal);
   };
-
-  useEffect(() => {
-    fetchDashboard("005930", 180, 10, "GOOD");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {

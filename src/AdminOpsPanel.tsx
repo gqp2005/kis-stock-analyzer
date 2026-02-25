@@ -5,12 +5,18 @@ interface AdminOpsPanelProps {
   apiBase: string;
 }
 
+const REBUILD_POLL_INTERVAL_MS = 1500;
+const REBUILD_MAX_ATTEMPTS = 180;
+
 const formatDateTime = (value: string | null | undefined): string => {
   if (!value) return "-";
   const dt = new Date(value);
   if (!Number.isFinite(dt.getTime())) return value;
   return dt.toLocaleString("ko-KR");
 };
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const toPercent = (processed: number, total: number): number => {
   if (!Number.isFinite(processed) || !Number.isFinite(total) || total <= 0) return 0;
@@ -75,15 +81,33 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
     setRebuildLoading(true);
     setError("");
     try {
-      const response = await fetch(
-        `${apiBase}/api/admin/rebuild-screener?batch=${batchSize}&token=${encodeURIComponent(trimmed)}`,
-        { method: "POST" },
-      );
-      const body = (await response.json()) as { ok?: boolean; error?: string; message?: string };
-      if (!response.ok || body.ok === false) {
-        throw new Error(body.error ?? body.message ?? "rebuild 실행 실패");
+      for (let attempt = 1; attempt <= REBUILD_MAX_ATTEMPTS; attempt += 1) {
+        const response = await fetch(
+          `${apiBase}/api/admin/rebuild-screener?batch=${batchSize}&token=${encodeURIComponent(trimmed)}`,
+          { method: "POST" },
+        );
+        const body = (await response.json()) as {
+          ok?: boolean;
+          inProgress?: boolean;
+          error?: string;
+          message?: string;
+        };
+        if (!response.ok || body.ok === false) {
+          throw new Error(body.error ?? body.message ?? "rebuild 실행 실패");
+        }
+
+        await loadDashboard();
+
+        if (body.inProgress !== true) {
+          return;
+        }
+        if (attempt >= REBUILD_MAX_ATTEMPTS) {
+          throw new Error(
+            `rebuild가 ${REBUILD_MAX_ATTEMPTS}회 시도 내 완료되지 않았습니다. 잠시 후 다시 실행하세요.`,
+          );
+        }
+        await sleep(REBUILD_POLL_INTERVAL_MS);
       }
-      await loadDashboard();
     } catch (e) {
       setError(e instanceof Error ? e.message : "rebuild 실행 실패");
     } finally {
@@ -299,4 +323,3 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
     </section>
   );
 }
-
