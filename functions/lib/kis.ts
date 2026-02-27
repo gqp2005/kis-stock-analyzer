@@ -58,6 +58,8 @@ const TOKEN_REFRESH_WINDOW_SEC = 2 * 60 * 60; // 2h
 const TOKEN_LOCK_EXPIRE_SEC = 30;
 const TOKEN_LOCK_KV_TTL_SEC = 60; // Cloudflare KV minimum expirationTtl
 const TOKEN_LOCK_RETRY_DELAYS_MS = [200, 400, 800];
+const KIS_HTTP_TIMEOUT_MS = 15_000;
+const KIS_HTTP_RETRY_DELAYS_MS = [300];
 const KIS_TOKEN_KEY = "kis:token";
 const KIS_TOKEN_LOCK_KEY = "kis:token:lock";
 let memoryToken: (KisTokenRecord & { cacheIdentity: string }) | null = null;
@@ -113,6 +115,31 @@ const sleep = (ms: number): Promise<void> =>
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : "unknown error";
+
+const fetchWithTimeout = async (
+  input: string,
+  init: RequestInit,
+  timeoutMs = KIS_HTTP_TIMEOUT_MS,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`KIS HTTP timeout (${timeoutMs}ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const normalizeTokenRecord = (raw: unknown): KisTokenRecord | null => {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as Record<string, unknown>;
@@ -132,7 +159,7 @@ const fetchNewToken = async (env: Env, metrics?: RequestMetrics): Promise<KisTok
 
   console.log("[kis-call] oauth2/tokenP");
   bumpMetric(metrics, "kisCalls");
-  const response = await fetch(`${getBaseUrl(env)}/oauth2/tokenP`, {
+  const response = await fetchWithTimeout(`${getBaseUrl(env)}/oauth2/tokenP`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -334,19 +361,28 @@ const kisFetch = async <T extends KisResponseBase>(
 
     console.log(`[kis-call] ${path}${options.trId ? ` tr_id=${options.trId}` : ""}`);
     bumpMetric(options.metrics, "kisCalls");
-    const response = await fetch(url.toString(), {
-      method,
-      headers: {
-        authorization: `Bearer ${token}`,
-        appkey: env.KIS_APP_KEY,
-        appsecret: env.KIS_APP_SECRET,
-        custtype: "P",
-        "content-type": "application/json",
-        ...(options.trId ? { tr_id: options.trId } : {}),
-        ...(options.headers ?? {}),
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(url.toString(), {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          appkey: env.KIS_APP_KEY,
+          appsecret: env.KIS_APP_SECRET,
+          custtype: "P",
+          "content-type": "application/json",
+          ...(options.trId ? { tr_id: options.trId } : {}),
+          ...(options.headers ?? {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+    } catch (error) {
+      if (attempt < KIS_HTTP_RETRY_DELAYS_MS.length) {
+        await sleep(KIS_HTTP_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw new Error(`KIS HTTP 요청 실패: ${errorMessage(error)}`);
+    }
 
     let data: unknown;
     try {

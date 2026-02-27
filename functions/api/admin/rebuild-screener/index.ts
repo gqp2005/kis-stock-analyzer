@@ -47,6 +47,8 @@ const PARALLEL_PER_BATCH = 2;
 const ITEM_MAX_RETRIES = 2;
 const LOCK_STALE_SEC = 5 * 60;
 const LOCK_WITHOUT_PROGRESS_STALE_SEC = 90;
+const PROGRESS_STALE_SEC = 180;
+const PROGRESS_STALE_MIN_LOCK_AGE_SEC = 60;
 const MAX_FAILED_ITEMS_KEEP = 40;
 const CHANGE_BASIS_TOP_N = 30;
 const PERSIST_HISTORY_TTL_SEC = 180 * 24 * 60 * 60; // 180d
@@ -150,6 +152,20 @@ const shouldRecoverLockOnlyState = (
   const ageSec = lockAgeSec(startedAt);
   if (ageSec == null) return true;
   return ageSec >= LOCK_WITHOUT_PROGRESS_STALE_SEC;
+};
+
+const isProgressStale = (
+  progress: RebuildProgressSnapshot | null,
+  lockStartedAt: string | undefined,
+): boolean => {
+  if (!progress) return false;
+  const ageSec = lockAgeSec(lockStartedAt);
+  if (ageSec != null && ageSec < PROGRESS_STALE_MIN_LOCK_AGE_SEC) {
+    return false;
+  }
+  const updatedAtMs = parseTimeMs(progress.updatedAt);
+  if (!updatedAtMs) return true;
+  return Date.now() - updatedAtMs >= PROGRESS_STALE_SEC * 1000;
 };
 
 const loadUniverseSnapshot = async (
@@ -580,7 +596,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (existingLock && !isLockStale(existingLock.startedAt)) {
     const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     const progress = cachedProgress ? normalizeProgress(cachedProgress) : null;
-    if (!shouldRecoverLockOnlyState(existingLock.startedAt, progress)) {
+    const recoverLockOnly = shouldRecoverLockOnlyState(existingLock.startedAt, progress);
+    const recoverStaleProgress =
+      !recoverLockOnly && isProgressStale(progress, existingLock.startedAt);
+
+    if (!recoverLockOnly && !recoverStaleProgress) {
       return finalize(
         json(
           {
@@ -629,9 +649,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     const ageSec = lockAgeSec(existingLock.startedAt);
-    console.log(
-      `[rebuild-screener-lock-recover] reason=lock-only-no-progress ageSec=${ageSec ?? -1}`,
-    );
+    const recoverReason = recoverLockOnly ? "lock-only-no-progress" : "stale-progress";
+    console.log(`[rebuild-screener-lock-recover] reason=${recoverReason} ageSec=${ageSec ?? -1}`);
     await cache.delete(lockReq);
   }
 
