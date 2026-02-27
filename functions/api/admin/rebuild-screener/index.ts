@@ -43,12 +43,13 @@ const TARGET_UNIVERSE = 500;
 const TOP_N_STORE = 50;
 const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 120;
-const PARALLEL_PER_BATCH = 2;
-const ITEM_MAX_RETRIES = 2;
+const ITEM_MAX_RETRIES = 0;
 const LOCK_STALE_SEC = 5 * 60;
 const LOCK_WITHOUT_PROGRESS_STALE_SEC = 90;
 const PROGRESS_STALE_SEC = 180;
 const PROGRESS_STALE_MIN_LOCK_AGE_SEC = 60;
+const REBUILD_WORK_BUDGET_MS = 20_000;
+const REBUILD_WORK_GUARD_MS = 2_000;
 const MAX_FAILED_ITEMS_KEEP = 40;
 const CHANGE_BASIS_TOP_N = 30;
 const PERSIST_HISTORY_TTL_SEC = 180 * 24 * 60 * 60; // 180d
@@ -68,29 +69,6 @@ const sortByAllScore = <T extends { scoring: { all: { score: number; confidence:
       b.scoring.all.score - a.scoring.all.score ||
       b.scoring.all.confidence - a.scoring.all.confidence,
   );
-
-const mapLimit = async <T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> => {
-  if (items.length === 0) return [];
-
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (true) {
-      const current = cursor;
-      cursor += 1;
-      if (current >= items.length) return;
-      results[current] = await mapper(items[current], current);
-    }
-  });
-
-  await Promise.all(workers);
-  return results;
-};
 
 const buildUnauthorized = (request: Request): Response =>
   errorJson(401, "UNAUTHORIZED", "유효한 admin token이 필요합니다.", request);
@@ -726,10 +704,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           ]);
 
     const start = Math.max(0, Math.min(progress.cursor, universe.length));
-    const endExclusive = Math.min(universe.length, start + batchSize);
-    const batchItems = universe.slice(start, endExclusive);
+    const targetEndExclusive = Math.min(universe.length, start + batchSize);
+    const batchItems = universe.slice(start, targetEndExclusive);
 
-    const batchResults = await mapLimit(batchItems, PARALLEL_PER_BATCH, async (entry) => {
+    const processEntry = async (entry: (typeof batchItems)[number]) => {
       let attempt = 0;
       while (attempt <= ITEM_MAX_RETRIES) {
         try {
@@ -784,10 +762,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         retries: ITEM_MAX_RETRIES,
         reason: "unknown failure",
       };
-    });
+    };
+
+    const batchResults: Array<{
+      entry: (typeof batchItems)[number];
+      result: Awaited<ReturnType<typeof processEntry>>;
+    }> = [];
+    const workDeadline = startedAtMs + REBUILD_WORK_BUDGET_MS;
+
+    for (const entry of batchItems) {
+      const now = Date.now();
+      if (now >= workDeadline - REBUILD_WORK_GUARD_MS) {
+        break;
+      }
+      const result = await processEntry(entry);
+      batchResults.push({ entry, result });
+    }
+
+    const endExclusive = start + batchResults.length;
+    const deferredCount = Math.max(0, batchItems.length - batchResults.length);
 
     for (let batchIndex = 0; batchIndex < batchResults.length; batchIndex += 1) {
-      const result = batchResults[batchIndex];
+      const { entry, result } = batchResults[batchIndex];
       if (result.retries > 0) {
         progress.retryStats.totalRetries += result.retries;
         progress.retryStats.retriedSymbols += 1;
@@ -805,18 +801,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       } else {
         progress.ohlcvFailures += 1;
         if (progress.failedItems.length < MAX_FAILED_ITEMS_KEEP) {
-          const sourceEntry = batchItems[batchIndex];
-          if (sourceEntry) {
-            const failedItem: RebuildFailureItem = {
-              code: sourceEntry.code,
-              name: sourceEntry.name,
-              market: sourceEntry.market,
-              reason: result.reason || "OHLCV 조회 실패",
-              retries: result.retries,
-              at: nowIsoKst(),
-            };
-            progress.failedItems.push(failedItem);
-          }
+          const failedItem: RebuildFailureItem = {
+            code: entry.code,
+            name: entry.name,
+            market: entry.market,
+            reason: result.reason || "OHLCV 조회 실패",
+            retries: result.retries,
+            at: nowIsoKst(),
+          };
+          progress.failedItems.push(failedItem);
         }
       }
     }
@@ -840,6 +833,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         : "",
       progress.retryStats.retriedSymbols > 0
         ? `재시도 수행 ${progress.retryStats.retriedSymbols}종목 / 총 ${progress.retryStats.totalRetries}회`
+        : "",
+      deferredCount > 0
+        ? `요청 시간 예산(${Math.floor(REBUILD_WORK_BUDGET_MS / 1000)}s)으로 ${deferredCount}종목을 다음 호출로 이월`
         : "",
     ].filter((msg) => msg.length > 0));
 
