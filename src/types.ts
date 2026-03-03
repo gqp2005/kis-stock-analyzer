@@ -132,7 +132,13 @@ export interface FlowSignal {
 }
 
 export type OverlayLineGroup = "level" | "zone";
-export type OverlaySegmentKind = "trendlineUp" | "trendlineDown" | "channelLow" | "channelHigh";
+export type OverlaySegmentKind =
+  | "trendlineUp"
+  | "trendlineDown"
+  | "channelLow"
+  | "channelHigh"
+  | "fanlineUp"
+  | "fanlineDown";
 export type OverlayMarkerType = VolumePatternType | "VCPPeak" | "VCPTrough" | "VCPBreakout";
 
 export interface OverlayPriceLine {

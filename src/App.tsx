@@ -296,6 +296,7 @@ export default function App() {
   const [showLevels, setShowLevels] = useState(true);
   const [showTrendlines, setShowTrendlines] = useState(false);
   const [showChannels, setShowChannels] = useState(false);
+  const [showFanLines, setShowFanLines] = useState(false);
   const [showZones, setShowZones] = useState(false);
   const [showMarkers, setShowMarkers] = useState(true);
   const [showAdvancedPatternMarkers, setShowAdvancedPatternMarkers] = useState(false);
@@ -359,6 +360,36 @@ export default function App() {
   ) => {
     void fetchAnalysis(value, lookback);
     void fetchBacktest(value, lookback, holdBars, signalOverall);
+  };
+
+  const applyDrawingPreset = (preset: "basic" | "detail") => {
+    if (preset === "basic") {
+      setShowMa1(true);
+      setShowMa2(true);
+      setShowMa3(false);
+      setShowLevels(true);
+      setShowTrendlines(false);
+      setShowChannels(false);
+      setShowFanLines(false);
+      setShowZones(false);
+      setShowMarkers(true);
+      setShowAdvancedPatternMarkers(false);
+      setShowPatternReferenceLevel(true);
+      setHighlightSelectedCandle(true);
+      return;
+    }
+    setShowMa1(true);
+    setShowMa2(true);
+    setShowMa3(true);
+    setShowLevels(true);
+    setShowTrendlines(true);
+    setShowChannels(true);
+    setShowFanLines(true);
+    setShowZones(true);
+    setShowMarkers(true);
+    setShowAdvancedPatternMarkers(true);
+    setShowPatternReferenceLevel(true);
+    setHighlightSelectedCandle(true);
   };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -575,6 +606,7 @@ export default function App() {
     const segmentVisible = overlaySegments.filter((segment) => {
       if (segment.kind === "trendlineUp" || segment.kind === "trendlineDown") return showTrendlines;
       if (segment.kind === "channelLow" || segment.kind === "channelHigh") return showChannels;
+      if (segment.kind === "fanlineUp" || segment.kind === "fanlineDown") return showFanLines;
       return false;
     });
     for (const segment of segmentVisible) {
@@ -585,11 +617,20 @@ export default function App() {
             ? "#ff5a76"
             : segment.kind === "channelLow"
               ? "#4db5ff"
-              : "#9f7aea";
+              : segment.kind === "channelHigh"
+                ? "#9f7aea"
+                : segment.kind === "fanlineUp"
+                  ? "#7ee787"
+                  : "#ff9db4";
       const segmentSeries = mainChart.addLineSeries({
         color,
-        lineWidth: 2,
-        lineStyle: segment.kind.startsWith("channel") ? LineStyle.Dotted : LineStyle.Solid,
+        lineWidth: segment.score >= 75 ? 2 : 1,
+        lineStyle:
+          segment.kind.startsWith("channel")
+            ? LineStyle.Dotted
+            : segment.kind.startsWith("fanline")
+              ? LineStyle.Dashed
+              : LineStyle.Solid,
         lastValueVisible: false,
         priceLineVisible: false,
       });
@@ -797,6 +838,7 @@ export default function App() {
     showLevels,
     showTrendlines,
     showChannels,
+    showFanLines,
     showZones,
     showMarkers,
     showAdvancedPatternMarkers,
@@ -1454,6 +1496,15 @@ export default function App() {
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
                   {maInfo && (
                     <div className="indicator-controls">
+                      <div className="drawing-presets">
+                        <span>자동 작도 프리셋</span>
+                        <button type="button" className="preset-btn" onClick={() => applyDrawingPreset("basic")}>
+                          기본형
+                        </button>
+                        <button type="button" className="preset-btn" onClick={() => applyDrawingPreset("detail")}>
+                          상세형
+                        </button>
+                      </div>
                       <>
                         <label>
                           <input
@@ -1488,7 +1539,7 @@ export default function App() {
                           checked={showLevels}
                           onChange={(e) => setShowLevels(e.target.checked)}
                         />
-                        Levels
+                        레벨
                       </label>
                       <label>
                         <input
@@ -1496,7 +1547,7 @@ export default function App() {
                           checked={showTrendlines}
                           onChange={(e) => setShowTrendlines(e.target.checked)}
                         />
-                        Trendlines
+                        추세선
                       </label>
                       <label>
                         <input
@@ -1504,7 +1555,15 @@ export default function App() {
                           checked={showChannels}
                           onChange={(e) => setShowChannels(e.target.checked)}
                         />
-                        Channels
+                        채널
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={showFanLines}
+                          onChange={(e) => setShowFanLines(e.target.checked)}
+                        />
+                        팬 라인
                       </label>
                       <label>
                         <input
@@ -1512,7 +1571,7 @@ export default function App() {
                           checked={showZones}
                           onChange={(e) => setShowZones(e.target.checked)}
                         />
-                        Zones
+                        존
                       </label>
                       <label>
                         <input
@@ -1520,7 +1579,7 @@ export default function App() {
                           checked={showMarkers}
                           onChange={(e) => setShowMarkers(e.target.checked)}
                         />
-                        Markers
+                        마커
                       </label>
                       {activeTf === "day" && (
                         <label>
@@ -1539,7 +1598,7 @@ export default function App() {
                             checked={showPatternReferenceLevel}
                             onChange={(e) => setShowPatternReferenceLevel(e.target.checked)}
                           />
-                          Show pattern reference level
+                          패턴 기준선 표시
                         </label>
                       )}
                       {activeTf === "day" && (
@@ -1549,7 +1608,7 @@ export default function App() {
                             checked={highlightSelectedCandle}
                             onChange={(e) => setHighlightSelectedCandle(e.target.checked)}
                           />
-                          Highlight selected candle
+                          선택 캔들 강조
                         </label>
                       )}
                     </div>

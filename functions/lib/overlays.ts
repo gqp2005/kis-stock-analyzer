@@ -40,8 +40,19 @@ interface ConfluenceCandidate {
   reason: string;
 }
 
+interface SegmentPick {
+  segment: OverlaySegment;
+  touches: number;
+  breaks: number;
+  lookback: number;
+}
+
 const PIVOT_L = 3;
 const LEVEL_CLUSTER_PCT = 0.025; // +-2.5%
+const MULTI_CHANNEL_WINDOWS = [240, 120, 60];
+const MIN_TREND_SCORE = 45;
+const MIN_CHANNEL_SCORE = 48;
+const MIN_FAN_SCORE = 50;
 
 const MARKER_STYLE: Record<
   VolumePatternType,
@@ -230,27 +241,169 @@ const bestLineFromPivots = (
   return best;
 };
 
-const makeSegmentFromLine = (
+const linePriceAt = (line: LineModel, index: number): number => line.slope * index + line.intercept;
+
+const reliabilityRef = (kind: OverlaySegment["kind"]): "support" | "resistance" =>
+  kind === "trendlineDown" || kind === "channelHigh" || kind === "fanlineDown"
+    ? "resistance"
+    : "support";
+
+const evaluateLineReliability = (
+  candles: Candle[],
+  line: LineModel,
+  kind: OverlaySegment["kind"],
+  fromIndex: number,
+  toIndex: number,
+): { score: number; touches: number; breaks: number } => {
+  const ref = reliabilityRef(kind);
+  const safeFrom = clamp(fromIndex, 0, candles.length - 1);
+  const safeTo = clamp(toIndex, safeFrom, candles.length - 1);
+  const windowCandles = candles.slice(safeFrom, safeTo + 1);
+  const rangeAvg = Math.max(
+    average(windowCandles.map((candle) => candle.high - candle.low)),
+    candles[safeTo]?.close * 0.0035 || 1,
+    1,
+  );
+  const touchTol = Math.max(rangeAvg * 0.35, candles[safeTo]?.close * 0.0038 || 1, 1);
+  const breakTol = Math.max(rangeAvg * 0.6, candles[safeTo]?.close * 0.007 || 1, 1);
+  const recentFrom = Math.max(safeFrom, safeTo - Math.floor((safeTo - safeFrom + 1) / 4));
+
+  let touches = 0;
+  let recentTouches = 0;
+  let breaks = 0;
+  let previousBreached = false;
+
+  for (let index = safeFrom; index <= safeTo; index += 1) {
+    const candle = candles[index];
+    const lineValue = linePriceAt(line, index);
+    const touchValue = ref === "support" ? candle.low : candle.high;
+    if (Math.abs(touchValue - lineValue) <= touchTol) {
+      touches += 1;
+      if (index >= recentFrom) recentTouches += 1;
+    }
+
+    const breached =
+      ref === "support"
+        ? candle.close < lineValue - breakTol
+        : candle.close > lineValue + breakTol;
+    if (breached && !previousBreached) breaks += 1;
+    previousBreached = breached;
+  }
+
+  const r2Score = Math.round(clamp(line.r2, 0, 1) * 35);
+  const touchScore = Math.min(44, touches * 7);
+  const recentBonus = Math.min(12, recentTouches * 4);
+  const breakPenalty = Math.min(45, breaks * 11);
+  const slopeBonus = Math.abs(line.slope) > 0.00001 ? 6 : 0;
+  const score = clamp(18 + r2Score + touchScore + recentBonus + slopeBonus - breakPenalty, 0, 100);
+  return { score, touches, breaks };
+};
+
+const makeSegmentPick = (
+  candles: Candle[],
   id: string,
   kind: OverlaySegment["kind"],
   label: string,
   line: LineModel,
   lastIndex: number,
   lastTime: string,
-): OverlaySegment => {
+  lookback: number,
+): SegmentPick => {
   const first = line.points[0];
-  const p1 = line.slope * first.index + line.intercept;
-  const p2 = line.slope * lastIndex + line.intercept;
+  const p1 = linePriceAt(line, first.index);
+  const p2 = linePriceAt(line, lastIndex);
+  const reliability = evaluateLineReliability(candles, line, kind, first.index, lastIndex);
   return {
-    id,
-    kind,
-    t1: first.time,
-    p1: round2(p1) ?? p1,
-    t2: lastTime,
-    p2: round2(p2) ?? p2,
-    label,
-    score: Math.round(line.r2 * 100),
+    segment: {
+      id,
+      kind,
+      t1: first.time,
+      p1: round2(p1) ?? p1,
+      t2: lastTime,
+      p2: round2(p2) ?? p2,
+      label,
+      score: reliability.score,
+    },
+    touches: reliability.touches,
+    breaks: reliability.breaks,
+    lookback,
   };
+};
+
+const buildFanLineCandidates = (
+  candles: Candle[],
+  lookback: number,
+): SegmentPick[] => {
+  const lastIndex = candles.length - 1;
+  const lastTime = candles[lastIndex].time;
+  const fanCandidates: SegmentPick[] = [];
+  const lowPivots = detectPivots(candles, "low", PIVOT_L, lookback);
+  const highPivots = detectPivots(candles, "high", PIVOT_L, lookback);
+  const slopeSeedMin = Math.max(candles[lastIndex].close * 0.0002, 0.01);
+
+  const upAnchor = lowPivots[lowPivots.length - 1];
+  if (upAnchor && lastIndex - upAnchor.index >= 8) {
+    const distanceBars = lastIndex - upAnchor.index;
+    const rawSlope = (candles[lastIndex].close - upAnchor.price) / Math.max(distanceBars, 1);
+    const baseSlope = Math.max(rawSlope, slopeSeedMin);
+    const factors = [0.65, 1, 1.35];
+    factors.forEach((factor, idx) => {
+      const slope = baseSlope * factor;
+      const intercept = upAnchor.price - slope * upAnchor.index;
+      const p2 = slope * lastIndex + intercept;
+      const model: LineModel = {
+        slope,
+        intercept,
+        r2: 0.55 + idx * 0.08,
+        points: [upAnchor, { index: lastIndex, time: lastTime, price: p2 }],
+      };
+      fanCandidates.push(
+        makeSegmentPick(
+          candles,
+          `fan-up-${lookback}-${idx + 1}`,
+          "fanlineUp",
+          `상승 팬 ${idx + 1} (${lookback}봉)`,
+          model,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+    });
+  }
+
+  const downAnchor = highPivots[highPivots.length - 1];
+  if (downAnchor && lastIndex - downAnchor.index >= 8) {
+    const distanceBars = lastIndex - downAnchor.index;
+    const rawSlope = (downAnchor.price - candles[lastIndex].close) / Math.max(distanceBars, 1);
+    const baseSlope = -Math.max(rawSlope, slopeSeedMin);
+    const factors = [0.65, 1, 1.35];
+    factors.forEach((factor, idx) => {
+      const slope = baseSlope * factor;
+      const intercept = downAnchor.price - slope * downAnchor.index;
+      const p2 = slope * lastIndex + intercept;
+      const model: LineModel = {
+        slope,
+        intercept,
+        r2: 0.55 + idx * 0.08,
+        points: [downAnchor, { index: lastIndex, time: lastTime, price: p2 }],
+      };
+      fanCandidates.push(
+        makeSegmentPick(
+          candles,
+          `fan-down-${lookback}-${idx + 1}`,
+          "fanlineDown",
+          `하락 팬 ${idx + 1} (${lookback}봉)`,
+          model,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+    });
+  }
+
+  return fanCandidates;
 };
 
 const buildTrendAndChannelSegments = (
@@ -258,115 +411,206 @@ const buildTrendAndChannelSegments = (
 ): {
   trendSegments: OverlaySegment[];
   channelSegments: OverlaySegment[];
+  fanSegments: OverlaySegment[];
+  hiddenWeakCount: number;
   trendExplanation: string;
   channelExplanation: string;
+  fanExplanation: string;
+  reliabilityExplanation: string;
+  reliabilityDetails: string[];
 } => {
-  const lowPivots = detectPivots(candles, "low", PIVOT_L, 120);
-  const highPivots = detectPivots(candles, "high", PIVOT_L, 120);
-  const upLine = bestLineFromPivots(lowPivots, "up");
-  const downLine = bestLineFromPivots(highPivots, "down");
-
   const lastIndex = candles.length - 1;
   const lastTime = candles[lastIndex].time;
-  const trendSegments: OverlaySegment[] = [];
-  const channelSegments: OverlaySegment[] = [];
+  const trendCandidates: SegmentPick[] = [];
+  const channelCandidates: SegmentPick[] = [];
+  let hiddenWeakCount = 0;
 
-  if (upLine) {
-    trendSegments.push(
-      makeSegmentFromLine("trend-up", "trendlineUp", "상승 추세선", upLine, lastIndex, lastTime),
-    );
-  }
-  if (downLine) {
-    trendSegments.push(
-      makeSegmentFromLine("trend-down", "trendlineDown", "하락 추세선", downLine, lastIndex, lastTime),
-    );
+  for (const lookback of MULTI_CHANNEL_WINDOWS) {
+    if (candles.length < Math.min(lookback, 60)) continue;
+    const lowPivots = detectPivots(candles, "low", PIVOT_L, lookback);
+    const highPivots = detectPivots(candles, "high", PIVOT_L, lookback);
+    const upLine = bestLineFromPivots(lowPivots, "up");
+    const downLine = bestLineFromPivots(highPivots, "down");
+    const horizonLabel = lookback >= 200 ? "장기" : lookback >= 120 ? "중기" : "단기";
+    const recentRange = Math.max(average(candles.slice(-30).map((candle) => candle.high - candle.low)), 1);
+
+    const upTrend = upLine
+      ? makeSegmentPick(
+          candles,
+          `trend-up-${lookback}`,
+          "trendlineUp",
+          `${horizonLabel} 상승 추세선 (${lookback}봉)`,
+          upLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        )
+      : null;
+    const downTrend = downLine
+      ? makeSegmentPick(
+          candles,
+          `trend-down-${lookback}`,
+          "trendlineDown",
+          `${horizonLabel} 하락 추세선 (${lookback}봉)`,
+          downLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        )
+      : null;
+
+    const primaryTrend =
+      upTrend && downTrend
+        ? upTrend.segment.score >= downTrend.segment.score
+          ? upTrend
+          : downTrend
+        : upTrend ?? downTrend;
+    if (!primaryTrend) continue;
+    trendCandidates.push(primaryTrend);
+
+    if (primaryTrend.segment.kind === "trendlineUp" && upLine) {
+      const distances = highPivots
+        .map((pivot) => pivot.price - linePriceAt(upLine, pivot.index))
+        .filter((distance) => distance > 0);
+      const offset = Math.max(average(distances), recentRange * 0.8, candles[lastIndex].close * 0.006);
+      const highChannelLine: LineModel = {
+        slope: upLine.slope,
+        intercept: upLine.intercept + offset,
+        r2: upLine.r2,
+        points: upLine.points,
+      };
+      channelCandidates.push(
+        makeSegmentPick(
+          candles,
+          `channel-low-${lookback}`,
+          "channelLow",
+          `${horizonLabel} 채널 하단 (${lookback}봉)`,
+          upLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+      channelCandidates.push(
+        makeSegmentPick(
+          candles,
+          `channel-high-${lookback}`,
+          "channelHigh",
+          `${horizonLabel} 채널 상단 (${lookback}봉)`,
+          highChannelLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+    } else if (primaryTrend.segment.kind === "trendlineDown" && downLine) {
+      const distances = lowPivots
+        .map((pivot) => linePriceAt(downLine, pivot.index) - pivot.price)
+        .filter((distance) => distance > 0);
+      const offset = Math.max(average(distances), recentRange * 0.8, candles[lastIndex].close * 0.006);
+      const lowChannelLine: LineModel = {
+        slope: downLine.slope,
+        intercept: downLine.intercept - offset,
+        r2: downLine.r2,
+        points: downLine.points,
+      };
+      channelCandidates.push(
+        makeSegmentPick(
+          candles,
+          `channel-high-${lookback}`,
+          "channelHigh",
+          `${horizonLabel} 채널 상단 (${lookback}봉)`,
+          downLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+      channelCandidates.push(
+        makeSegmentPick(
+          candles,
+          `channel-low-${lookback}`,
+          "channelLow",
+          `${horizonLabel} 채널 하단 (${lookback}봉)`,
+          lowChannelLine,
+          lastIndex,
+          lastTime,
+          lookback,
+        ),
+      );
+    }
   }
 
-  if (trendSegments.length === 0) {
+  const fanCandidates = buildFanLineCandidates(candles, 120);
+
+  const strongTrendCandidates = trendCandidates.filter((item) => item.segment.score >= MIN_TREND_SCORE);
+  hiddenWeakCount += trendCandidates.length - strongTrendCandidates.length;
+  let visibleTrend = strongTrendCandidates;
+  if (visibleTrend.length === 0 && trendCandidates.length > 0) {
+    const fallbackTrend = [...trendCandidates].sort((a, b) => b.segment.score - a.segment.score)[0];
+    visibleTrend = [fallbackTrend];
+    hiddenWeakCount = Math.max(0, hiddenWeakCount - 1);
+  }
+
+  const visibleChannels = channelCandidates.filter((item) => item.segment.score >= MIN_CHANNEL_SCORE);
+  hiddenWeakCount += channelCandidates.length - visibleChannels.length;
+
+  const visibleFans = fanCandidates
+    .filter((item) => item.segment.score >= MIN_FAN_SCORE)
+    .sort((a, b) => b.segment.score - a.segment.score)
+    .slice(0, 4);
+  hiddenWeakCount += fanCandidates.length - visibleFans.length;
+
+  if (visibleTrend.length === 0) {
     const first = candles[Math.max(0, candles.length - 120)];
     const last = candles[lastIndex];
     const kind = last.close >= first.close ? "trendlineUp" : "trendlineDown";
-    trendSegments.push({
-      id: "trend-fallback",
-      kind,
-      t1: first.time,
-      p1: round2(first.close) ?? first.close,
-      t2: last.time,
-      p2: round2(last.close) ?? last.close,
-      label: "기본 추세선",
-      score: 25,
-    });
+    visibleTrend = [
+      {
+        segment: {
+          id: "trend-fallback",
+          kind,
+          t1: first.time,
+          p1: round2(first.close) ?? first.close,
+          t2: last.time,
+          p2: round2(last.close) ?? last.close,
+          label: "기본 추세선 (120봉)",
+          score: 30,
+        },
+        touches: 0,
+        breaks: 0,
+        lookback: 120,
+      },
+    ];
   }
 
-  const recentRange = average(candles.slice(-30).map((candle) => candle.high - candle.low));
-  if (upLine) {
-    const distances = highPivots
-      .map((pivot) => pivot.price - (upLine.slope * pivot.index + upLine.intercept))
-      .filter((distance) => distance > 0);
-    const offset = Math.max(average(distances), recentRange * 0.8, candles[lastIndex].close * 0.006);
-    const highChannelLine: LineModel = {
-      slope: upLine.slope,
-      intercept: upLine.intercept + offset,
-      r2: upLine.r2,
-      points: upLine.points,
-    };
-    channelSegments.push(
-      makeSegmentFromLine("channel-low", "channelLow", "상승 채널 하단", upLine, lastIndex, lastTime),
+  const reliabilityRows = [...visibleTrend, ...visibleChannels, ...visibleFans]
+    .sort((a, b) => b.segment.score - a.segment.score)
+    .slice(0, 5)
+    .map(
+      (item) =>
+        `${item.segment.label} · 신뢰도 ${item.segment.score}점 (터치 ${item.touches}회 / 이탈 ${item.breaks}회)`,
     );
-    channelSegments.push(
-      makeSegmentFromLine(
-        "channel-high",
-        "channelHigh",
-        "상승 채널 상단",
-        highChannelLine,
-        lastIndex,
-        lastTime,
-      ),
-    );
-  } else if (downLine) {
-    const distances = lowPivots
-      .map((pivot) => downLine.slope * pivot.index + downLine.intercept - pivot.price)
-      .filter((distance) => distance > 0);
-    const offset = Math.max(average(distances), recentRange * 0.8, candles[lastIndex].close * 0.006);
-    const lowChannelLine: LineModel = {
-      slope: downLine.slope,
-      intercept: downLine.intercept - offset,
-      r2: downLine.r2,
-      points: downLine.points,
-    };
-    channelSegments.push(
-      makeSegmentFromLine(
-        "channel-high",
-        "channelHigh",
-        "하락 채널 상단",
-        downLine,
-        lastIndex,
-        lastTime,
-      ),
-    );
-    channelSegments.push(
-      makeSegmentFromLine(
-        "channel-low",
-        "channelLow",
-        "하락 채널 하단",
-        lowChannelLine,
-        lastIndex,
-        lastTime,
-      ),
-    );
-  }
 
   return {
-    trendSegments,
-    channelSegments,
+    trendSegments: visibleTrend.map((item) => item.segment),
+    channelSegments: visibleChannels.map((item) => item.segment),
+    fanSegments: visibleFans.map((item) => item.segment),
+    hiddenWeakCount,
     trendExplanation:
-      trendSegments[0].id === "trend-fallback"
+      visibleTrend[0].segment.id === "trend-fallback"
         ? "유효한 스윙 포인트가 부족해 기본 추세선을 사용했습니다."
-        : `스윙 고저점 기반 추세선 ${trendSegments.length}개를 추정했습니다.`,
+        : `다중 추세선(240/120/60봉) ${visibleTrend.length}개를 추정했습니다.`,
     channelExplanation:
-      channelSegments.length > 0
-        ? "추세선과 반대편 스윙 거리 평균으로 평행 채널을 구성했습니다."
+      visibleChannels.length > 0
+        ? `장기/중기/단기 채널 ${Math.floor(visibleChannels.length / 2)}세트를 구성했습니다.`
         : "채널 추정에 필요한 스윙 데이터가 부족했습니다.",
+    fanExplanation:
+      visibleFans.length > 0
+        ? `기준 피벗 기반 팬 라인 ${visibleFans.length}개를 생성했습니다.`
+        : "팬 라인 후보가 약해 표시를 생략했습니다.",
+    reliabilityExplanation: `신뢰도 필터로 약한 선 ${hiddenWeakCount}개를 자동 숨김 처리했습니다.`,
+    reliabilityDetails: reliabilityRows,
   };
 };
 
@@ -568,17 +812,27 @@ const buildExplanations = (
   zones: ZoneCandidate[],
   trendSegments: OverlaySegment[],
   channelSegments: OverlaySegment[],
+  fanSegments: OverlaySegment[],
   markers: OverlayMarker[],
   confluence: ConfluenceBand[],
   signals: Signals,
+  reliabilityExplanation: string,
+  reliabilityDetails: string[],
 ): string[] => {
   const list: string[] = [];
   const support = zones.find((zone) => zone.kind === "support");
   const resistance = zones.find((zone) => zone.kind === "resistance");
   if (support) list.push(`지지존: ${support.reason}`);
   if (resistance) list.push(`저항존: ${resistance.reason}`);
-  list.push(`추세선: 스윙 피벗 기반 ${trendSegments.length}개 추정`);
-  if (channelSegments.length > 0) list.push(`채널: 평행 채널 ${Math.floor(channelSegments.length / 2)}세트 반영`);
+  list.push(`추세선: 다중(240/120/60봉) 기준 ${trendSegments.length}개 노출`);
+  if (channelSegments.length > 0) {
+    list.push(`채널: 장기/중기/단기 ${Math.floor(channelSegments.length / 2)}세트 반영`);
+  }
+  if (fanSegments.length > 0) {
+    list.push(`팬 라인: 기준 피벗 기울기 계열 ${fanSegments.length}개 반영`);
+  }
+  list.push(reliabilityExplanation);
+  reliabilityDetails.slice(0, 2).forEach((line) => list.push(`신뢰도: ${line}`));
   if (markers.length > 0) list.push(`거래량 패턴: 최근 ${markers.length}개 마커 반영`);
   if (confluence.length > 0) {
     list.push(
@@ -621,7 +875,13 @@ export const buildMultiViewArtifacts = (
 
   const zones = pickZoneCandidates(candles, levels);
   const zoneItems = [zones.support, zones.resistance];
-  const { trendSegments, channelSegments } = buildTrendAndChannelSegments(candles);
+  const {
+    trendSegments,
+    channelSegments,
+    fanSegments,
+    reliabilityExplanation,
+    reliabilityDetails,
+  } = buildTrendAndChannelSegments(candles);
   const markers = [...buildVolumeMarkers(signals), ...buildVcpContractionMarkers(signals)];
 
   const overlays: Overlays = {
@@ -710,7 +970,7 @@ export const buildMultiViewArtifacts = (
       touches: zone.touches,
       reason: zone.reason,
     })),
-    segments: [...trendSegments, ...channelSegments].map((segment) => ({
+    segments: [...trendSegments, ...channelSegments, ...fanSegments].map((segment) => ({
       ...segment,
       p1: round2(segment.p1) ?? segment.p1,
       p2: round2(segment.p2) ?? segment.p2,
@@ -723,9 +983,12 @@ export const buildMultiViewArtifacts = (
     zoneItems,
     trendSegments,
     channelSegments,
+    fanSegments,
     markers,
     confluence,
     signals,
+    reliabilityExplanation,
+    reliabilityDetails,
   );
   if (tf !== "day") {
     explanations.unshift(`${tf} 타임프레임에서도 동일한 관점 모듈로 오버레이를 계산했습니다.`);

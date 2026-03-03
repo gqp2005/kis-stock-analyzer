@@ -447,6 +447,33 @@ h2 {
   font-size: 13px;
 }
 
+.drawing-presets {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 6px;
+}
+
+.drawing-presets span {
+  color: #9fb5cc;
+  font-size: 12px;
+}
+
+.preset-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 163, 255, 0.55);
+  background: rgba(87, 163, 255, 0.15);
+  color: #d6e8fb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.preset-btn:hover {
+  background: rgba(87, 163, 255, 0.28);
+}
+
 .indicator-controls label {
   display: inline-flex;
   align-items: center;
@@ -1367,6 +1394,12 @@ h2 {
 
   .tech-grid {
     grid-template-columns: 1fr;
+  }
+
+  .drawing-presets {
+    width: 100%;
+    margin-right: 0;
+    flex-wrap: wrap;
   }
 
   .pattern-row {
