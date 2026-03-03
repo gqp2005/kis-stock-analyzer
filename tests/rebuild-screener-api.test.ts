@@ -164,6 +164,18 @@ vi.mock("../functions/lib/screener", () => ({
         },
         reasons: ["VCP 테스트"],
       },
+      cupHandle: {
+        detected: false,
+        state: "NONE",
+        score: 0,
+        neckline: null,
+        breakout: false,
+        cupDepthPct: null,
+        handleDepthPct: null,
+        cupWidthBars: null,
+        handleBars: null,
+        reasons: ["컵앤핸들 미감지"],
+      },
     },
     scoring: {
       all: { score: 80, confidence: 72 },

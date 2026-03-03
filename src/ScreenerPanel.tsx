@@ -64,6 +64,12 @@ const vcpStateLabel = (state: PatternState): string => {
   return "없음";
 };
 
+const cupHandleStateLabel = (state: PatternState): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "없음";
+};
+
 const formatDepth = (value: number | null): string =>
   value == null ? "-" : `${(value * 100).toFixed(1)}%`;
 
@@ -116,6 +122,12 @@ const rsStrengthLabel = (value: "STRONG" | "NEUTRAL" | "WEAK" | "N/A"): string =
 const atrShrinkPercent = (atr20: number | null, atr120: number | null): string => {
   if (atr20 == null || atr120 == null || atr120 <= 0) return "-";
   return `${((1 - atr20 / atr120) * 100).toFixed(1)}%`;
+};
+
+const cupHandleTagClass = (state: PatternState): string => {
+  if (state === "CONFIRMED") return "reason-tag positive";
+  if (state === "POTENTIAL") return "reason-tag neutral";
+  return "reason-tag neutral";
 };
 
 const sortItems = (items: ScreenerItem[], sortKey: SortKey): ScreenerItem[] => {
@@ -415,6 +427,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       <small>
                         RS {rsStrengthLabel(item.rs.label)} ({formatSignedRatioPercent(item.rs.ret63Diff)})
                       </small>
+                      <small className={cupHandleTagClass(item.hits.cupHandle.state)}>
+                        C&H {cupHandleStateLabel(item.hits.cupHandle.state)} / {item.hits.cupHandle.score}
+                      </small>
                       <small>
                         튜닝 품질 {item.tuning?.quality != null ? `${item.tuning.quality}점` : "-"}
                       </small>
@@ -467,6 +482,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       </span>
                       <span className={item.hits.vcp.detected ? "reason-tag positive" : "reason-tag neutral"}>
                         VCP {vcpStateLabel(item.hits.vcp.state)} / {item.hits.vcp.score}
+                      </span>
+                      <span className={cupHandleTagClass(item.hits.cupHandle.state)}>
+                        C&H {cupHandleStateLabel(item.hits.cupHandle.state)} / {item.hits.cupHandle.score}
                       </span>
                       <span className="reason-tag negative">
                         H&S {hsStateLabel(item.hits.hs.state)} / {item.hits.hs.score}

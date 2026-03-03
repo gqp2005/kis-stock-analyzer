@@ -424,6 +424,19 @@ export interface VolumeHit {
   reasons: string[];
 }
 
+export interface CupHandleHit {
+  detected: boolean;
+  state: PatternState;
+  score: number;
+  neckline: number | null;
+  breakout: boolean;
+  cupDepthPct: number | null;
+  handleDepthPct: number | null;
+  cupWidthBars: number | null;
+  handleBars: number | null;
+  reasons: string[];
+}
+
 export interface ScreenerItem {
   code: string;
   name: string;
@@ -438,6 +451,7 @@ export interface ScreenerItem {
     hs: PatternHit;
     ihs: PatternHit;
     vcp: VcpHit;
+    cupHandle: CupHandleHit;
   };
   reasons: string[];
   levels: {

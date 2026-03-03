@@ -5,6 +5,7 @@ import { detectVcpPattern } from "./vcp";
 import { runWalkForwardTuning, type StrategyThresholds } from "./walkforward";
 import type {
   Candle,
+  CupHandleHit,
   PatternHit,
   ScreenerItem,
   ScreenerMarketFilter,
@@ -59,6 +60,7 @@ export interface ScreenerStoredCandidate {
     hs: PatternHit;
     ihs: PatternHit;
     vcp: VcpHit;
+    cupHandle: CupHandleHit;
   };
   scoring: {
     all: { score: number; confidence: number };
@@ -198,6 +200,19 @@ const defaultPatternHit = (reason: string): PatternHit => ({
   target: null,
   score: 0,
   confidence: 0,
+  reasons: [reason],
+});
+
+const defaultCupHandleHit = (reason: string): CupHandleHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  neckline: null,
+  breakout: false,
+  cupDepthPct: null,
+  handleDepthPct: null,
+  cupWidthBars: null,
+  handleBars: null,
   reasons: [reason],
 });
 
@@ -849,6 +864,7 @@ export const analyzeScreenerRawCandidate = (
   const ihs = detectInverseHeadShouldersPattern(day.candles);
   const volume = computeVolumeHit(day);
   const vcp = detectVcpPattern(day.candles, marketBenchmark);
+  const cupHandle = day.signals.cupHandle ?? defaultCupHandleHit("컵앤핸들 패턴 데이터가 없습니다.");
   const rsInfo = computeRsLabel(day.candles, marketBenchmark);
   const rsScoreAdj = scoreAdjustmentFromRs(rsInfo.label);
   const rsConfidenceAdj = confidenceAdjustmentFromRs(rsInfo.label);
@@ -940,6 +956,11 @@ export const analyzeScreenerRawCandidate = (
       `VCP ${vcp.state === "CONFIRMED" ? "돌파 확정" : "잠재"} 패턴(${vcp.score}점)이 포착되었습니다.`,
     );
   }
+  if (cupHandle.state === "CONFIRMED") {
+    sharedReasons.push(`컵앤핸들 돌파가 확정되었습니다(점수 ${cupHandle.score}점).`);
+  } else if (cupHandle.state === "POTENTIAL") {
+    sharedReasons.push(`컵앤핸들 후보 구간입니다(점수 ${cupHandle.score}점).`);
+  }
   if (vcp.pivot.pivotReady) {
     sharedReasons.push("VCP 피벗 준비 조건(distance/dry-up/depth)이 충족되었습니다.");
   }
@@ -976,6 +997,7 @@ export const analyzeScreenerRawCandidate = (
 
   const allReasons = [
     ...volume.reasons,
+    cupHandle.reasons[0],
     vcp.reasons[0],
     ihs.reasons[0],
     hs.reasons[0],
@@ -1017,6 +1039,7 @@ export const analyzeScreenerRawCandidate = (
       hs,
       ihs,
       vcp,
+      cupHandle,
     },
     scoring: {
       all: { score: allScore, confidence: allConfidence },
@@ -1064,7 +1087,16 @@ export const materializeScreenerItem = (
   const key = strategyKey(strategy);
   const scoreTotal = raw.scoring[key].score;
   const confidence = raw.scoring[key].confidence;
-  const overallLabel = getOverallLabel(scoreTotal, confidence, raw.hits.hs);
+  const cupHandle = (raw.hits as { cupHandle?: CupHandleHit }).cupHandle ??
+    defaultCupHandleHit("구버전 스냅샷에는 컵앤핸들 데이터가 없습니다.");
+  const hits: ScreenerItem["hits"] = {
+    volume: raw.hits.volume,
+    hs: raw.hits.hs,
+    ihs: raw.hits.ihs,
+    vcp: raw.hits.vcp,
+    cupHandle,
+  };
+  const overallLabel = getOverallLabel(scoreTotal, confidence, hits.hs);
   const rs =
     raw.rs ??
     ({
@@ -1082,7 +1114,7 @@ export const materializeScreenerItem = (
     scoreTotal,
     confidence,
     overallLabel,
-    hits: raw.hits,
+    hits,
     reasons: raw.reasons[key].slice(0, 6),
     levels: raw.levels,
     backtestSummary: raw.backtestSummary[key],

@@ -131,6 +131,18 @@ const sampleCandidate: ScreenerStoredCandidate = {
       },
       reasons: ["VCP 테스트"],
     },
+    cupHandle: {
+      detected: true,
+      state: "POTENTIAL",
+      score: 68,
+      neckline: 101500,
+      breakout: false,
+      cupDepthPct: 24.3,
+      handleDepthPct: 8.1,
+      cupWidthBars: 52,
+      handleBars: 11,
+      reasons: ["컵앤핸들 후보 구간입니다."],
+    },
   },
   scoring: {
     all: { score: 80, confidence: 72 },
