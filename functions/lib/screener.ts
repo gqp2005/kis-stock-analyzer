@@ -1108,7 +1108,7 @@ const sortByHsRisk = (items: ScreenerItem[]): ScreenerItem[] =>
       b.confidence - a.confidence,
   );
 
-interface ScreenerAdaptiveCutoffs {
+export interface ScreenerAdaptiveCutoffs {
   all: number;
   volume: number;
   hs: number;
@@ -1116,7 +1116,7 @@ interface ScreenerAdaptiveCutoffs {
   vcp: number;
 }
 
-const DEFAULT_ADAPTIVE_CUTOFFS: ScreenerAdaptiveCutoffs = {
+export const DEFAULT_ADAPTIVE_CUTOFFS: ScreenerAdaptiveCutoffs = {
   all: 50,
   volume: 58,
   hs: 68,
@@ -1164,7 +1164,9 @@ const computeStrategyAdjustment = (
   return adjustment;
 };
 
-const deriveAdaptiveCutoffs = (candidates: ScreenerStoredCandidate[]): ScreenerAdaptiveCutoffs => {
+export const deriveAdaptiveCutoffs = (
+  candidates: ScreenerStoredCandidate[],
+): ScreenerAdaptiveCutoffs => {
   if (candidates.length === 0) return DEFAULT_ADAPTIVE_CUTOFFS;
 
   const tuningQualities = candidates.map((candidate) => candidate.tuning?.quality);
@@ -1198,11 +1200,23 @@ const deriveAdaptiveCutoffs = (candidates: ScreenerStoredCandidate[]): ScreenerA
   };
 };
 
+const mergeAdaptiveCutoffs = (
+  base: ScreenerAdaptiveCutoffs,
+  override?: Partial<ScreenerAdaptiveCutoffs> | null,
+): ScreenerAdaptiveCutoffs => ({
+  all: clampCutoff(override?.all ?? base.all, 40, 75),
+  volume: clampCutoff(override?.volume ?? base.volume, 50, 85),
+  hs: clampCutoff(override?.hs ?? base.hs, 55, 88),
+  ihs: clampCutoff(override?.ihs ?? base.ihs, 55, 88),
+  vcp: clampCutoff(override?.vcp ?? base.vcp, 70, 95),
+});
+
 export const buildScreenerView = (
   candidates: ScreenerStoredCandidate[],
   market: ScreenerMarketFilter,
   strategy: ScreenerStrategyFilter,
   count: number,
+  cutoffOverride?: Partial<ScreenerAdaptiveCutoffs> | null,
 ): {
   items: ScreenerItem[];
   warningItems: ScreenerItem[];
@@ -1210,7 +1224,10 @@ export const buildScreenerView = (
   const filteredCandidates = candidates.filter((candidate) =>
     market === "ALL" ? true : candidate.market === market,
   );
-  const adaptiveCutoffs = deriveAdaptiveCutoffs(filteredCandidates);
+  const adaptiveCutoffs = mergeAdaptiveCutoffs(
+    deriveAdaptiveCutoffs(filteredCandidates),
+    cutoffOverride,
+  );
   const rawItems = filteredCandidates.map((candidate) =>
     materializeScreenerItem(candidate, strategy),
   );

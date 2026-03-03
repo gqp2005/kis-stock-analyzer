@@ -506,10 +506,46 @@ export interface ScreenerPayload {
     rebuildRequired: boolean;
     changeSummary?: {
       basisTopN: number;
-      added: Array<{ code: string; name: string; currRank: number | null }>;
-      removed: Array<{ code: string; name: string; prevRank: number | null }>;
-      risers: Array<{ code: string; name: string; prevRank: number | null; currRank: number | null }>;
-      fallers: Array<{ code: string; name: string; prevRank: number | null; currRank: number | null }>;
+      added: Array<{
+        code: string;
+        name: string;
+        currRank: number | null;
+        currScore: number | null;
+      }>;
+      removed: Array<{
+        code: string;
+        name: string;
+        prevRank: number | null;
+        prevScore: number | null;
+      }>;
+      risers: Array<{
+        code: string;
+        name: string;
+        prevRank: number | null;
+        currRank: number | null;
+        deltaRank: number | null;
+      }>;
+      fallers: Array<{
+        code: string;
+        name: string;
+        prevRank: number | null;
+        currRank: number | null;
+        deltaRank: number | null;
+      }>;
+      scoreRisers: Array<{
+        code: string;
+        name: string;
+        prevScore: number | null;
+        currScore: number | null;
+        scoreDelta: number | null;
+      }>;
+      scoreFallers: Array<{
+        code: string;
+        name: string;
+        prevScore: number | null;
+        currScore: number | null;
+        scoreDelta: number | null;
+      }>;
     } | null;
     rsSummary?: {
       enabled: boolean;
@@ -527,6 +563,30 @@ export interface ScreenerPayload {
         ihs: number;
         vcp: number;
       } | null;
+    } | null;
+    validationSummary?: {
+      updatedAt: string;
+      lastWeeklyAt: string | null;
+      lastMonthlyAt: string | null;
+      activeCutoffs: {
+        all: number;
+        volume: number;
+        hs: number;
+        ihs: number;
+        vcp: number;
+      };
+      latestRuns: {
+        weekly: {
+          period: "weekly";
+          generatedAt: string;
+          sampleCount: number;
+        } | null;
+        monthly: {
+          period: "monthly";
+          generatedAt: string;
+          sampleCount: number;
+        } | null;
+      };
     } | null;
     alertsMeta?: {
       cooldownDays: number;

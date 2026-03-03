@@ -165,6 +165,102 @@ const sampleSnapshot: ScreenerSnapshot = {
   warnings: [],
   candidates: [sampleCandidate],
   topCandidates: [sampleCandidate],
+  changeSummary: {
+    generatedAt: "2025-01-10T15:40:00+09:00",
+    basisTopN: 30,
+    added: [
+      {
+        code: "005930",
+        name: "삼성전자",
+        market: "KOSPI",
+        prevRank: null,
+        currRank: 1,
+        deltaRank: null,
+        score: 80,
+        confidence: 72,
+        prevScore: null,
+        currScore: 80,
+        scoreDelta: null,
+        prevConfidence: null,
+        currConfidence: 72,
+        confidenceDelta: null,
+      },
+    ],
+    removed: [],
+    risers: [],
+    fallers: [],
+    scoreRisers: [],
+    scoreFallers: [],
+  },
+  validationSummary: {
+    updatedAt: "2025-01-10T15:40:00+09:00",
+    lastWeeklyAt: "2025-01-10T15:40:00+09:00",
+    lastMonthlyAt: "2025-01-01T06:00:00+09:00",
+    activeCutoffs: {
+      all: 52,
+      volume: 60,
+      hs: 68,
+      ihs: 64,
+      vcp: 80,
+    },
+    latestRuns: {
+      weekly: {
+        period: "weekly",
+        generatedAt: "2025-01-10T15:40:00+09:00",
+        sampleCount: 120,
+        cutoffs: {
+          all: 52,
+          volume: 60,
+          hs: 68,
+          ihs: 64,
+          vcp: 80,
+        },
+        strategies: {
+          all: {
+            trades: 100,
+            winRate: 56,
+            pf: 1.2,
+            mdd: -11,
+            quality: 70,
+            recommendedCutoff: 52,
+          },
+          volume: {
+            trades: 80,
+            winRate: 57,
+            pf: 1.25,
+            mdd: -10,
+            quality: 71,
+            recommendedCutoff: 60,
+          },
+          hs: {
+            trades: 0,
+            winRate: null,
+            pf: null,
+            mdd: null,
+            quality: 65,
+            recommendedCutoff: 68,
+          },
+          ihs: {
+            trades: 52,
+            winRate: 54,
+            pf: 1.18,
+            mdd: -12,
+            quality: 69,
+            recommendedCutoff: 64,
+          },
+          vcp: {
+            trades: 48,
+            winRate: 58,
+            pf: 1.29,
+            mdd: -9,
+            quality: 73,
+            recommendedCutoff: 80,
+          },
+        },
+      },
+      monthly: null,
+    },
+  },
 };
 
 const makeContext = (url: string): Parameters<typeof onRequestGet>[0] =>
@@ -201,7 +297,18 @@ describe("/api/screener (cache-only)", () => {
       makeContext("http://localhost/api/screener?market=KOSPI&strategy=ALL&count=30"),
     );
     const body = (await response.json()) as {
-      meta: { rebuildRequired: boolean; market: string; strategy: string };
+      meta: {
+        rebuildRequired: boolean;
+        market: string;
+        strategy: string;
+        changeSummary: {
+          scoreRisers: unknown[];
+          scoreFallers: unknown[];
+        } | null;
+        validationSummary: {
+          activeCutoffs: { vcp: number };
+        } | null;
+      };
       items: Array<{ code: string }>;
     };
 
@@ -209,6 +316,9 @@ describe("/api/screener (cache-only)", () => {
     expect(body.meta.rebuildRequired).toBe(false);
     expect(body.meta.market).toBe("KOSPI");
     expect(body.meta.strategy).toBe("ALL");
+    expect(body.meta.changeSummary?.scoreRisers.length).toBe(0);
+    expect(body.meta.changeSummary?.scoreFallers.length).toBe(0);
+    expect(body.meta.validationSummary?.activeCutoffs.vcp).toBe(80);
     expect(body.items[0]?.code).toBe("005930");
   });
 

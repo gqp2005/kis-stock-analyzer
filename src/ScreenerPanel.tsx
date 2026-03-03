@@ -40,6 +40,8 @@ const formatPercent = (value: number | null): string =>
 
 const formatFactor = (value: number | null): string =>
   value == null ? "-" : value.toFixed(2);
+const formatSignedScore = (value: number | null): string =>
+  value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value)}점`;
 
 const patternTypeLabel = (type: VolumePatternType): string => {
   if (type === "BreakoutConfirmed") return "돌파확인";
@@ -267,6 +269,22 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   : " 없음"}
               </p>
             )}
+            {response.meta.validationSummary && (
+              <>
+                <p className="meta">
+                  자동 검증 컷오프: A/V/H/I/VCP=
+                  {response.meta.validationSummary.activeCutoffs.all}/
+                  {response.meta.validationSummary.activeCutoffs.volume}/
+                  {response.meta.validationSummary.activeCutoffs.hs}/
+                  {response.meta.validationSummary.activeCutoffs.ihs}/
+                  {response.meta.validationSummary.activeCutoffs.vcp}
+                </p>
+                <p className="meta">
+                  주간 검증 {response.meta.validationSummary.lastWeeklyAt ?? "-"} · 월간 검증{" "}
+                  {response.meta.validationSummary.lastMonthlyAt ?? "-"}
+                </p>
+              </>
+            )}
             {response.meta.changeSummary && (
               <div className="screener-hit-row">
                 {response.meta.changeSummary.added.slice(0, 3).map((item) => (
@@ -282,6 +300,21 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 {response.meta.changeSummary.fallers.slice(0, 2).map((item) => (
                   <small key={`fall-${item.code}`} className="reason-tag negative">
                     하락 {item.name} #{item.prevRank ?? "-"}→#{item.currRank ?? "-"}
+                  </small>
+                ))}
+                {response.meta.changeSummary.removed.slice(0, 2).map((item) => (
+                  <small key={`removed-${item.code}`} className="reason-tag negative">
+                    이탈 {item.name} #{item.prevRank ?? "-"}
+                  </small>
+                ))}
+                {response.meta.changeSummary.scoreRisers.slice(0, 2).map((item) => (
+                  <small key={`score-up-${item.code}`} className="reason-tag positive">
+                    점수↑ {item.name} {formatSignedScore(item.scoreDelta)}
+                  </small>
+                ))}
+                {response.meta.changeSummary.scoreFallers.slice(0, 2).map((item) => (
+                  <small key={`score-down-${item.code}`} className="reason-tag negative">
+                    점수↓ {item.name} {formatSignedScore(item.scoreDelta)}
                   </small>
                 ))}
               </div>

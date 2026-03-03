@@ -300,7 +300,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const filteredCount = snapshot.candidates.filter((candidate) =>
       market === "ALL" ? true : candidate.market === market,
     ).length;
-    const view = buildScreenerView(snapshot.candidates, market, strategy, count);
+    const view = buildScreenerView(
+      snapshot.candidates,
+      market,
+      strategy,
+      count,
+      snapshot.validationSummary?.activeCutoffs ?? null,
+    );
 
     const payload: ScreenerPayload = {
       meta: {
@@ -324,28 +330,70 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
                 code: item.code,
                 name: item.name,
                 currRank: item.currRank,
+                currScore: item.currScore,
               })),
               removed: snapshot.changeSummary.removed.map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
+                prevScore: item.prevScore,
               })),
               risers: snapshot.changeSummary.risers.map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
                 currRank: item.currRank,
+                deltaRank: item.deltaRank,
               })),
               fallers: snapshot.changeSummary.fallers.map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
                 currRank: item.currRank,
+                deltaRank: item.deltaRank,
+              })),
+              scoreRisers: snapshot.changeSummary.scoreRisers.map((item) => ({
+                code: item.code,
+                name: item.name,
+                prevScore: item.prevScore,
+                currScore: item.currScore,
+                scoreDelta: item.scoreDelta,
+              })),
+              scoreFallers: snapshot.changeSummary.scoreFallers.map((item) => ({
+                code: item.code,
+                name: item.name,
+                prevScore: item.prevScore,
+                currScore: item.currScore,
+                scoreDelta: item.scoreDelta,
               })),
             }
           : null,
         rsSummary: snapshot.rsSummary ?? null,
         tuningSummary: snapshot.tuningSummary ?? null,
+        validationSummary: snapshot.validationSummary
+          ? {
+              updatedAt: snapshot.validationSummary.updatedAt,
+              lastWeeklyAt: snapshot.validationSummary.lastWeeklyAt,
+              lastMonthlyAt: snapshot.validationSummary.lastMonthlyAt,
+              activeCutoffs: snapshot.validationSummary.activeCutoffs,
+              latestRuns: {
+                weekly: snapshot.validationSummary.latestRuns.weekly
+                  ? {
+                      period: "weekly",
+                      generatedAt: snapshot.validationSummary.latestRuns.weekly.generatedAt,
+                      sampleCount: snapshot.validationSummary.latestRuns.weekly.sampleCount,
+                    }
+                  : null,
+                monthly: snapshot.validationSummary.latestRuns.monthly
+                  ? {
+                      period: "monthly",
+                      generatedAt: snapshot.validationSummary.latestRuns.monthly.generatedAt,
+                      sampleCount: snapshot.validationSummary.latestRuns.monthly.sampleCount,
+                    }
+                  : null,
+              },
+            }
+          : null,
         alertsMeta: snapshot.alertsMeta ?? null,
         lastRebuildStatus: progress
           ? {

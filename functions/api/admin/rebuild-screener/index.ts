@@ -5,6 +5,8 @@ import { attachMetrics, createRequestMetrics } from "../../../lib/observability"
 import { errorJson, json, serverError } from "../../../lib/response";
 import {
   analyzeScreenerRawCandidate,
+  deriveAdaptiveCutoffs,
+  type ScreenerAdaptiveCutoffs,
   type ScreenerBenchmarkMap,
   type ScreenerStoredCandidate,
 } from "../../../lib/screener";
@@ -18,12 +20,16 @@ import {
   type ScreenerSnapshot,
   type ScreenerTuningSummary,
   type ScreenerRsSummary,
+  type ScreenerValidationRunSummary,
+  type ScreenerValidationState,
   type UniverseSnapshot,
   rebuildLockKey,
   rebuildProgressKey,
   persistAlertStateKey,
   persistChangeHistoryKey,
   persistFailureHistoryKey,
+  persistValidationHistoryKey,
+  persistValidationStateKey,
   persistScreenerDateKey,
   persistScreenerLastSuccessKey,
   screenerDateKey,
@@ -58,6 +64,8 @@ const ALERT_DEFAULT_TOP_N = 5;
 const ALERT_DEFAULT_MIN_SCORE = 80;
 const ALERT_DEFAULT_MIN_DELTA = 5;
 const ALERT_DEFAULT_COOLDOWN_DAYS = 2;
+const VALIDATION_STATE_TTL_SEC = 365 * 24 * 60 * 60; // 365d
+const VALIDATION_HISTORY_TTL_SEC = 365 * 24 * 60 * 60; // 365d
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
@@ -85,11 +93,21 @@ const parseForce = (url: URL): boolean => {
 };
 
 type RebuildMode = "step" | "trigger";
+type ValidationMode = "auto" | "none" | "weekly" | "monthly" | "all";
 
 const parseMode = (url: URL): RebuildMode => {
   const raw = (url.searchParams.get("mode") ?? "step").trim().toLowerCase();
   if (raw === "trigger") return "trigger";
   return "step";
+};
+
+const parseValidationMode = (url: URL): ValidationMode => {
+  const raw = (url.searchParams.get("validate") ?? "auto").trim().toLowerCase();
+  if (raw === "none") return "none";
+  if (raw === "weekly") return "weekly";
+  if (raw === "monthly") return "monthly";
+  if (raw === "all") return "all";
+  return "auto";
 };
 
 const parsePositiveInt = (raw: string | null, fallback: number, min: number, max: number): number => {
@@ -269,24 +287,64 @@ const buildChangeSummary = (
   previous: ScreenerSnapshot | null,
   current: ScreenerStoredCandidate[],
 ): ScreenerChangeSummary | null => {
+  const toChangeItem = (
+    candidate: ScreenerStoredCandidate,
+    overrides: Partial<{
+      prevRank: number | null;
+      currRank: number | null;
+      deltaRank: number | null;
+      prevScore: number | null;
+      currScore: number | null;
+      scoreDelta: number | null;
+      prevConfidence: number | null;
+      currConfidence: number | null;
+      confidenceDelta: number | null;
+    }> = {},
+  ) => {
+    const currScore = overrides.currScore ?? candidate.scoring.all.score;
+    const currConfidence = overrides.currConfidence ?? candidate.scoring.all.confidence;
+    const prevScore = overrides.prevScore ?? null;
+    const prevConfidence = overrides.prevConfidence ?? null;
+    const scoreDelta =
+      overrides.scoreDelta ??
+      (prevScore != null && currScore != null ? currScore - prevScore : null);
+    const confidenceDelta =
+      overrides.confidenceDelta ??
+      (prevConfidence != null && currConfidence != null
+        ? currConfidence - prevConfidence
+        : null);
+
+    return {
+      code: candidate.code,
+      name: candidate.name,
+      market: candidate.market,
+      prevRank: overrides.prevRank ?? null,
+      currRank: overrides.currRank ?? null,
+      deltaRank: overrides.deltaRank ?? null,
+      score: currScore,
+      confidence: currConfidence,
+      prevScore,
+      currScore,
+      scoreDelta,
+      prevConfidence,
+      currConfidence,
+      confidenceDelta,
+    };
+  };
+
   const currentTop = current.slice(0, CHANGE_BASIS_TOP_N);
   if (!previous) {
     return {
       generatedAt: nowIsoKst(),
       basisTopN: CHANGE_BASIS_TOP_N,
-      added: currentTop.slice(0, 10).map((candidate, index) => ({
-        code: candidate.code,
-        name: candidate.name,
-        market: candidate.market,
-        prevRank: null,
-        currRank: index + 1,
-        deltaRank: null,
-        score: candidate.scoring.all.score,
-        confidence: candidate.scoring.all.confidence,
-      })),
+      added: currentTop
+        .slice(0, 10)
+        .map((candidate, index) => toChangeItem(candidate, { currRank: index + 1 })),
       removed: [],
       risers: [],
       fallers: [],
+      scoreRisers: [],
+      scoreFallers: [],
     };
   }
 
@@ -299,30 +357,27 @@ const buildChangeSummary = (
 
   const added = currentTop
     .filter((candidate) => !prevRank.has(candidate.code))
-    .map((candidate, index) => ({
-      code: candidate.code,
-      name: candidate.name,
-      market: candidate.market,
-      prevRank: null,
-      currRank: curRank.get(candidate.code) ?? index + 1,
-      deltaRank: null,
-      score: candidate.scoring.all.score,
-      confidence: candidate.scoring.all.confidence,
-    }))
+    .map((candidate, index) =>
+      toChangeItem(candidate, {
+        currRank: curRank.get(candidate.code) ?? index + 1,
+      }),
+    )
     .slice(0, 10);
 
   const removed = previousTop
     .filter((candidate) => !curRank.has(candidate.code))
-    .map((candidate, index) => ({
-      code: candidate.code,
-      name: candidate.name,
-      market: candidate.market,
-      prevRank: prevRank.get(candidate.code) ?? index + 1,
-      currRank: null,
-      deltaRank: null,
-      score: candidate.scoring.all.score,
-      confidence: candidate.scoring.all.confidence,
-    }))
+    .map((candidate, index) =>
+      toChangeItem(candidate, {
+        prevRank: prevRank.get(candidate.code) ?? index + 1,
+        currRank: null,
+        prevScore: candidate.scoring.all.score,
+        currScore: candidate.scoring.all.score,
+        scoreDelta: null,
+        prevConfidence: candidate.scoring.all.confidence,
+        currConfidence: candidate.scoring.all.confidence,
+        confidenceDelta: null,
+      }),
+    )
     .slice(0, 10);
 
   const movers = currentTop
@@ -331,16 +386,16 @@ const buildChangeSummary = (
       const before = prevRank.get(candidate.code) ?? 0;
       const after = curRank.get(candidate.code) ?? 0;
       const deltaRank = before - after;
-      return {
-        code: candidate.code,
-        name: candidate.name,
-        market: candidate.market,
+      const prevCandidate = previousByCode.get(candidate.code);
+      return toChangeItem(candidate, {
         prevRank: before,
         currRank: after,
         deltaRank,
-        score: candidate.scoring.all.score,
-        confidence: candidate.scoring.all.confidence,
-      };
+        prevScore: prevCandidate?.scoring.all.score ?? null,
+        currScore: candidate.scoring.all.score,
+        prevConfidence: prevCandidate?.scoring.all.confidence ?? null,
+        currConfidence: candidate.scoring.all.confidence,
+      });
     });
 
   const risers = movers
@@ -360,11 +415,31 @@ const buildChangeSummary = (
     if (cur) {
       item.score = cur.scoring.all.score;
       item.confidence = cur.scoring.all.confidence;
+      item.currScore = cur.scoring.all.score;
+      item.currConfidence = cur.scoring.all.confidence;
     } else if (prev) {
       item.score = prev.scoring.all.score;
       item.confidence = prev.scoring.all.confidence;
+      item.currScore = prev.scoring.all.score;
+      item.currConfidence = prev.scoring.all.confidence;
+    }
+    if (item.prevScore != null && item.currScore != null) {
+      item.scoreDelta = item.currScore - item.prevScore;
+    }
+    if (item.prevConfidence != null && item.currConfidence != null) {
+      item.confidenceDelta = item.currConfidence - item.prevConfidence;
     }
   }
+
+  const scoreRisers = movers
+    .filter((item) => (item.scoreDelta ?? 0) > 0)
+    .sort((a, b) => (b.scoreDelta ?? 0) - (a.scoreDelta ?? 0))
+    .slice(0, 10);
+
+  const scoreFallers = movers
+    .filter((item) => (item.scoreDelta ?? 0) < 0)
+    .sort((a, b) => (a.scoreDelta ?? 0) - (b.scoreDelta ?? 0))
+    .slice(0, 10);
 
   return {
     generatedAt: nowIsoKst(),
@@ -373,6 +448,8 @@ const buildChangeSummary = (
     removed,
     risers,
     fallers,
+    scoreRisers,
+    scoreFallers,
   };
 };
 
@@ -419,6 +496,208 @@ const buildTuningSummary = (candidates: ScreenerStoredCandidate[]): ScreenerTuni
       vcp: avg(tunings.map((item) => item.thresholds.vcp)),
     },
   };
+};
+
+const averageNullable = (values: Array<number | null | undefined>): number | null => {
+  const filtered = values.filter(
+    (value): value is number => value != null && Number.isFinite(value),
+  );
+  if (filtered.length === 0) return null;
+  return filtered.reduce((sum, value) => sum + value, 0) / filtered.length;
+};
+
+const roundNullable = (value: number | null): number | null => {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+};
+
+const strategyBacktestKey = (
+  strategy: keyof ScreenerValidationRunSummary["strategies"],
+): keyof ScreenerStoredCandidate["backtestSummary"] => {
+  if (strategy === "volume") return "volume";
+  if (strategy === "hs") return "hs";
+  if (strategy === "ihs") return "ihs";
+  if (strategy === "vcp") return "vcp";
+  return "all";
+};
+
+const buildValidationStrategySummary = (
+  candidates: ScreenerStoredCandidate[],
+  strategy: keyof ScreenerValidationRunSummary["strategies"],
+  recommendedCutoff: number,
+): ScreenerValidationRunSummary["strategies"]["all"] => {
+  const summaryKey = strategyBacktestKey(strategy);
+  const validBacktests = candidates
+    .map((candidate) => candidate.backtestSummary[summaryKey])
+    .filter(
+      (summary): summary is NonNullable<ScreenerStoredCandidate["backtestSummary"]["all"]> =>
+        summary != null &&
+        summary.trades >= 3 &&
+        summary.winRate != null &&
+        summary.PF != null &&
+        summary.MDD != null,
+    );
+
+  return {
+    trades: validBacktests.reduce((sum, summary) => sum + summary.trades, 0),
+    winRate: roundNullable(averageNullable(validBacktests.map((summary) => summary.winRate))),
+    pf: roundNullable(averageNullable(validBacktests.map((summary) => summary.PF))),
+    mdd: roundNullable(averageNullable(validBacktests.map((summary) => summary.MDD))),
+    quality: roundNullable(averageNullable(candidates.map((candidate) => candidate.tuning?.quality))),
+    recommendedCutoff,
+  };
+};
+
+const buildValidationRunSummary = (
+  period: "weekly" | "monthly",
+  generatedAt: string,
+  candidates: ScreenerStoredCandidate[],
+  cutoffs: ScreenerAdaptiveCutoffs,
+): ScreenerValidationRunSummary => {
+  const all = buildValidationStrategySummary(candidates, "all", cutoffs.all);
+  const volume = buildValidationStrategySummary(candidates, "volume", cutoffs.volume);
+  const hs = buildValidationStrategySummary(candidates, "hs", cutoffs.hs);
+  const ihs = buildValidationStrategySummary(candidates, "ihs", cutoffs.ihs);
+  const vcp = buildValidationStrategySummary(candidates, "vcp", cutoffs.vcp);
+
+  return {
+    period,
+    generatedAt,
+    sampleCount: candidates.length,
+    cutoffs,
+    strategies: {
+      all,
+      volume,
+      hs,
+      ihs,
+      vcp,
+    },
+  };
+};
+
+const daysBetween = (fromIso: string, toIso: string): number => {
+  const from = Date.parse(fromIso);
+  const to = Date.parse(toIso);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return Number.POSITIVE_INFINITY;
+  return Math.floor((to - from) / (24 * 60 * 60 * 1000));
+};
+
+const isWeeklyDue = (lastWeeklyAt: string | null, nowIso: string): boolean => {
+  if (!lastWeeklyAt) return true;
+  return daysBetween(lastWeeklyAt, nowIso) >= 7;
+};
+
+const isMonthlyDue = (lastMonthlyAt: string | null, nowIso: string): boolean => {
+  if (!lastMonthlyAt) return true;
+  return lastMonthlyAt.slice(0, 7) !== nowIso.slice(0, 7);
+};
+
+const averageCutoffs = (
+  first: ScreenerAdaptiveCutoffs,
+  second: ScreenerAdaptiveCutoffs,
+): ScreenerAdaptiveCutoffs => ({
+  all: Math.round((first.all + second.all) / 2),
+  volume: Math.round((first.volume + second.volume) / 2),
+  hs: Math.round((first.hs + second.hs) / 2),
+  ihs: Math.round((first.ihs + second.ihs) / 2),
+  vcp: Math.round((first.vcp + second.vcp) / 2),
+});
+
+const runValidationAutomation = async (
+  env: Env,
+  mode: ValidationMode,
+  candidates: ScreenerStoredCandidate[],
+): Promise<{ state: ScreenerValidationState | null; warnings: string[] }> => {
+  const warnings: string[] = [];
+  const backend = persistenceBackend(env);
+  const generatedAt = nowIsoKst();
+  const fallbackCutoffs = deriveAdaptiveCutoffs(candidates);
+
+  if (backend === "none") {
+    return {
+      state: {
+        updatedAt: generatedAt,
+        lastWeeklyAt: null,
+        lastMonthlyAt: null,
+        activeCutoffs: fallbackCutoffs,
+        latestRuns: {
+          weekly: null,
+          monthly: null,
+        },
+      },
+      warnings,
+    };
+  }
+
+  const prevState =
+    (await getPersistedJson<ScreenerValidationState>(env, persistValidationStateKey())) ?? null;
+
+  const weeklyDue = isWeeklyDue(prevState?.lastWeeklyAt ?? null, generatedAt);
+  const monthlyDue = isMonthlyDue(prevState?.lastMonthlyAt ?? null, generatedAt);
+
+  const shouldRunWeekly =
+    mode === "all" || mode === "weekly" || (mode === "auto" && weeklyDue);
+  const shouldRunMonthly =
+    mode === "all" || mode === "monthly" || (mode === "auto" && monthlyDue);
+
+  let weeklyRun = prevState?.latestRuns.weekly ?? null;
+  let monthlyRun = prevState?.latestRuns.monthly ?? null;
+  let activeCutoffs =
+    prevState?.activeCutoffs ??
+    fallbackCutoffs;
+  let lastWeeklyAt = prevState?.lastWeeklyAt ?? null;
+  let lastMonthlyAt = prevState?.lastMonthlyAt ?? null;
+
+  if (shouldRunWeekly) {
+    const weeklyCutoffs = deriveAdaptiveCutoffs(candidates);
+    weeklyRun = buildValidationRunSummary("weekly", generatedAt, candidates, weeklyCutoffs);
+    activeCutoffs = weeklyCutoffs;
+    lastWeeklyAt = generatedAt;
+    warnings.push("주간 전략 검증(워크포워드)을 실행해 컷오프를 갱신했습니다.");
+  }
+
+  if (shouldRunMonthly) {
+    const monthlyCutoffs = deriveAdaptiveCutoffs(candidates);
+    monthlyRun = buildValidationRunSummary("monthly", generatedAt, candidates, monthlyCutoffs);
+    activeCutoffs = shouldRunWeekly ? averageCutoffs(activeCutoffs, monthlyCutoffs) : monthlyCutoffs;
+    lastMonthlyAt = generatedAt;
+    warnings.push("월간 전략 검증(워크포워드)을 실행해 컷오프를 갱신했습니다.");
+  }
+
+  if (mode === "auto" && !shouldRunWeekly && !shouldRunMonthly) {
+    warnings.push("주간/월간 검증 주기가 아직 도래하지 않아 기존 컷오프를 유지했습니다.");
+  }
+
+  const state: ScreenerValidationState = {
+    updatedAt: generatedAt,
+    lastWeeklyAt,
+    lastMonthlyAt,
+    activeCutoffs,
+    latestRuns: {
+      weekly: weeklyRun,
+      monthly: monthlyRun,
+    },
+  };
+
+  await putPersistedJson(env, persistValidationStateKey(), state, VALIDATION_STATE_TTL_SEC);
+  if (weeklyRun) {
+    await putPersistedJson(
+      env,
+      persistValidationHistoryKey("weekly", generatedAt.slice(0, 10)),
+      weeklyRun,
+      VALIDATION_HISTORY_TTL_SEC,
+    );
+  }
+  if (monthlyRun) {
+    await putPersistedJson(
+      env,
+      persistValidationHistoryKey("monthly", generatedAt.slice(0, 10)),
+      monthlyRun,
+      VALIDATION_HISTORY_TTL_SEC,
+    );
+  }
+
+  return { state, warnings };
 };
 
 type AlertKind = "added" | "riser" | "faller";
@@ -589,6 +868,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const alertOptions = parseAlertOptions(url);
   const forceRun = parseForce(url);
   const mode = parseMode(url);
+  const validationMode = parseValidationMode(url);
   const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
@@ -618,6 +898,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           {
             ok: true,
             inProgress: true,
+            mode,
+            validationMode,
             rebuiltAt: null,
             universe: {
               label: "거래대금 상위 500",
@@ -748,6 +1030,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             inProgress: true,
             rebuiltAt: null,
             mode,
+            validationMode,
             universe: {
               label: "거래대금 상위 500",
               source: universeLoad.snapshot.source,
@@ -945,6 +1228,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           {
             ok: true,
             inProgress: true,
+            mode,
+            validationMode,
             rebuiltAt: null,
             universe: {
               label: "거래대금 상위 500",
@@ -991,6 +1276,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const changeSummary = buildChangeSummary(previousSnapshot ?? null, candidates);
     const rsSummary = buildRsSummary(candidates);
     const tuningSummary = buildTuningSummary(candidates);
+    const validation = await runValidationAutomation(
+      context.env,
+      validationMode,
+      candidates,
+    );
+    const validationSummary = validation.state;
+    progress.warnings = dedupeWarnings([...progress.warnings, ...validation.warnings]);
     const alertCandidates = buildAlertCandidates(changeSummary, alertOptions);
     const alerts = await applyAlertCooldown(context.env, alertOptions, alertCandidates);
     const durationMs = Date.now() - startedAtMs;
@@ -1008,6 +1300,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       changeSummary,
       rsSummary,
       tuningSummary,
+      validationSummary,
       rebuildMeta: {
         durationMs,
         batchSize,
@@ -1059,6 +1352,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             updatedAt: snapshot.updatedAt,
             changeSummary,
             alertsMeta: snapshot.alertsMeta ?? null,
+            validationSummary: snapshot.validationSummary ?? null,
           },
           PERSIST_HISTORY_TTL_SEC,
         ),
@@ -1081,6 +1375,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         failedCount: progress.failedItems.length,
         retries: progress.retryStats.totalRetries,
         kisCalls: metrics.kisCalls,
+        validationActiveCutoffs: validationSummary?.activeCutoffs ?? null,
       })}`,
     );
 
@@ -1089,6 +1384,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         {
           ok: true,
           inProgress: false,
+          mode,
+          validationMode,
           rebuiltAt: snapshot.updatedAt,
           universe: {
             label: "거래대금 상위 500",
@@ -1114,6 +1411,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           changes: changeSummary,
           rsSummary,
           tuningSummary,
+          validationSummary,
           alerts,
           warnings: snapshot.warnings,
         },

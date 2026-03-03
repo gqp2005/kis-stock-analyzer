@@ -48,6 +48,13 @@ vi.mock("../functions/lib/universe", () => ({
 }));
 
 vi.mock("../functions/lib/screener", () => ({
+  deriveAdaptiveCutoffs: vi.fn(() => ({
+    all: 50,
+    volume: 58,
+    hs: 68,
+    ihs: 62,
+    vcp: 80,
+  })),
   analyzeScreenerRawCandidate: vi.fn(() => ({
     code: "005930",
     name: "삼성전자",

@@ -136,6 +136,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               changeSummary: lastSuccessSnapshot.changeSummary ?? null,
               rsSummary: lastSuccessSnapshot.rsSummary ?? null,
               tuningSummary: lastSuccessSnapshot.tuningSummary ?? null,
+              validationSummary: lastSuccessSnapshot.validationSummary ?? null,
               rebuildMeta: lastSuccessSnapshot.rebuildMeta ?? null,
             }
           : null,

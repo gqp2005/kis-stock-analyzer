@@ -55,7 +55,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }
 
     const [changes, failures, alertState] = await Promise.all([
-      listPersistedByPrefix<{ date?: string; updatedAt?: string; changeSummary?: unknown; alertsMeta?: unknown }>(
+      listPersistedByPrefix<{
+        date?: string;
+        updatedAt?: string;
+        changeSummary?: unknown;
+        alertsMeta?: unknown;
+        validationSummary?: unknown;
+      }>(
         context.env,
         persistChangeHistoryPrefix(),
         limit,
@@ -78,6 +84,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           updatedAt: item.value.updatedAt ?? null,
           changeSummary: item.value.changeSummary ?? null,
           alertsMeta: item.value.alertsMeta ?? null,
+          validationSummary: item.value.validationSummary ?? null,
         })),
         failures: failures.map((item) => ({
           date: item.value.date ?? dateFromPersistKey(item.key),

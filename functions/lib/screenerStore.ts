@@ -45,6 +45,18 @@ export const persistFailureHistoryPrefix = (): string =>
 export const persistAlertStateKey = (): string =>
   "alerts:last_sent";
 
+export const persistValidationStateKey = (): string =>
+  "validation:state";
+
+export const persistValidationHistoryKey = (
+  period: "weekly" | "monthly",
+  date: string,
+): string => `history:validation:${period}:${date}`;
+
+export const persistValidationHistoryPrefix = (
+  period?: "weekly" | "monthly",
+): string => (period ? `history:validation:${period}:` : "history:validation:");
+
 export interface RebuildFailureItem {
   code: string;
   name: string;
@@ -78,6 +90,12 @@ export interface ScreenerRankChangeItem {
   deltaRank: number | null;
   score: number;
   confidence: number;
+  prevScore: number | null;
+  currScore: number | null;
+  scoreDelta: number | null;
+  prevConfidence: number | null;
+  currConfidence: number | null;
+  confidenceDelta: number | null;
 }
 
 export interface ScreenerChangeSummary {
@@ -87,6 +105,8 @@ export interface ScreenerChangeSummary {
   removed: ScreenerRankChangeItem[];
   risers: ScreenerRankChangeItem[];
   fallers: ScreenerRankChangeItem[];
+  scoreRisers: ScreenerRankChangeItem[];
+  scoreFallers: ScreenerRankChangeItem[];
 }
 
 export interface ScreenerRsSummary {
@@ -106,6 +126,48 @@ export interface ScreenerTuningSummary {
     ihs: number;
     vcp: number;
   } | null;
+}
+
+export interface ScreenerAdaptiveCutoffs {
+  all: number;
+  volume: number;
+  hs: number;
+  ihs: number;
+  vcp: number;
+}
+
+export interface ScreenerValidationStrategySummary {
+  trades: number;
+  winRate: number | null;
+  pf: number | null;
+  mdd: number | null;
+  quality: number | null;
+  recommendedCutoff: number;
+}
+
+export interface ScreenerValidationRunSummary {
+  period: "weekly" | "monthly";
+  generatedAt: string;
+  sampleCount: number;
+  cutoffs: ScreenerAdaptiveCutoffs;
+  strategies: {
+    all: ScreenerValidationStrategySummary;
+    volume: ScreenerValidationStrategySummary;
+    hs: ScreenerValidationStrategySummary;
+    ihs: ScreenerValidationStrategySummary;
+    vcp: ScreenerValidationStrategySummary;
+  };
+}
+
+export interface ScreenerValidationState {
+  updatedAt: string;
+  lastWeeklyAt: string | null;
+  lastMonthlyAt: string | null;
+  activeCutoffs: ScreenerAdaptiveCutoffs;
+  latestRuns: {
+    weekly: ScreenerValidationRunSummary | null;
+    monthly: ScreenerValidationRunSummary | null;
+  };
 }
 
 export interface UniverseSnapshot {
@@ -129,6 +191,7 @@ export interface ScreenerSnapshot {
   changeSummary?: ScreenerChangeSummary | null;
   rsSummary?: ScreenerRsSummary | null;
   tuningSummary?: ScreenerTuningSummary | null;
+  validationSummary?: ScreenerValidationState | null;
   rebuildMeta?: {
     durationMs: number;
     batchSize: number;

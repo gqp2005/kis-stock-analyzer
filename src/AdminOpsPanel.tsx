@@ -246,6 +246,22 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
                 <strong>{formatDateTime(statusData.snapshot?.updatedAt ?? null)}</strong>
               </div>
             </div>
+            {statusData.snapshot?.validationSummary && (
+              <>
+                <p className="meta">
+                  검증 컷오프 A/V/H/I/VCP=
+                  {statusData.snapshot.validationSummary.activeCutoffs.all}/
+                  {statusData.snapshot.validationSummary.activeCutoffs.volume}/
+                  {statusData.snapshot.validationSummary.activeCutoffs.hs}/
+                  {statusData.snapshot.validationSummary.activeCutoffs.ihs}/
+                  {statusData.snapshot.validationSummary.activeCutoffs.vcp}
+                </p>
+                <p className="meta">
+                  주간 검증 {formatDateTime(statusData.snapshot.validationSummary.lastWeeklyAt)} · 월간 검증{" "}
+                  {formatDateTime(statusData.snapshot.validationSummary.lastMonthlyAt)}
+                </p>
+              </>
+            )}
           </div>
 
           <div className="card">
@@ -312,6 +328,14 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
                       신규 {change.changeSummary?.added.length ?? 0} · 상승{" "}
                       {change.changeSummary?.risers.length ?? 0} · 하락{" "}
                       {change.changeSummary?.fallers.length ?? 0}
+                    </p>
+                    <p className="meta">
+                      점수상승 {change.changeSummary?.scoreRisers.length ?? 0} · 점수하락{" "}
+                      {change.changeSummary?.scoreFallers.length ?? 0}
+                    </p>
+                    <p className="meta">
+                      주간검증 {formatDateTime(change.validationSummary?.lastWeeklyAt ?? null)} · 월간검증{" "}
+                      {formatDateTime(change.validationSummary?.lastMonthlyAt ?? null)}
                     </p>
                   </article>
                 ))}
