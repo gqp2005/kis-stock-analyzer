@@ -100,6 +100,13 @@ const SWING_LOOKBACK = 120;
 const SWING_LEFT_RIGHT = 3;
 const HS_HEAD_MIN_GAP = 0.03;
 const HS_SHOULDER_MAX_DIFF = 0.04;
+const QUALITY_MIN_AVG_TURNOVER_20 = 700_000_000;
+const QUALITY_MAX_ZERO_VOLUME_DAYS_20 = 2;
+const QUALITY_MAX_CONSECUTIVE_ZERO_VOLUME = 2;
+const QUALITY_MAX_CRASH_DAYS_60 = 2;
+const QUALITY_MAX_GAP_CRASH_DAYS_60 = 2;
+const QUALITY_GAP_CRASH_RETURN = -0.12;
+const QUALITY_DAILY_CRASH_RETURN = -0.15;
 
 const average = (values: number[]): number => {
   if (values.length === 0) return 0;
@@ -108,6 +115,80 @@ const average = (values: number[]): number => {
 
 const toNullableRounded = (value: number | null): number | null => round2(value);
 const toRounded = (value: number): number => round2(value) ?? value;
+
+const averageNullable = (values: Array<number | null | undefined>): number | null => {
+  const filtered = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (filtered.length === 0) return null;
+  return average(filtered);
+};
+
+interface QualityGateResult {
+  passed: boolean;
+  reasons: string[];
+}
+
+const evaluateQualityGate = (candles: Candle[]): QualityGateResult => {
+  const reasons: string[] = [];
+  const sample20 = candles.slice(-20);
+  const sample60 = candles.slice(-60);
+
+  const avgTurnover20 = average(sample20.map((candle) => candle.close * candle.volume));
+  if (!Number.isFinite(avgTurnover20) || avgTurnover20 < QUALITY_MIN_AVG_TURNOVER_20) {
+    reasons.push("최근 20일 평균 거래대금이 낮아 유동성 필터에서 제외했습니다.");
+  }
+
+  const zeroVolumeDays20 = sample20.filter((candle) => candle.volume <= 0).length;
+  if (zeroVolumeDays20 > QUALITY_MAX_ZERO_VOLUME_DAYS_20) {
+    reasons.push("최근 거래정지/거래미체결 징후(0거래량 일수)가 감지되었습니다.");
+  }
+
+  let maxZeroVolumeStreak = 0;
+  let zeroStreak = 0;
+  for (const candle of sample20) {
+    if (candle.volume <= 0) {
+      zeroStreak += 1;
+      maxZeroVolumeStreak = Math.max(maxZeroVolumeStreak, zeroStreak);
+    } else {
+      zeroStreak = 0;
+    }
+  }
+  if (maxZeroVolumeStreak > QUALITY_MAX_CONSECUTIVE_ZERO_VOLUME) {
+    reasons.push("연속 0거래량 구간이 길어 거래정지 가능성을 배제하지 못했습니다.");
+  }
+
+  let crashDays60 = 0;
+  let gapCrashDays60 = 0;
+  for (let i = Math.max(1, candles.length - 60); i < candles.length; i += 1) {
+    const prevClose = candles[i - 1].close;
+    const candle = candles[i];
+    if (!Number.isFinite(prevClose) || prevClose <= 0) continue;
+    const dayReturn = candle.close / prevClose - 1;
+    const gapReturn = candle.open / prevClose - 1;
+    if (dayReturn <= QUALITY_DAILY_CRASH_RETURN) crashDays60 += 1;
+    if (gapReturn <= QUALITY_GAP_CRASH_RETURN) gapCrashDays60 += 1;
+  }
+  if (crashDays60 >= QUALITY_MAX_CRASH_DAYS_60) {
+    reasons.push("최근 60일 급락 일봉이 반복되어 품질 필터에서 제외했습니다.");
+  }
+  if (gapCrashDays60 >= QUALITY_MAX_GAP_CRASH_DAYS_60) {
+    reasons.push("최근 60일 갭하락 급락이 반복되어 품질 필터에서 제외했습니다.");
+  }
+
+  const noTradeLikeDays = sample60.filter(
+    (candle) =>
+      candle.volume <= 0 &&
+      Math.abs(candle.high - candle.low) < 1e-8 &&
+      Math.abs(candle.close - candle.open) < 1e-8,
+  ).length;
+  if (noTradeLikeDays >= 3) {
+    reasons.push("거래정지성 캔들(무거래/가격정지)이 반복되어 제외했습니다.");
+  }
+
+  return {
+    passed: reasons.length === 0,
+    reasons,
+  };
+};
 
 const defaultPatternHit = (reason: string): PatternHit => ({
   detected: false,
@@ -762,6 +843,8 @@ export const analyzeScreenerRawCandidate = (
   const marketKey: "KOSPI" | "KOSDAQ" = stock.market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
   const marketBenchmark = benchmarks?.[marketKey] ?? null;
   const day = analyzeTimeframe("day", candles.slice(-260));
+  const qualityGate = evaluateQualityGate(day.candles);
+  if (!qualityGate.passed) return null;
   const hs = detectHeadShouldersPattern(day.candles);
   const ihs = detectInverseHeadShouldersPattern(day.candles);
   const volume = computeVolumeHit(day);
@@ -849,6 +932,7 @@ export const analyzeScreenerRawCandidate = (
   const sharedReasons: string[] = [];
   if (dataAdj.reason) sharedReasons.push(dataAdj.reason);
   if (liquidityAdj.reason) sharedReasons.push(liquidityAdj.reason);
+  sharedReasons.push("유동성/거래정지/급락 품질 필터를 통과한 종목입니다.");
   if (hs.state === "CONFIRMED") sharedReasons.push("헤드앤숄더 확정 패턴이 감지되어 하방 리스크 경고가 있습니다.");
   if (ihs.state === "CONFIRMED") sharedReasons.push("역헤드앤숄더 확정 패턴이 감지되어 반등 가능성이 강화되었습니다.");
   if (vcp.detected) {
@@ -1024,6 +1108,96 @@ const sortByHsRisk = (items: ScreenerItem[]): ScreenerItem[] =>
       b.confidence - a.confidence,
   );
 
+interface ScreenerAdaptiveCutoffs {
+  all: number;
+  volume: number;
+  hs: number;
+  ihs: number;
+  vcp: number;
+}
+
+const DEFAULT_ADAPTIVE_CUTOFFS: ScreenerAdaptiveCutoffs = {
+  all: 50,
+  volume: 58,
+  hs: 68,
+  ihs: 62,
+  vcp: 80,
+};
+
+const clampCutoff = (value: number, min: number, max: number): number =>
+  clamp(Math.round(value), min, max);
+
+const computeStrategyAdjustment = (
+  summaries: Array<StrategyBacktestSummary | null | undefined>,
+  tuningQualities: Array<number | null | undefined>,
+): number => {
+  const valid = summaries.filter(
+    (summary): summary is StrategyBacktestSummary =>
+      summary != null &&
+      summary.trades >= 3 &&
+      summary.winRate != null &&
+      summary.PF != null &&
+      summary.MDD != null,
+  );
+
+  if (valid.length === 0) return 0;
+
+  const avgWinRate = average(valid.map((summary) => summary.winRate as number));
+  const avgPf = average(valid.map((summary) => summary.PF as number));
+  const avgMdd = average(valid.map((summary) => summary.MDD as number));
+  const avgTuningQuality = averageNullable(tuningQualities) ?? 0;
+
+  let adjustment = 0;
+  if (avgWinRate < 45) adjustment += 4;
+  else if (avgWinRate >= 57) adjustment -= 2;
+
+  if (avgPf < 1.0) adjustment += 4;
+  else if (avgPf >= 1.25) adjustment -= 2;
+
+  if (avgMdd <= -18) adjustment += 3;
+  else if (avgMdd >= -10) adjustment -= 1;
+
+  if (valid.length < 20) adjustment += 1;
+  if (avgTuningQuality < 45) adjustment += 2;
+  else if (avgTuningQuality >= 70) adjustment -= 1;
+
+  return adjustment;
+};
+
+const deriveAdaptiveCutoffs = (candidates: ScreenerStoredCandidate[]): ScreenerAdaptiveCutoffs => {
+  if (candidates.length === 0) return DEFAULT_ADAPTIVE_CUTOFFS;
+
+  const tuningQualities = candidates.map((candidate) => candidate.tuning?.quality);
+  const allAdj = computeStrategyAdjustment(
+    candidates.map((candidate) => candidate.backtestSummary.all),
+    tuningQualities,
+  );
+  const volumeAdj = computeStrategyAdjustment(
+    candidates.map((candidate) => candidate.backtestSummary.volume),
+    tuningQualities,
+  );
+  const hsAdj = computeStrategyAdjustment(
+    candidates.map((candidate) => candidate.backtestSummary.hs),
+    tuningQualities,
+  );
+  const ihsAdj = computeStrategyAdjustment(
+    candidates.map((candidate) => candidate.backtestSummary.ihs),
+    tuningQualities,
+  );
+  const vcpAdj = computeStrategyAdjustment(
+    candidates.map((candidate) => candidate.backtestSummary.vcp),
+    tuningQualities,
+  );
+
+  return {
+    all: clampCutoff(DEFAULT_ADAPTIVE_CUTOFFS.all + allAdj, 40, 75),
+    volume: clampCutoff(DEFAULT_ADAPTIVE_CUTOFFS.volume + volumeAdj, 50, 85),
+    hs: clampCutoff(DEFAULT_ADAPTIVE_CUTOFFS.hs + hsAdj, 55, 88),
+    ihs: clampCutoff(DEFAULT_ADAPTIVE_CUTOFFS.ihs + ihsAdj, 55, 88),
+    vcp: clampCutoff(DEFAULT_ADAPTIVE_CUTOFFS.vcp + vcpAdj, 70, 95),
+  };
+};
+
 export const buildScreenerView = (
   candidates: ScreenerStoredCandidate[],
   market: ScreenerMarketFilter,
@@ -1036,6 +1210,7 @@ export const buildScreenerView = (
   const filteredCandidates = candidates.filter((candidate) =>
     market === "ALL" ? true : candidate.market === market,
   );
+  const adaptiveCutoffs = deriveAdaptiveCutoffs(filteredCandidates);
   const rawItems = filteredCandidates.map((candidate) =>
     materializeScreenerItem(candidate, strategy),
   );
@@ -1047,10 +1222,16 @@ export const buildScreenerView = (
     strategy === "HS"
       ? rawItems
       : rawItems.filter((item) => isRsQualified(item));
-  const items =
-    strategy === "VCP"
-      ? rsFilteredItems.filter((item) => item.hits.vcp.detected && item.hits.vcp.score >= 80)
-      : rsFilteredItems;
+
+  const items = rsFilteredItems.filter((item) => {
+    if (strategy === "VOLUME") return item.scoreTotal >= adaptiveCutoffs.volume;
+    if (strategy === "HS") return item.scoreTotal >= adaptiveCutoffs.hs;
+    if (strategy === "IHS") return item.scoreTotal >= adaptiveCutoffs.ihs;
+    if (strategy === "VCP") {
+      return item.hits.vcp.detected && item.hits.vcp.score >= adaptiveCutoffs.vcp;
+    }
+    return item.scoreTotal >= adaptiveCutoffs.all || isWarningCandidate(item);
+  });
 
   if (strategy === "HS") {
     return {

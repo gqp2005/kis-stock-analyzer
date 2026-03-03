@@ -36,7 +36,7 @@ import {
   persistenceBackend,
   putPersistedJson,
 } from "../../../lib/screenerPersistence";
-import { ExternalProvider, StaticProvider } from "../../../lib/universe";
+import { ExternalProvider, MarketSummaryProvider, StaticProvider } from "../../../lib/universe";
 import type { Env } from "../../../lib/types";
 
 const TARGET_UNIVERSE = 500;
@@ -82,6 +82,14 @@ const parseBatchSize = (url: URL): number => {
 const parseForce = (url: URL): boolean => {
   const raw = (url.searchParams.get("force") ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+};
+
+type RebuildMode = "step" | "trigger";
+
+const parseMode = (url: URL): RebuildMode => {
+  const raw = (url.searchParams.get("mode") ?? "step").trim().toLowerCase();
+  if (raw === "trigger") return "trigger";
+  return "step";
 };
 
 const parsePositiveInt = (raw: string | null, fallback: number, min: number, max: number): number => {
@@ -179,26 +187,41 @@ const loadUniverseSnapshot = async (
   } catch (error) {
     const message = error instanceof Error ? error.message : "external provider error";
     warnings.push(`ExternalProvider 실패: ${message}`);
+    const marketSummaryProvider = new MarketSummaryProvider();
+    try {
+      const backupUniverse = await marketSummaryProvider.getTopByTurnover(date, TARGET_UNIVERSE);
+      snapshot = {
+        date,
+        updatedAt: nowIsoKst(),
+        source: "EXTERNAL_BACKUP",
+        items: backupUniverse,
+        warnings: ["Primary 유니버스 소스 실패로 보조 소스(sise_market_sum)를 사용했습니다."],
+      };
+    } catch (backupError) {
+      const backupMessage =
+        backupError instanceof Error ? backupError.message : "backup provider error";
+      warnings.push(`MarketSummaryProvider 실패: ${backupMessage}`);
 
-    const lastUniverse = await getCachedJson<UniverseSnapshot>(cache, universeLastSuccessKey());
-    if (lastUniverse && lastUniverse.items.length > 0) {
-      snapshot = {
-        ...lastUniverse,
-        date,
-        updatedAt: nowIsoKst(),
-        source: "LAST_SUCCESS",
-        warnings: [...lastUniverse.warnings, "마지막 성공 유니버스를 사용했습니다."],
-      };
-    } else {
-      const staticProvider = new StaticProvider();
-      const staticUniverse = await staticProvider.getTopByTurnover(date, TARGET_UNIVERSE);
-      snapshot = {
-        date,
-        updatedAt: nowIsoKst(),
-        source: "STATIC",
-        items: staticUniverse,
-        warnings: ["ExternalProvider 실패로 StaticProvider 유니버스를 사용했습니다."],
-      };
+      const lastUniverse = await getCachedJson<UniverseSnapshot>(cache, universeLastSuccessKey());
+      if (lastUniverse && lastUniverse.items.length > 0) {
+        snapshot = {
+          ...lastUniverse,
+          date,
+          updatedAt: nowIsoKst(),
+          source: "LAST_SUCCESS",
+          warnings: [...lastUniverse.warnings, "마지막 성공 유니버스를 사용했습니다."],
+        };
+      } else {
+        const staticProvider = new StaticProvider();
+        const staticUniverse = await staticProvider.getTopByTurnover(date, TARGET_UNIVERSE);
+        snapshot = {
+          date,
+          updatedAt: nowIsoKst(),
+          source: "STATIC",
+          items: staticUniverse,
+          warnings: ["External/Backup 소스 실패로 StaticProvider 유니버스를 사용했습니다."],
+        };
+      }
     }
   }
 
@@ -565,6 +588,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const alertOptions = parseAlertOptions(url);
   const forceRun = parseForce(url);
+  const mode = parseMode(url);
   const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
@@ -683,21 +707,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const universe = universeLoad.snapshot.items.slice(0, TARGET_UNIVERSE);
     const benchmarks: ScreenerBenchmarkMap = {};
     const benchmarkWarnings: string[] = [];
-    for (const market of ["KOSPI", "KOSDAQ"] as const) {
-      try {
-        const indexData = await fetchMarketIndexCandles(
-          context.env,
-          cache,
-          market,
-          320,
-          metrics,
-        );
-        benchmarks[market] = { index: indexData.index, candles: indexData.candles };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown";
-        benchmarkWarnings.push(
-          `${market} 지수 조회 실패로 RS 필터 일부를 비활성 처리했습니다: ${message}`,
-        );
+    if (mode !== "trigger") {
+      for (const market of ["KOSPI", "KOSDAQ"] as const) {
+        try {
+          const indexData = await fetchMarketIndexCandles(
+            context.env,
+            cache,
+            market,
+            320,
+            metrics,
+          );
+          benchmarks[market] = { index: indexData.index, candles: indexData.candles };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown";
+          benchmarkWarnings.push(
+            `${market} 지수 조회 실패로 RS 필터 일부를 비활성 처리했습니다: ${message}`,
+          );
+        }
       }
     }
 
@@ -712,6 +738,52 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
               ? "영속 저장소(KV/D1)가 없어 Cache API만 사용합니다."
               : "",
           ]);
+
+    if (mode === "trigger") {
+      await putCachedJson(cache, progressKey, progress, SCREENER_CACHE_TTL_SEC);
+      return finalize(
+        json(
+          {
+            ok: true,
+            inProgress: true,
+            rebuiltAt: null,
+            mode,
+            universe: {
+              label: "거래대금 상위 500",
+              source: universeLoad.snapshot.source,
+              count: universe.length,
+              cacheHit: universeLoad.cacheHit,
+            },
+            storage: {
+              backend: persistBackend,
+              enabled: persistBackend !== "none",
+            },
+            alertOptions,
+            progress: {
+              processed: progress.cursor,
+              total: universe.length,
+              remaining: Math.max(0, universe.length - progress.cursor),
+              batchSize,
+              nextCursor: progress.cursor,
+              failedCount: progress.failedItems.length,
+              retryStats: progress.retryStats,
+              lastBatch: progress.lastBatch,
+            },
+            summary: {
+              processedCount: progress.processedCount,
+              candidateCount: progress.candidates.length,
+              durationMs: Date.now() - startedAtMs,
+              kisCalls: metrics.kisCalls,
+              failedCount: progress.failedItems.length,
+              retryStats: progress.retryStats,
+            },
+            warnings: progress.warnings,
+            message: "리빌드 트리거를 설정했습니다. mode=step 호출로 배치를 진행하세요.",
+          },
+          202,
+        ),
+      );
+    }
 
     const start = Math.max(0, Math.min(progress.cursor, universe.length));
     const targetEndExclusive = Math.min(universe.length, start + batchSize);
@@ -732,7 +804,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           const candidate = analyzeScreenerRawCandidate(
             entry,
             fetched.candles.slice(-280),
-            false,
+            true,
             benchmarks,
           );
           if (!candidate) {

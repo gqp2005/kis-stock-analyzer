@@ -231,6 +231,25 @@ describe("/api/admin/rebuild-screener", () => {
     expect(body.summary.topStored).toBeGreaterThanOrEqual(1);
   });
 
+  it("supports trigger mode without processing batch items", async () => {
+    const response = await onRequestPost(
+      makeContext("http://localhost/api/admin/rebuild-screener?token=secret-token&mode=trigger"),
+    );
+    const body = (await response.json()) as {
+      ok: boolean;
+      inProgress: boolean;
+      mode: string;
+      progress: { processed: number; total: number };
+    };
+
+    expect(response.status).toBe(202);
+    expect(body.ok).toBe(true);
+    expect(body.inProgress).toBe(true);
+    expect(body.mode).toBe("trigger");
+    expect(body.progress.processed).toBe(0);
+    expect(body.progress.total).toBeGreaterThan(0);
+  });
+
   it("returns 202 inProgress when another rebuild is running", async () => {
     mockedGetCachedJson
       .mockResolvedValueOnce({ startedAt: new Date().toISOString() } as never)

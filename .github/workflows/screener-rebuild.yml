@@ -48,6 +48,30 @@ jobs:
             TARGET_URL="${REBUILD_URL}?batch=${BATCH_SIZE}&alertTopN=${NOTIFY_TOPN}&alertMinScore=${ALERT_MIN_SCORE}&alertMinDelta=${ALERT_MIN_DELTA}&alertCooldownDays=${ALERT_COOLDOWN_DAYS}"
           fi
 
+          TRIGGER_URL="${TARGET_URL}&mode=trigger"
+          STEP_URL="${TARGET_URL}&mode=step"
+
+          echo "Trigger URL: ${TRIGGER_URL}"
+          trigger_tmp="$(mktemp)"
+          trigger_code="$(curl -sS -o "${trigger_tmp}" -w "%{http_code}" \
+            -X POST "${TRIGGER_URL}" \
+            -H "x-admin-token: ${TOKEN}")"
+          trigger_body="$(cat "${trigger_tmp}")"
+          rm -f "${trigger_tmp}"
+
+          echo "Trigger call: HTTP ${trigger_code}"
+          if echo "${trigger_body}" | jq -e . >/dev/null 2>&1; then
+            echo "${trigger_body}" | jq -c .
+          else
+            echo "Non-JSON trigger body:"
+            echo "${trigger_body}"
+          fi
+
+          if [ "${trigger_code}" != "200" ] && [ "${trigger_code}" != "202" ]; then
+            echo "Trigger request failed with HTTP ${trigger_code}"
+            exit 1
+          fi
+
           attempt=1
           prev_progress_key=""
           no_progress_streak=0
@@ -56,7 +80,7 @@ jobs:
           final_code=""
           while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
             tmp_file="$(mktemp)"
-            request_url="${TARGET_URL}"
+            request_url="${STEP_URL}"
             if [ "${force_mode}" = "1" ]; then
               request_url="${request_url}&force=1"
             fi

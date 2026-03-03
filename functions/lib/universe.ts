@@ -21,7 +21,8 @@ interface ExternalProviderOptions {
   timeoutMs?: number;
 }
 
-const BASE_URL = "https://finance.naver.com/sise/sise_quant.naver";
+const QUANT_BASE_URL = "https://finance.naver.com/sise/sise_quant.naver";
+const MARKET_SUM_BASE_URL = "https://finance.naver.com/sise/sise_market_sum.naver";
 const VALID_CODE_RE = /^\d{6}$/;
 const MAX_LIMIT = 1200;
 const DEFAULT_MAX_PAGES = 10;
@@ -93,6 +94,46 @@ const parseMarketRows = (html: string, market: "KOSPI" | "KOSDAQ"): UniverseTurn
   return results;
 };
 
+const parseMarketSumRows = (html: string, market: "KOSPI" | "KOSDAQ"): UniverseTurnoverItem[] => {
+  const results: UniverseTurnoverItem[] = [];
+  const rowRe = /<tr>\s*<td class="no">[\s\S]*?<\/tr>/g;
+  const rows = html.match(rowRe) ?? [];
+
+  for (const row of rows) {
+    const codeMatch = row.match(/\/item\/main\.naver\?code=(\d{6})/);
+    if (!codeMatch) continue;
+    const code = codeMatch[1];
+    if (!VALID_CODE_RE.test(code)) continue;
+
+    const nameMatch = row.match(/class="tltle">([\s\S]*?)<\/a>/);
+    if (!nameMatch) continue;
+    const parsedName = decodeHtml(stripTags(nameMatch[1]));
+    if (!parsedName) continue;
+
+    const numberCellRe = /<td class="number">([\s\S]*?)<\/td>/g;
+    const numberCells: string[] = [];
+    let numberMatch: RegExpExecArray | null;
+    while ((numberMatch = numberCellRe.exec(row)) !== null) {
+      numberCells.push(stripTags(numberMatch[1]));
+    }
+    if (numberCells.length < 8) continue;
+
+    const price = parseNumber(numberCells[0]);
+    const volume = parseNumber(numberCells[7]);
+    if (!Number.isFinite(price) || !Number.isFinite(volume) || price <= 0 || volume <= 0) continue;
+
+    const known = stockByCode.get(code);
+    results.push({
+      code,
+      name: known?.name ?? parsedName,
+      market: known?.market === "KOSPI" || known?.market === "KOSDAQ" ? known.market : market,
+      turnover: Math.round(price * volume),
+    });
+  }
+
+  return results;
+};
+
 const mergeByCode = (items: UniverseTurnoverItem[]): UniverseTurnoverItem[] => {
   const map = new Map<string, UniverseTurnoverItem>();
   for (const item of items) {
@@ -149,7 +190,7 @@ export class ExternalProvider implements UniverseProvider {
     page: number,
   ): Promise<UniverseTurnoverItem[]> {
     const sosok = market === "KOSPI" ? "0" : "1";
-    const url = `${BASE_URL}?sosok=${sosok}&page=${page}`;
+    const url = `${QUANT_BASE_URL}?sosok=${sosok}&page=${page}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -194,3 +235,63 @@ export class ExternalProvider implements UniverseProvider {
   }
 }
 
+export class MarketSummaryProvider implements UniverseProvider {
+  private readonly fetcher: typeof fetch;
+  private readonly maxPagesPerMarket: number;
+  private readonly timeoutMs: number;
+
+  constructor(options: ExternalProviderOptions = {}) {
+    this.fetcher = options.fetcher ?? fetch;
+    this.maxPagesPerMarket = Math.max(1, Math.min(30, options.maxPagesPerMarket ?? DEFAULT_MAX_PAGES));
+    this.timeoutMs = Math.max(1000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  }
+
+  private async fetchMarketPage(
+    market: "KOSPI" | "KOSDAQ",
+    page: number,
+  ): Promise<UniverseTurnoverItem[]> {
+    const sosok = market === "KOSPI" ? "0" : "1";
+    const url = `${MARKET_SUM_BASE_URL}?sosok=${sosok}&page=${page}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetcher(url, {
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          "user-agent": "Mozilla/5.0",
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`market-sum source http ${response.status}`);
+      }
+      const html = await response.text();
+      return parseMarketSumRows(html, market);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async getTopByTurnover(_date: string, limit: number): Promise<UniverseTurnoverItem[]> {
+    const target = Math.max(20, Math.min(MAX_LIMIT, Math.floor(limit)));
+    const all: UniverseTurnoverItem[] = [];
+
+    for (const market of ["KOSPI", "KOSDAQ"] as const) {
+      for (let page = 1; page <= this.maxPagesPerMarket; page += 1) {
+        const rows = await this.fetchMarketPage(market, page);
+        if (rows.length === 0) break;
+        all.push(...rows);
+      }
+    }
+
+    const merged = mergeByCode(all)
+      .filter((item) => item.turnover > 0)
+      .sort((a, b) => b.turnover - a.turnover);
+
+    if (merged.length < Math.min(100, target / 2)) {
+      throw new Error(`market-sum universe too small (${merged.length})`);
+    }
+
+    return merged.slice(0, target);
+  }
+}

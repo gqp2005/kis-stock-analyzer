@@ -109,6 +109,8 @@ const USER_NOISY_WARNING_PATTERNS: RegExp[] = [
   /^리빌드 초기화 중입니다\./,
   /^요청 시간 예산\(/,
   /^ExternalProvider 실패로 StaticProvider 유니버스를 사용했습니다\./,
+  /^External\/Backup 소스 실패로 StaticProvider 유니버스를 사용했습니다\./,
+  /^Primary 유니버스 소스 실패로 보조 소스/,
   /^Cache API miss로 영속 저장소\(KV\/D1\) 결과를 반환합니다\./,
 ];
 

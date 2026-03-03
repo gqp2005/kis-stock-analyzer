@@ -111,7 +111,7 @@ export interface ScreenerTuningSummary {
 export interface UniverseSnapshot {
   date: string;
   updatedAt: string;
-  source: "EXTERNAL" | "STATIC" | "LAST_SUCCESS";
+  source: "EXTERNAL" | "EXTERNAL_BACKUP" | "STATIC" | "LAST_SUCCESS";
   items: UniverseTurnoverItem[];
   warnings: string[];
 }
