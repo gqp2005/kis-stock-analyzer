@@ -1133,13 +1133,24 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       entry: (typeof batchItems)[number];
       result: Awaited<ReturnType<typeof processEntry>>;
     }> = [];
-    const workDeadline = startedAtMs + REBUILD_WORK_BUDGET_MS;
+    // 요청 전체 시간이 아닌 "실제 종목 처리 구간" 기준으로 예산을 잡아
+    // 준비 작업(유니버스/지수 조회) 지연 시에도 배치가 멈추지 않도록 한다.
+    const itemWorkStartedAtMs = Date.now();
+    const workDeadline = itemWorkStartedAtMs + REBUILD_WORK_BUDGET_MS;
 
     for (const entry of batchItems) {
       const now = Date.now();
       if (now >= workDeadline - REBUILD_WORK_GUARD_MS) {
         break;
       }
+      const result = await processEntry(entry);
+      batchResults.push({ entry, result });
+    }
+
+    // 예산을 모두 써서 0건 처리되는 경우 cursor가 멈춰 무한 대기할 수 있으므로
+    // 최소 1종목은 강제로 처리해 진행률을 전진시킨다.
+    if (batchResults.length === 0 && batchItems.length > 0) {
+      const entry = batchItems[0];
       const result = await processEntry(entry);
       batchResults.push({ entry, result });
     }
