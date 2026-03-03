@@ -180,6 +180,13 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     () => sortItems(response?.warningItems ?? [], "SCORE"),
     [response?.warningItems],
   );
+  const changeSummary = response?.meta.changeSummary ?? null;
+  const changeAdded = changeSummary?.added ?? [];
+  const changeRisers = changeSummary?.risers ?? [];
+  const changeFallers = changeSummary?.fallers ?? [];
+  const changeRemoved = changeSummary?.removed ?? [];
+  const changeScoreRisers = changeSummary?.scoreRisers ?? [];
+  const changeScoreFallers = changeSummary?.scoreFallers ?? [];
 
   return (
     <section className="screener">
@@ -285,34 +292,34 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 </p>
               </>
             )}
-            {response.meta.changeSummary && (
+            {changeSummary && (
               <div className="screener-hit-row">
-                {response.meta.changeSummary.added.slice(0, 3).map((item) => (
+                {changeAdded.slice(0, 3).map((item) => (
                   <small key={`added-${item.code}`} className="reason-tag positive">
                     신규 {item.name} #{item.currRank ?? "-"}
                   </small>
                 ))}
-                {response.meta.changeSummary.risers.slice(0, 3).map((item) => (
+                {changeRisers.slice(0, 3).map((item) => (
                   <small key={`rise-${item.code}`} className="reason-tag positive">
                     상승 {item.name} #{item.prevRank ?? "-"}→#{item.currRank ?? "-"}
                   </small>
                 ))}
-                {response.meta.changeSummary.fallers.slice(0, 2).map((item) => (
+                {changeFallers.slice(0, 2).map((item) => (
                   <small key={`fall-${item.code}`} className="reason-tag negative">
                     하락 {item.name} #{item.prevRank ?? "-"}→#{item.currRank ?? "-"}
                   </small>
                 ))}
-                {response.meta.changeSummary.removed.slice(0, 2).map((item) => (
+                {changeRemoved.slice(0, 2).map((item) => (
                   <small key={`removed-${item.code}`} className="reason-tag negative">
                     이탈 {item.name} #{item.prevRank ?? "-"}
                   </small>
                 ))}
-                {response.meta.changeSummary.scoreRisers.slice(0, 2).map((item) => (
+                {changeScoreRisers.slice(0, 2).map((item) => (
                   <small key={`score-up-${item.code}`} className="reason-tag positive">
                     점수↑ {item.name} {formatSignedScore(item.scoreDelta)}
                   </small>
                 ))}
-                {response.meta.changeSummary.scoreFallers.slice(0, 2).map((item) => (
+                {changeScoreFallers.slice(0, 2).map((item) => (
                   <small key={`score-down-${item.code}`} className="reason-tag negative">
                     점수↓ {item.name} {formatSignedScore(item.scoreDelta)}
                   </small>

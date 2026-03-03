@@ -135,6 +135,9 @@ const normalizeProgress = (
   };
 };
 
+const safeArray = <T>(value: T[] | null | undefined): T[] =>
+  Array.isArray(value) ? value : [];
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const metrics = createRequestMetrics(context.request);
   const finalize = (response: Response): Response => attachMetrics(response, metrics);
@@ -325,41 +328,41 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         rebuildRequired,
         changeSummary: snapshot.changeSummary
           ? {
-              basisTopN: snapshot.changeSummary.basisTopN,
-              added: snapshot.changeSummary.added.map((item) => ({
+              basisTopN: snapshot.changeSummary.basisTopN ?? 30,
+              added: safeArray(snapshot.changeSummary.added).map((item) => ({
                 code: item.code,
                 name: item.name,
                 currRank: item.currRank,
                 currScore: item.currScore,
               })),
-              removed: snapshot.changeSummary.removed.map((item) => ({
+              removed: safeArray(snapshot.changeSummary.removed).map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
                 prevScore: item.prevScore,
               })),
-              risers: snapshot.changeSummary.risers.map((item) => ({
+              risers: safeArray(snapshot.changeSummary.risers).map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
                 currRank: item.currRank,
                 deltaRank: item.deltaRank,
               })),
-              fallers: snapshot.changeSummary.fallers.map((item) => ({
+              fallers: safeArray(snapshot.changeSummary.fallers).map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevRank: item.prevRank,
                 currRank: item.currRank,
                 deltaRank: item.deltaRank,
               })),
-              scoreRisers: snapshot.changeSummary.scoreRisers.map((item) => ({
+              scoreRisers: safeArray(snapshot.changeSummary.scoreRisers).map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevScore: item.prevScore,
                 currScore: item.currScore,
                 scoreDelta: item.scoreDelta,
               })),
-              scoreFallers: snapshot.changeSummary.scoreFallers.map((item) => ({
+              scoreFallers: safeArray(snapshot.changeSummary.scoreFallers).map((item) => ({
                 code: item.code,
                 name: item.name,
                 prevScore: item.prevScore,
