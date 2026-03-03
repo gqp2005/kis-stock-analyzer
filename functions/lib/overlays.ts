@@ -418,6 +418,31 @@ const buildTrendAndChannelSegments = (
   fanExplanation: string;
   reliabilityExplanation: string;
   reliabilityDetails: string[];
+  reliabilitySummary: {
+    total: number;
+    shown: number;
+    hidden: number;
+    averageScore: number;
+    topLines: Array<{
+      id: string;
+      label: string;
+      kind: OverlaySegment["kind"];
+      score: number;
+      touches: number;
+      breaks: number;
+      lookback: number;
+    }>;
+  };
+  regimeSummary: {
+    alignment: "UP" | "DOWN" | "MIXED";
+    items: Array<{
+      window: number;
+      label: "장기" | "중기" | "단기";
+      direction: "UP" | "SIDE" | "DOWN";
+      score: number;
+      lineId: string | null;
+    }>;
+  };
 } => {
   const lastIndex = candles.length - 1;
   const lastTime = candles[lastIndex].time;
@@ -584,12 +609,61 @@ const buildTrendAndChannelSegments = (
     ];
   }
 
-  const reliabilityRows = [...visibleTrend, ...visibleChannels, ...visibleFans]
+  const trendByWindow = new Map<number, SegmentPick>();
+  for (const candidate of trendCandidates) trendByWindow.set(candidate.lookback, candidate);
+  const regimeItems = MULTI_CHANNEL_WINDOWS.map((window) => {
+    const candidate = trendByWindow.get(window);
+    const label = window >= 200 ? "장기" : window >= 120 ? "중기" : "단기";
+    if (!candidate) {
+      return {
+        window,
+        label,
+        direction: "SIDE" as const,
+        score: 0,
+        lineId: null,
+      };
+    }
+    return {
+      window,
+      label,
+      direction:
+        candidate.segment.score < MIN_TREND_SCORE
+          ? ("SIDE" as const)
+          : candidate.segment.kind === "trendlineUp"
+            ? ("UP" as const)
+            : ("DOWN" as const),
+      score: candidate.segment.score,
+      lineId: candidate.segment.id,
+    };
+  });
+  const decisiveRegimes = regimeItems.filter((item) => item.direction !== "SIDE");
+  let regimeAlignment: "UP" | "DOWN" | "MIXED" = "MIXED";
+  if (decisiveRegimes.length > 0) {
+    if (decisiveRegimes.every((item) => item.direction === "UP")) regimeAlignment = "UP";
+    if (decisiveRegimes.every((item) => item.direction === "DOWN")) regimeAlignment = "DOWN";
+  }
+
+  const visibleAll = [...visibleTrend, ...visibleChannels, ...visibleFans];
+  const reliabilityTopLines = [...visibleAll]
     .sort((a, b) => b.segment.score - a.segment.score)
+    .slice(0, 6)
+    .map((item) => ({
+      id: item.segment.id,
+      label: item.segment.label,
+      kind: item.segment.kind,
+      score: item.segment.score,
+      touches: item.touches,
+      breaks: item.breaks,
+      lookback: item.lookback,
+    }));
+  const totalCandidateCount = trendCandidates.length + channelCandidates.length + fanCandidates.length;
+  const averageScore = visibleAll.length > 0 ? Math.round(average(visibleAll.map((item) => item.segment.score))) : 0;
+  const reliabilityRows = reliabilityTopLines
+    .sort((a, b) => b.score - a.score)
     .slice(0, 5)
     .map(
       (item) =>
-        `${item.segment.label} · 신뢰도 ${item.segment.score}점 (터치 ${item.touches}회 / 이탈 ${item.breaks}회)`,
+        `${item.label} · 신뢰도 ${item.score}점 (터치 ${item.touches}회 / 이탈 ${item.breaks}회)`,
     );
 
   return {
@@ -611,6 +685,17 @@ const buildTrendAndChannelSegments = (
         : "팬 라인 후보가 약해 표시를 생략했습니다.",
     reliabilityExplanation: `신뢰도 필터로 약한 선 ${hiddenWeakCount}개를 자동 숨김 처리했습니다.`,
     reliabilityDetails: reliabilityRows,
+    reliabilitySummary: {
+      total: totalCandidateCount,
+      shown: visibleAll.length,
+      hidden: hiddenWeakCount,
+      averageScore,
+      topLines: reliabilityTopLines,
+    },
+    regimeSummary: {
+      alignment: regimeAlignment,
+      items: regimeItems,
+    },
   };
 };
 
@@ -881,6 +966,8 @@ export const buildMultiViewArtifacts = (
     fanSegments,
     reliabilityExplanation,
     reliabilityDetails,
+    reliabilitySummary,
+    regimeSummary,
   } = buildTrendAndChannelSegments(candles);
   const markers = [...buildVolumeMarkers(signals), ...buildVcpContractionMarkers(signals)];
 
@@ -976,6 +1063,10 @@ export const buildMultiViewArtifacts = (
       p2: round2(segment.p2) ?? segment.p2,
     })),
     markers,
+    summary: {
+      reliability: reliabilitySummary,
+      regime: regimeSummary,
+    },
   };
 
   const confluence = buildConfluenceBands(candles, levels, zoneItems, overlays.segments, signals);

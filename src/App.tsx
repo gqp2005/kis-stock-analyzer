@@ -268,6 +268,36 @@ const cupHandleStateClass = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string 
   return "signal-tag muted";
 };
 
+const regimeLabel = (direction: "UP" | "SIDE" | "DOWN"): string => {
+  if (direction === "UP") return "상승";
+  if (direction === "DOWN") return "하락";
+  return "혼조";
+};
+
+const regimeChipClass = (direction: "UP" | "SIDE" | "DOWN"): string => {
+  if (direction === "UP") return "signal-tag positive";
+  if (direction === "DOWN") return "signal-tag negative";
+  return "signal-tag neutral";
+};
+
+const regimeAlignmentLabel = (alignment: "UP" | "DOWN" | "MIXED"): string => {
+  if (alignment === "UP") return "상승 정렬";
+  if (alignment === "DOWN") return "하락 정렬";
+  return "혼합/혼조";
+};
+
+const reliabilityLevelLabel = (score: number): string => {
+  if (score >= 75) return "강함";
+  if (score >= 55) return "보통";
+  return "약함";
+};
+
+const patternStateText = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "없음";
+};
+
 type ReasonTone = "positive" | "negative";
 
 const toneBadge = (tone: ReasonTone): { text: "긍정" | "부정"; className: string } =>
@@ -884,6 +914,62 @@ export default function App() {
   const riskSignal = activeAnalysis?.signals.risk ?? null;
   const confluenceBands = activeAnalysis?.confluence ?? [];
   const overlayExplanations = activeAnalysis?.explanations ?? [];
+  const overlaySummary = activeAnalysis?.overlays.summary ?? null;
+  const reliabilitySummary = overlaySummary?.reliability ?? null;
+  const regimeSummary = overlaySummary?.regime ?? null;
+  const latestClose =
+    activeAnalysis && activeAnalysis.candles.length > 0
+      ? activeAnalysis.candles[activeAnalysis.candles.length - 1].close
+      : null;
+  const confluenceTop = confluenceBands.slice(0, 3).map((band) => {
+    const center = (band.bandLow + band.bandHigh) / 2;
+    const distancePct = latestClose != null && latestClose > 0 ? (Math.abs(center - latestClose) / latestClose) * 100 : null;
+    return { ...band, distancePct };
+  });
+  const vcpSignal = activeAnalysis?.signals.vcp ?? null;
+  const patternStateRows = [
+    {
+      key: "vcp",
+      title: "VCP",
+      state: patternStateText(vcpSignal?.state ?? "NONE"),
+      score: vcpSignal?.score ?? 0,
+      note: vcpSignal?.reasons[0] ?? "VCP 패턴 데이터가 부족합니다.",
+    },
+    {
+      key: "cup-handle",
+      title: "컵앤핸들",
+      state: patternStateText(cupHandleSignal?.state ?? "NONE"),
+      score: cupHandleSignal?.score ?? 0,
+      note: cupHandleSignal?.reasons[0] ?? "컵앤핸들 패턴 데이터가 부족합니다.",
+    },
+  ];
+  const volumePatternsAll = activeAnalysis?.signals.volumePatterns ?? [];
+  const recent20DateSet = new Set((activeAnalysis?.candles ?? []).slice(-20).map((candle) => candle.time.slice(0, 10)));
+  const recent20Patterns = volumePatternsAll.filter((pattern) => recent20DateSet.has(pattern.t.slice(0, 10)));
+  const positivePatternTypes = new Set<VolumePatternType>([
+    "BreakoutConfirmed",
+    "PullbackReaccumulation",
+    "CapitulationAbsorption",
+  ]);
+  const negativePatternTypes = new Set<VolumePatternType>(["Upthrust", "ClimaxUp", "WeakBounce"]);
+  const recentPositiveCount = recent20Patterns.filter((pattern) => positivePatternTypes.has(pattern.type)).length;
+  const recentNegativeCount = recent20Patterns.filter((pattern) => negativePatternTypes.has(pattern.type)).length;
+  const volumeMonitorLabel =
+    recentPositiveCount > recentNegativeCount
+      ? "긍정 우위"
+      : recentPositiveCount < recentNegativeCount
+        ? "부정 우위"
+        : "중립";
+  const executionRiskPct =
+    tradePlan?.entry != null && tradePlan.stop != null && tradePlan.entry > 0
+      ? ((tradePlan.entry - tradePlan.stop) / tradePlan.entry) * 100
+      : null;
+  const executionTargetPct =
+    tradePlan?.entry != null && tradePlan.target != null && tradePlan.entry > 0
+      ? ((tradePlan.target - tradePlan.entry) / tradePlan.entry) * 100
+      : null;
+  const executionRiskLabel =
+    executionRiskPct == null ? "데이터 부족" : executionRiskPct <= 4 ? "낮음" : executionRiskPct <= 8 ? "보통" : "높음";
   const shortProfileScore = activeAnalysis
     ? buildProfileScoreFromBase(
         "short",
@@ -1094,6 +1180,174 @@ export default function App() {
                     <h3>위험도</h3>
                     <strong>{activeAnalysis.scores.risk}</strong>
                   </article>
+                </div>
+
+                <div className="insight-grid">
+                  <div className="card insight-card">
+                    <h3>자동 작도 신뢰도 요약</h3>
+                    {reliabilitySummary ? (
+                      <>
+                        <div className="insight-kpi-grid">
+                          <div className="plan-item">
+                            <span>노출/전체</span>
+                            <strong>
+                              {reliabilitySummary.shown}/{reliabilitySummary.total}
+                            </strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>숨김 선</span>
+                            <strong>{reliabilitySummary.hidden}</strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>평균 신뢰도</span>
+                            <strong>{reliabilitySummary.averageScore}점</strong>
+                          </div>
+                        </div>
+                        <ul className="insight-list">
+                          {reliabilitySummary.topLines.slice(0, 3).map((line) => (
+                            <li key={line.id}>
+                              <span>{line.label}</span>
+                              <small className="signal-tag neutral">
+                                {reliabilityLevelLabel(line.score)} {line.score}점
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p className="plan-note">신뢰도 요약 데이터가 아직 없습니다.</p>
+                    )}
+                  </div>
+
+                  <div className="card insight-card">
+                    <h3>컨플루언스 TOP</h3>
+                    {confluenceTop.length > 0 ? (
+                      <ul className="insight-list">
+                        {confluenceTop.map((band, index) => (
+                          <li key={`${band.bandLow}-${band.bandHigh}-${index}`}>
+                            <span>
+                              {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
+                            </span>
+                            <small className="signal-tag neutral">
+                              강도 {band.strength}
+                              {band.distancePct != null ? ` · 현재가 거리 ${band.distancePct.toFixed(2)}%` : ""}
+                            </small>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="plan-note">컨플루언스 상위 구간이 없습니다.</p>
+                    )}
+                  </div>
+
+                  <div className="card insight-card">
+                    <h3>패턴 상태 (VCP/컵앤핸들)</h3>
+                    <div className="insight-kpi-grid">
+                      {patternStateRows.map((item) => (
+                        <div key={item.key} className="plan-item">
+                          <span>{item.title}</span>
+                          <strong>{item.state}</strong>
+                          <small className="plan-note">{item.score}점</small>
+                        </div>
+                      ))}
+                    </div>
+                    <ul className="insight-list">
+                      {patternStateRows.map((item) => (
+                        <li key={`${item.key}-note`}>
+                          <span>{item.note}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="card insight-card">
+                    <h3>거래량 패턴 모니터</h3>
+                    <div className="insight-kpi-grid">
+                      <div className="plan-item">
+                        <span>최근 20봉 감지</span>
+                        <strong>{recent20Patterns.length}건</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>긍정/부정</span>
+                        <strong>
+                          {recentPositiveCount}/{recentNegativeCount}
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>해석</span>
+                        <strong>{volumeMonitorLabel}</strong>
+                      </div>
+                    </div>
+                    <p className="plan-note">
+                      최근 패턴:{" "}
+                      {recentVolumePatterns[0]
+                        ? `${VOLUME_PATTERN_TEXT[recentVolumePatterns[0].type] ?? recentVolumePatterns[0].label} (${recentVolumePatterns[0].t.slice(0, 10)})`
+                        : "없음"}
+                    </p>
+                  </div>
+
+                  <div className="card insight-card">
+                    <h3>리스크 실행</h3>
+                    <div className="insight-kpi-grid">
+                      <div className="plan-item">
+                        <span>진입/손절</span>
+                        <strong>
+                          {formatPrice(tradePlan?.entry ?? null)} / {formatPrice(tradePlan?.stop ?? null)}
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>목표/손익비</span>
+                        <strong>
+                          {formatPrice(tradePlan?.target ?? null)} / {formatRiskReward(tradePlan?.riskReward ?? null)}
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>실행 리스크</span>
+                        <strong>
+                          {executionRiskPct != null ? `${executionRiskPct.toFixed(2)}%` : "-"} ({executionRiskLabel})
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="plan-note">
+                      목표 여력: {executionTargetPct != null ? `${executionTargetPct.toFixed(2)}%` : "-"} · ATR%{" "}
+                      {riskSignal?.atrPercent != null ? `${riskSignal.atrPercent.toFixed(2)}%` : "-"}
+                    </p>
+                  </div>
+
+                  <div className="card insight-card">
+                    <h3>추세 레짐 (240/120/60봉)</h3>
+                    {regimeSummary ? (
+                      <>
+                        <div className="insight-headline">
+                          <span className="plan-note">정렬 상태</span>
+                          <small
+                            className={
+                              regimeSummary.alignment === "UP"
+                                ? "signal-tag positive"
+                                : regimeSummary.alignment === "DOWN"
+                                  ? "signal-tag negative"
+                                  : "signal-tag neutral"
+                            }
+                          >
+                            {regimeAlignmentLabel(regimeSummary.alignment)}
+                          </small>
+                        </div>
+                        <div className="insight-kpi-grid">
+                          {regimeSummary.items.map((item) => (
+                            <div key={`${item.window}-${item.lineId ?? "none"}`} className="plan-item">
+                              <span>{item.label}</span>
+                              <strong>{regimeLabel(item.direction)}</strong>
+                              <small className={regimeChipClass(item.direction)}>
+                                신뢰도 {item.score}점
+                              </small>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="plan-note">레짐 요약 데이터가 없습니다.</p>
+                    )}
+                  </div>
                 </div>
 
                 {shortProfileScore && midProfileScore && (

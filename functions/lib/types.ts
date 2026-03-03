@@ -216,11 +216,44 @@ export interface OverlayMarker {
   strength?: number;
 }
 
+export interface OverlayReliabilityLine {
+  id: string;
+  label: string;
+  kind: OverlaySegmentKind;
+  score: number;
+  touches: number;
+  breaks: number;
+  lookback: number;
+}
+
+export interface OverlayRegimeItem {
+  window: number;
+  label: "장기" | "중기" | "단기";
+  direction: Regime;
+  score: number;
+  lineId: string | null;
+}
+
+export interface OverlaySummary {
+  reliability: {
+    total: number;
+    shown: number;
+    hidden: number;
+    averageScore: number;
+    topLines: OverlayReliabilityLine[];
+  };
+  regime: {
+    alignment: "UP" | "DOWN" | "MIXED";
+    items: OverlayRegimeItem[];
+  };
+}
+
 export interface Overlays {
   priceLines: OverlayPriceLine[];
   zones: OverlayZone[];
   segments: OverlaySegment[];
   markers: OverlayMarker[];
+  summary?: OverlaySummary;
 }
 
 export interface ConfluenceBand {
