@@ -236,6 +236,18 @@ export interface Signals {
     volumeScore: number;
     reasons: string[];
   };
+  cupHandle: {
+    detected: boolean;
+    state: "NONE" | "POTENTIAL" | "CONFIRMED";
+    score: number;
+    neckline: number | null;
+    breakout: boolean;
+    cupDepthPct: number | null;
+    handleDepthPct: number | null;
+    cupWidthBars: number | null;
+    handleBars: number | null;
+    reasons: string[];
+  };
   vcp: VcpHit;
   fundamental: FundamentalSignal;
   flow: FlowSignal;

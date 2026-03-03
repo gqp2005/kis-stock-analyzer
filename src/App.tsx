@@ -221,6 +221,9 @@ const formatSignedDecimal = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
 const formatSignedQty = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value).toLocaleString("ko-KR")}주`;
+const formatPctPoint = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(2)}%`;
+const formatBars = (value: number | null): string => (value == null ? "-" : `${value}봉`);
 
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
   if (rsiBand === "HIGH") return "과열 구간";
@@ -251,6 +254,18 @@ const flowLabelMeta = (
   if (label === "SELLING") return { text: "매도 우위", className: "signal-tag negative" };
   if (label === "BALANCED") return { text: "중립", className: "signal-tag neutral" };
   return { text: "데이터 부족", className: "signal-tag muted" };
+};
+
+const cupHandleStateLabel = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "없음";
+};
+
+const cupHandleStateClass = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string => {
+  if (state === "CONFIRMED") return "signal-tag positive";
+  if (state === "POTENTIAL") return "signal-tag neutral";
+  return "signal-tag muted";
 };
 
 type ReasonTone = "positive" | "negative";
@@ -854,6 +869,7 @@ export default function App() {
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
+  const cupHandleSignal = activeAnalysis?.signals.cupHandle ?? null;
   const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
   const flowSignal = activeAnalysis?.signals.flow ?? null;
   const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
@@ -1139,6 +1155,60 @@ export default function App() {
                         <p>{bbSignalLabel(riskSignal.bbPosition)}</p>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {cupHandleSignal && (
+                  <div className="card">
+                    <h3>컵앤핸들 분석</h3>
+                    <div className="fund-grid">
+                      <div className="plan-item">
+                        <span>패턴 상태</span>
+                        <strong className="fund-label-wrap">
+                          {cupHandleStateLabel(cupHandleSignal.state)}
+                          <small className={cupHandleStateClass(cupHandleSignal.state)}>
+                            {cupHandleSignal.detected ? "감지됨" : "미감지"}
+                          </small>
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>패턴 점수</span>
+                        <strong>{cupHandleSignal.score}점</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>넥라인(기준)</span>
+                        <strong>{formatPrice(cupHandleSignal.neckline)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>돌파 여부</span>
+                        <strong>
+                          <small className={cupHandleSignal.breakout ? "signal-tag positive" : "signal-tag neutral"}>
+                            {cupHandleSignal.breakout ? "돌파 확인" : "돌파 대기"}
+                          </small>
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>컵 깊이</span>
+                        <strong>{formatPctPoint(cupHandleSignal.cupDepthPct)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>핸들 깊이</span>
+                        <strong>{formatPctPoint(cupHandleSignal.handleDepthPct)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>컵 폭</span>
+                        <strong>{formatBars(cupHandleSignal.cupWidthBars)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>핸들 기간</span>
+                        <strong>{formatBars(cupHandleSignal.handleBars)}</strong>
+                      </div>
+                    </div>
+                    <ul className="volume-reasons">
+                      {cupHandleSignal.reasons.map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 

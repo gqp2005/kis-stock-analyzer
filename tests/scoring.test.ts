@@ -41,6 +41,8 @@ describe("analysis scoring extras", () => {
     expect(result.signals.volume.volumeScore).toBeGreaterThanOrEqual(0);
     expect(result.signals.volume.volumeScore).toBeLessThanOrEqual(100);
     expect(Array.isArray(result.signals.volumePatterns)).toBe(true);
+    expect(result.signals.cupHandle).toBeDefined();
+    expect(Array.isArray(result.signals.cupHandle.reasons)).toBe(true);
     expect((result.levels.support as number) < latestClose).toBe(true);
     expect((result.levels.resistance as number) > latestClose).toBe(true);
     expect(day.overlays.zones.length).toBeGreaterThanOrEqual(2);
