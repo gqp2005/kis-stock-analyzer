@@ -104,6 +104,19 @@ const triggerAutoBootstrap = async (
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
+const USER_NOISY_WARNING_PATTERNS: RegExp[] = [
+  /^현재 rebuild 진행 중:/,
+  /^리빌드 초기화 중입니다\./,
+  /^요청 시간 예산\(/,
+  /^ExternalProvider 실패로 StaticProvider 유니버스를 사용했습니다\./,
+  /^Cache API miss로 영속 저장소\(KV\/D1\) 결과를 반환합니다\./,
+];
+
+const sanitizeUserWarnings = (warnings: string[], maxItems = 8): string[] =>
+  dedupeWarnings(warnings)
+    .filter((warning) => !USER_NOISY_WARNING_PATTERNS.some((pattern) => pattern.test(warning)))
+    .slice(0, maxItems);
+
 const normalizeProgress = (
   progress: RebuildProgressSnapshot | null,
 ): RebuildProgressSnapshot | null => {
@@ -272,7 +285,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         },
         items: [],
         warningItems: [],
-        warnings: dedupeWarnings(warnings),
+        warnings: sanitizeUserWarnings(warnings),
       };
       return finalize(
         json(emptyPayload, 200, {
@@ -354,7 +367,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       },
       items: view.items,
       warningItems: view.warningItems,
-      warnings: dedupeWarnings([
+      warnings: sanitizeUserWarnings([
         ...warnings,
         ...snapshot.warnings,
         strategy !== "HS"
