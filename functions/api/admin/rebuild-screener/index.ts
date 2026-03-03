@@ -79,6 +79,11 @@ const parseBatchSize = (url: URL): number => {
   return Math.max(5, Math.min(MAX_BATCH_SIZE, Math.floor(raw)));
 };
 
+const parseForce = (url: URL): boolean => {
+  const raw = (url.searchParams.get("force") ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+};
+
 const parsePositiveInt = (raw: string | null, fallback: number, min: number, max: number): number => {
   const parsed = Number(raw ?? fallback);
   if (!Number.isFinite(parsed)) return fallback;
@@ -559,6 +564,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const url = new URL(context.request.url);
   const alertOptions = parseAlertOptions(url);
+  const forceRun = parseForce(url);
   const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
   if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
     return finalize(buildUnauthorized(context.request));
@@ -571,7 +577,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const lockKey = rebuildLockKey();
   const lockReq = new Request(lockKey);
   const existingLock = await getCachedJson<{ startedAt: string }>(cache, lockKey);
-  if (existingLock && !isLockStale(existingLock.startedAt)) {
+  if (forceRun && existingLock) {
+    console.log("[rebuild-screener-force] force=1 lock bypass requested");
+    await cache.delete(lockReq);
+  }
+  if (!forceRun && existingLock && !isLockStale(existingLock.startedAt)) {
     const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
     const progress = cachedProgress ? normalizeProgress(cachedProgress) : null;
     const recoverLockOnly = shouldRecoverLockOnlyState(existingLock.startedAt, progress);
@@ -632,7 +642,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await cache.delete(lockReq);
   }
 
-  if (existingLock && isLockStale(existingLock.startedAt)) {
+  if (!forceRun && existingLock && isLockStale(existingLock.startedAt)) {
     const ageSec = lockAgeSec(existingLock.startedAt);
     console.log(
       `[rebuild-screener-lock-recover] reason=stale-lock ageSec=${ageSec ?? -1}`,
