@@ -1,15 +1,36 @@
 import { getCachedJson, putCachedJson } from "../lib/cache";
-import { DAY_SCORE_RULE_ID, runDayBacktest } from "../lib/backtest";
+import {
+  DAY_SCORE_RULE_ID,
+  WASHOUT_PULLBACK_RULE_V1,
+  WASHOUT_PULLBACK_RULE_V1_1,
+  runDayBacktest,
+  runWashoutBacktestV1,
+  runWashoutBacktestV1_1,
+} from "../lib/backtest";
 import { fetchTimeframeCandles } from "../lib/kis";
 import { nowIsoKst, timeframeCacheTtlSec } from "../lib/market";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
 import { resolveStock } from "../lib/stockResolver";
-import type { BacktestPayload, Env, Overall } from "../lib/types";
+import type {
+  BacktestPayload,
+  BacktestRuleId,
+  BacktestWashoutExitMode,
+  BacktestWashoutTargetMode,
+  Env,
+  Overall,
+} from "../lib/types";
 import { normalizeInput } from "../lib/utils";
 
 const LOOKBACK_BARS = 160;
+const WASHOUT_LOOKBACK_BARS = 240;
 const MAX_PERIOD_BARS = 252;
+
+const parseRuleId = (url: URL): BacktestRuleId => {
+  const raw = (url.searchParams.get("ruleId") ?? DAY_SCORE_RULE_ID).trim();
+  if (raw === WASHOUT_PULLBACK_RULE_V1 || raw === WASHOUT_PULLBACK_RULE_V1_1) return raw;
+  return DAY_SCORE_RULE_ID;
+};
 
 const parseCount = (url: URL): number => {
   const raw = Number(url.searchParams.get("count") ?? url.searchParams.get("days") ?? "520");
@@ -17,16 +38,32 @@ const parseCount = (url: URL): number => {
   return Math.max(260, Math.min(900, Math.floor(raw)));
 };
 
-const parseHoldBars = (url: URL): number => {
-  const raw = Number(url.searchParams.get("holdBars") ?? "10");
-  if (!Number.isFinite(raw)) return 10;
-  return Math.max(3, Math.min(30, Math.floor(raw)));
+const parseHoldBars = (url: URL, ruleId: BacktestRuleId): number => {
+  const defaultHold = ruleId === DAY_SCORE_RULE_ID ? 10 : 20;
+  const raw = Number(url.searchParams.get("holdBars") ?? String(defaultHold));
+  if (!Number.isFinite(raw)) return defaultHold;
+  const min = ruleId === DAY_SCORE_RULE_ID ? 3 : 5;
+  const max = ruleId === DAY_SCORE_RULE_ID ? 30 : 40;
+  return Math.max(min, Math.min(max, Math.floor(raw)));
 };
 
 const parseSignalOverall = (url: URL): Overall => {
   const raw = (url.searchParams.get("signal") ?? "GOOD").toUpperCase();
   if (raw === "GOOD" || raw === "NEUTRAL" || raw === "CAUTION") return raw;
   return "GOOD";
+};
+
+const parseWashoutTargetMode = (url: URL): BacktestWashoutTargetMode => {
+  const raw = (url.searchParams.get("target") ?? "2R").toUpperCase();
+  if (raw === "3R") return "3R";
+  if (raw === "ANCHOR_HIGH" || raw === "ANCHOR") return "ANCHOR_HIGH";
+  return "2R";
+};
+
+const parseWashoutExitMode = (url: URL): BacktestWashoutExitMode => {
+  const raw = (url.searchParams.get("exit") ?? "PARTIAL").toUpperCase();
+  if (raw === "SINGLE_2R" || raw === "SINGLE2R") return "SINGLE_2R";
+  return "PARTIAL";
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -52,17 +89,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return finalize(badRequest(`종목명을 찾지 못했습니다: ${input}`, context.request));
     }
 
-    const holdBars = parseHoldBars(url);
+    const ruleId = parseRuleId(url);
+    const holdBars = parseHoldBars(url, ruleId);
     const signalOverall = parseSignalOverall(url);
+    const targetMode = parseWashoutTargetMode(url);
+    const exitMode = parseWashoutExitMode(url);
     const requestedCount = parseCount(url);
-    const minNeededCount = LOOKBACK_BARS + MAX_PERIOD_BARS + holdBars + 5;
+    const lookbackBars = ruleId === DAY_SCORE_RULE_ID ? LOOKBACK_BARS : WASHOUT_LOOKBACK_BARS;
+    const minNeededCount = lookbackBars + MAX_PERIOD_BARS + holdBars + 5;
     const fetchCount = Math.max(requestedCount, minNeededCount);
 
     const ttlSec = timeframeCacheTtlSec("day");
     const cache = await caches.open("kis-analyzer-cache-v3");
     const cacheKey = `https://cache.local/backtest/v1?code=${encodeURIComponent(
       resolved.code,
-    )}&count=${fetchCount}&hold=${holdBars}&signal=${signalOverall}`;
+    )}&count=${fetchCount}&hold=${holdBars}&signal=${signalOverall}&rule=${ruleId}&target=${targetMode}&exit=${exitMode}`;
 
     const cached = await getCachedJson<BacktestPayload>(cache, cacheKey);
     if (cached) {
@@ -90,11 +131,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return finalize(badRequest("백테스트용 일봉 데이터가 없습니다.", context.request));
     }
 
-    const backtest = runDayBacktest(candles, {
-      holdBars,
-      lookbackBars: LOOKBACK_BARS,
-      signalOverall,
-    });
+    const backtest =
+      ruleId === DAY_SCORE_RULE_ID
+        ? runDayBacktest(candles, {
+            holdBars,
+            lookbackBars,
+            signalOverall,
+          })
+        : ruleId === WASHOUT_PULLBACK_RULE_V1
+          ? runWashoutBacktestV1(candles, {
+              holdBars,
+              lookbackBars,
+              targetMode,
+              exitMode,
+            })
+          : runWashoutBacktestV1_1(candles, {
+              holdBars,
+              lookbackBars,
+              targetMode,
+              exitMode,
+            });
 
     const payload: BacktestPayload = {
       meta: {
@@ -108,14 +164,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         candleCount: candles.length,
         holdBars,
         signalOverall,
-        ruleId: DAY_SCORE_RULE_ID,
+        ruleId,
+        ...(ruleId !== DAY_SCORE_RULE_ID ? { targetMode, exitMode } : {}),
       },
       summary: backtest.summary,
       periods: backtest.periods,
       trades: backtest.trades,
+      strategyMetrics: "strategyMetrics" in backtest ? backtest.strategyMetrics : null,
       warnings: [
         ...backtest.warnings,
-        `rule=${DAY_SCORE_RULE_ID}`,
+        `rule=${ruleId}`,
         `candles.length=${candles.length}`,
       ],
     };

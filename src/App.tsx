@@ -10,7 +10,10 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import type {
+  BacktestRuleId,
   BacktestResponse,
+  BacktestWashoutExitMode,
+  BacktestWashoutTargetMode,
   IndicatorPoint,
   InvestmentProfile,
   MultiAnalysisResponse,
@@ -19,6 +22,7 @@ import type {
   Overall,
   Timeframe,
   TimeframeAnalysis,
+  WashoutPullbackState,
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
@@ -122,6 +126,11 @@ const PROFILE_WEIGHT_CONFIG: Record<
 
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month"];
+const BACKTEST_RULE_LABEL: Record<BacktestRuleId, string> = {
+  "score-card-v1-day-overall": "일봉 점수룰 v1",
+  "washout-pullback-v1": "설거지+눌림 v1(단일)",
+  "washout-pullback-v1.1": "설거지+눌림 v1.1(분할)",
+};
 const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
   BreakoutConfirmed: "돌파 확인(A)",
   Upthrust: "불트랩(B)",
@@ -224,6 +233,19 @@ const formatSignedQty = (value: number | null): string =>
 const formatPctPoint = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}%`;
 const formatBars = (value: number | null): string => (value == null ? "-" : `${value}봉`);
+const backtestExitReasonLabel = (value: string): string => {
+  if (value === "TARGET") return "목표";
+  if (value === "STOP") return "손절";
+  return "기간만료";
+};
+const backtestEntriesLabel = (
+  entries: Array<{ label: string; price: number; weight: number }> | undefined,
+): string => {
+  if (!entries || entries.length === 0) return "-";
+  return entries
+    .map((entry) => `${entry.label} ${formatPrice(entry.price)}(${Math.round(entry.weight * 100)}%)`)
+    .join(" / ");
+};
 
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
   if (rsiBand === "HIGH") return "과열 구간";
@@ -298,6 +320,22 @@ const patternStateText = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string => 
   return "없음";
 };
 
+const washoutStateLabel = (state: WashoutPullbackState): string => {
+  if (state === "ANCHOR_DETECTED") return "앵커 감지";
+  if (state === "WASHOUT_CANDIDATE") return "설거지 후보";
+  if (state === "PULLBACK_READY") return "눌림 준비";
+  if (state === "REBOUND_CONFIRMED") return "반등 확인";
+  return "미감지";
+};
+
+const washoutStateClass = (state: WashoutPullbackState): string => {
+  if (state === "REBOUND_CONFIRMED") return "signal-tag positive";
+  if (state === "PULLBACK_READY" || state === "WASHOUT_CANDIDATE" || state === "ANCHOR_DETECTED") {
+    return "signal-tag neutral";
+  }
+  return "signal-tag muted";
+};
+
 const verdictToneClass = (verdict: "매수 검토" | "관망" | "비중 축소"): string => {
   if (verdict === "매수 검토") return "signal-tag positive";
   if (verdict === "비중 축소") return "signal-tag negative";
@@ -335,6 +373,9 @@ export default function App() {
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState("");
+  const [backtestRuleId, setBacktestRuleId] = useState<BacktestRuleId>("score-card-v1-day-overall");
+  const [backtestTargetMode, setBacktestTargetMode] = useState<BacktestWashoutTargetMode>("2R");
+  const [backtestExitMode, setBacktestExitMode] = useState<BacktestWashoutExitMode>("PARTIAL");
   const [backtestSignal, setBacktestSignal] = useState<Overall>("GOOD");
   const [backtestHoldBars, setBacktestHoldBars] = useState(10);
   const [riskBreakdownOpen, setRiskBreakdownOpen] = useState(false);
@@ -353,6 +394,7 @@ export default function App() {
   const [showAdvancedPatternMarkers, setShowAdvancedPatternMarkers] = useState(false);
   const [showPatternReferenceLevel, setShowPatternReferenceLevel] = useState(true);
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
+  const [showWashoutEntries, setShowWashoutEntries] = useState(false);
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
@@ -385,12 +427,26 @@ export default function App() {
     lookback: number,
     holdBars: number,
     signalOverall: Overall,
+    ruleId: BacktestRuleId,
+    targetMode: BacktestWashoutTargetMode,
+    exitMode: BacktestWashoutExitMode,
   ) => {
     setBacktestLoading(true);
     setBacktestError("");
     setBacktest(null);
     try {
-      const url = `${apiBase}/api/backtest?query=${encodeURIComponent(value)}&count=${Math.max(lookback, 420)}&holdBars=${holdBars}&signal=${signalOverall}`;
+      const query = new URLSearchParams({
+        query: value,
+        count: String(Math.max(lookback, 420)),
+        holdBars: String(holdBars),
+        signal: signalOverall,
+        ruleId,
+      });
+      if (ruleId !== "score-card-v1-day-overall") {
+        query.set("target", targetMode);
+        query.set("exit", exitMode);
+      }
+      const url = `${apiBase}/api/backtest?${query.toString()}`;
       const response = await fetch(url);
       const data = (await response.json()) as BacktestResponse | { error: string };
       if (!response.ok) throw new Error("error" in data ? data.error : "백테스트 요청 실패");
@@ -408,9 +464,12 @@ export default function App() {
     lookback: number,
     holdBars: number,
     signalOverall: Overall,
+    ruleId: BacktestRuleId,
+    targetMode: BacktestWashoutTargetMode,
+    exitMode: BacktestWashoutExitMode,
   ) => {
     void fetchAnalysis(value, lookback);
-    void fetchBacktest(value, lookback, holdBars, signalOverall);
+    void fetchBacktest(value, lookback, holdBars, signalOverall, ruleId, targetMode, exitMode);
   };
 
   const applyDrawingPreset = (preset: "basic" | "detail") => {
@@ -427,6 +486,7 @@ export default function App() {
       setShowAdvancedPatternMarkers(false);
       setShowPatternReferenceLevel(true);
       setHighlightSelectedCandle(true);
+      setShowWashoutEntries(false);
       return;
     }
     setShowMa1(true);
@@ -441,14 +501,27 @@ export default function App() {
     setShowAdvancedPatternMarkers(true);
     setShowPatternReferenceLevel(true);
     setHighlightSelectedCandle(true);
+    setShowWashoutEntries(true);
   };
+
+  useEffect(() => {
+    setBacktestHoldBars(backtestRuleId === "score-card-v1-day-overall" ? 10 : 20);
+  }, [backtestRuleId]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalized = query.trim();
     if (!normalized) return;
     setShowSuggestions(false);
-    fetchDashboard(normalized, days, backtestHoldBars, backtestSignal);
+    fetchDashboard(
+      normalized,
+      days,
+      backtestHoldBars,
+      backtestSignal,
+      backtestRuleId,
+      backtestTargetMode,
+      backtestExitMode,
+    );
   };
 
   const onSelectSuggestion = (stock: StockLookup) => {
@@ -466,7 +539,15 @@ export default function App() {
     setPageMode("analysis");
     setQuery(code);
     setShowSuggestions(false);
-    fetchDashboard(code, days, backtestHoldBars, backtestSignal);
+    fetchDashboard(
+      code,
+      days,
+      backtestHoldBars,
+      backtestSignal,
+      backtestRuleId,
+      backtestTargetMode,
+      backtestExitMode,
+    );
   };
 
   useEffect(() => {
@@ -613,15 +694,35 @@ export default function App() {
             (pattern) => showAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
           )
         : [];
+    const strategyWashout = activeTf === "day" ? active.strategyOverlays?.washoutPullback : null;
     const overlayMarkers =
       activeTf === "day"
         ? (active.overlays?.markers ?? []).filter(
             (marker) => canShowMarkerByType(marker.type, showAdvancedPatternMarkers),
           )
         : [];
+    const washoutMarkers: SeriesMarker<Time>[] = [];
+    if (activeTf === "day" && strategyWashout?.anchorSpike.time && strategyWashout.anchorSpike.price != null) {
+      washoutMarkers.push({
+        time: toChartTime(strategyWashout.anchorSpike.time),
+        position: "aboveBar",
+        shape: "circle",
+        color: "#f6c75f",
+        text: "ANCHOR",
+      });
+    }
+    if (activeTf === "day" && strategyWashout?.washoutReentry.time && strategyWashout.washoutReentry.price != null) {
+      washoutMarkers.push({
+        time: toChartTime(strategyWashout.washoutReentry.time),
+        position: "belowBar",
+        shape: "arrowUp",
+        color: "#00d5a0",
+        text: "REIN",
+      });
+    }
 
     if (showMarkers && activeTf === "day") {
-      candleSeries.setMarkers(toOverlayMarkers(overlayMarkers));
+      candleSeries.setMarkers([...toOverlayMarkers(overlayMarkers), ...washoutMarkers]);
     } else {
       candleSeries.setMarkers([]);
     }
@@ -649,6 +750,46 @@ export default function App() {
           lineStyle: LineStyle.Dotted,
           axisLabelVisible: true,
           title: line.label,
+        });
+      }
+    }
+    if (activeTf === "day" && strategyWashout?.pullbackZone.low != null && strategyWashout.pullbackZone.high != null) {
+      candleSeries.createPriceLine({
+        price: strategyWashout.pullbackZone.low,
+        color: "rgba(0, 179, 134, 0.7)",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `${strategyWashout.pullbackZone.label} 하단`,
+      });
+      candleSeries.createPriceLine({
+        price: strategyWashout.pullbackZone.high,
+        color: "rgba(0, 179, 134, 0.7)",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `${strategyWashout.pullbackZone.label} 상단`,
+      });
+    }
+    if (activeTf === "day" && strategyWashout?.invalidLow.price != null) {
+      candleSeries.createPriceLine({
+        price: strategyWashout.invalidLow.price,
+        color: "rgba(255, 90, 118, 0.95)",
+        lineWidth: 3,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: strategyWashout.invalidLow.label,
+      });
+    }
+    if (activeTf === "day" && showWashoutEntries && strategyWashout?.entryPlan.entries?.length) {
+      for (const entry of strategyWashout.entryPlan.entries) {
+        candleSeries.createPriceLine({
+          price: entry.price,
+          color: "rgba(87, 163, 255, 0.9)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `${entry.label} 진입`,
         });
       }
     }
@@ -906,6 +1047,7 @@ export default function App() {
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
   const cupHandleSignal = activeAnalysis?.signals.cupHandle ?? null;
+  const washoutCard = activeAnalysis?.strategyCards?.washoutPullback ?? null;
   const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
   const flowSignal = activeAnalysis?.signals.flow ?? null;
   const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
@@ -915,6 +1057,8 @@ export default function App() {
   const selectedPatternDetails = selectedPattern?.details ?? null;
   const tradePlan = activeAnalysis?.tradePlan ?? null;
   const backtestSummary = backtest?.summary ?? null;
+  const backtestStrategyMetrics = backtest?.strategyMetrics ?? null;
+  const recentBacktestTrades = [...(backtest?.trades ?? [])].slice(-12).reverse();
   const rsiDisabledMessage = "RSI(14) 데이터가 부족해 패널이 비활성입니다.";
   const momentumSignal = activeAnalysis?.signals.momentum ?? null;
   const riskSignal = activeAnalysis?.signals.risk ?? null;
@@ -976,6 +1120,14 @@ export default function App() {
       : null;
   const executionRiskLabel =
     executionRiskPct == null ? "데이터 부족" : executionRiskPct <= 4 ? "낮음" : executionRiskPct <= 8 ? "보통" : "높음";
+  const washoutZonePosition = (() => {
+    if (!washoutCard || latestClose == null || washoutCard.pullbackZone.low == null || washoutCard.pullbackZone.high == null) {
+      return "-";
+    }
+    if (latestClose < washoutCard.pullbackZone.low) return "존 아래";
+    if (latestClose > washoutCard.pullbackZone.high) return "존 위";
+    return "존 내부";
+  })();
   const reliabilityOneLiner = (() => {
     if (!reliabilitySummary) {
       return {
@@ -1225,17 +1377,57 @@ export default function App() {
         </form>
         <div className="backtest-controls">
           <label>
+            백테스트 룰
+            <select
+              value={backtestRuleId}
+              onChange={(e) => setBacktestRuleId(e.target.value as BacktestRuleId)}
+              aria-label="백테스트 룰"
+            >
+              <option value="score-card-v1-day-overall">일봉 점수룰 v1</option>
+              <option value="washout-pullback-v1">설거지+눌림 v1(단일)</option>
+              <option value="washout-pullback-v1.1">설거지+눌림 v1.1(분할)</option>
+            </select>
+          </label>
+          <label>
             백테스트 진입 신호
             <select
               value={backtestSignal}
               onChange={(e) => setBacktestSignal(e.target.value as Overall)}
               aria-label="백테스트 진입 신호"
+              disabled={backtestRuleId !== "score-card-v1-day-overall"}
             >
               <option value="GOOD">양호</option>
               <option value="NEUTRAL">중립</option>
               <option value="CAUTION">주의</option>
             </select>
           </label>
+          {backtestRuleId !== "score-card-v1-day-overall" && (
+            <label>
+              목표 모드(v1)
+              <select
+                value={backtestTargetMode}
+                onChange={(e) => setBacktestTargetMode(e.target.value as BacktestWashoutTargetMode)}
+                aria-label="설거지 백테스트 목표 모드"
+              >
+                <option value="2R">2R</option>
+                <option value="3R">3R</option>
+                <option value="ANCHOR_HIGH">Anchor 고점</option>
+              </select>
+            </label>
+          )}
+          {backtestRuleId === "washout-pullback-v1.1" && (
+            <label>
+              청산 방식(v1.1)
+              <select
+                value={backtestExitMode}
+                onChange={(e) => setBacktestExitMode(e.target.value as BacktestWashoutExitMode)}
+                aria-label="설거지 백테스트 청산 방식"
+              >
+                <option value="PARTIAL">1R 절반 + 2R 전량</option>
+                <option value="SINGLE_2R">단일 2R 전량</option>
+              </select>
+            </label>
+          )}
           <label>
             최대 보유 봉
             <select
@@ -1243,13 +1435,24 @@ export default function App() {
               onChange={(e) => setBacktestHoldBars(Number(e.target.value))}
               aria-label="최대 보유 봉"
             >
-              <option value={5}>5봉</option>
-              <option value={10}>10봉</option>
-              <option value={15}>15봉</option>
-              <option value={20}>20봉</option>
+              {backtestRuleId === "score-card-v1-day-overall" ? (
+                <>
+                  <option value={5}>5봉</option>
+                  <option value={10}>10봉</option>
+                  <option value={15}>15봉</option>
+                  <option value={20}>20봉</option>
+                </>
+              ) : (
+                <>
+                  <option value={10}>10봉</option>
+                  <option value={20}>20봉</option>
+                  <option value={30}>30봉</option>
+                  <option value={40}>40봉</option>
+                </>
+              )}
             </select>
           </label>
-          <p>값을 바꾼 뒤 조회를 누르면 백테스트 조건이 적용됩니다.</p>
+          <p>값을 바꾼 뒤 조회를 누르면 선택한 룰로 백테스트가 다시 계산됩니다.</p>
         </div>
 
         {error && <p className="error">{error}</p>}
@@ -1794,6 +1997,103 @@ export default function App() {
                   </div>
                 )}
 
+                {activeTf === "day" && washoutCard && (
+                  <div className="card">
+                    <div className="insight-headline">
+                      <h3>{washoutCard.displayName}</h3>
+                      <div className="final-badges">
+                        <small className={washoutStateClass(washoutCard.state)}>
+                          {washoutStateLabel(washoutCard.state)}
+                        </small>
+                        <span className={confidenceClass(washoutCard.score)}>점수 {washoutCard.score}</span>
+                        <span className={confidenceClass(washoutCard.confidence)}>
+                          신뢰도 {washoutCard.confidence}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="washout-grid">
+                      <div className="plan-item">
+                        <span>Anchor 거래대금</span>
+                        <strong>{formatRatio(washoutCard.anchorSpike.turnoverRatio)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>재유입 거래대금</span>
+                        <strong>{formatRatio(washoutCard.washoutReentry.turnoverRatio)}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>현재 상태</span>
+                        <strong>{washoutStateLabel(washoutCard.state)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="washout-grid">
+                      <div className="plan-item">
+                        <span>Pullback Zone</span>
+                        <strong>
+                          {washoutCard.pullbackZone.low != null && washoutCard.pullbackZone.high != null
+                            ? `${formatPrice(washoutCard.pullbackZone.low)} ~ ${formatPrice(washoutCard.pullbackZone.high)}`
+                            : "-"}
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>Entry Plan</span>
+                        <strong>
+                          {washoutCard.entryPlan.entries.length > 0
+                            ? `${washoutCard.entryPlan.style} (${washoutCard.entryPlan.entries
+                                .map((entry) => `${entry.label} ${formatPrice(entry.price)}`)
+                                .join(" / ")})`
+                            : `${washoutCard.entryPlan.style} (대기)`}
+                        </strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>Invalidation</span>
+                        <strong>{formatPrice(washoutCard.entryPlan.invalidLow)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="washout-grid">
+                      <div className="plan-item">
+                        <span>존 위치</span>
+                        <strong>{washoutZonePosition}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>Anchor 일자</span>
+                        <strong>{washoutCard.anchorSpike.date ?? "-"}</strong>
+                      </div>
+                      <div className="plan-item">
+                        <span>재유입 일자</span>
+                        <strong>{washoutCard.washoutReentry.date ?? "-"}</strong>
+                      </div>
+                    </div>
+
+                    <div className="washout-columns">
+                      <div>
+                        <h4>근거</h4>
+                        <ul className="volume-reasons">
+                          {washoutCard.reasons.map((reason) => (
+                            <li key={reason}>{reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <h4>주의</h4>
+                        {washoutCard.warnings.length > 0 ? (
+                          <ul className="volume-reasons">
+                            {washoutCard.warnings.map((warning) => (
+                              <li key={warning}>{warning}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="plan-note">현재 추가 경고는 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="plan-note">{washoutCard.statusSummary}</p>
+                  </div>
+                )}
+
                 {riskBreakdown && (
                   <div className="card">
                     <div className="collapsible-head">
@@ -1868,7 +2168,12 @@ export default function App() {
 
                 <div className="card">
                   <div className="backtest-head">
-                    <h3>일봉 백테스트 (시그널: {overallLabel(backtest?.meta.signalOverall ?? backtestSignal)})</h3>
+                    <h3>
+                      백테스트 ({BACKTEST_RULE_LABEL[backtest?.meta.ruleId ?? backtestRuleId]})
+                      {(backtest?.meta.ruleId ?? backtestRuleId) === "score-card-v1-day-overall"
+                        ? ` · 시그널 ${overallLabel(backtest?.meta.signalOverall ?? backtestSignal)}`
+                        : ""}
+                    </h3>
                     {backtestLoading && <span className="backtest-state">계산 중...</span>}
                   </div>
                   {backtestError && <p className="backtest-error">{backtestError}</p>}
@@ -1896,6 +2201,38 @@ export default function App() {
                           <strong>{formatPercent(backtestSummary.maxDrawdownPercent)}</strong>
                         </div>
                       </div>
+                      {backtestStrategyMetrics && (
+                        <div className="backtest-summary-grid">
+                          <div className="plan-item">
+                            <span>평균 분할 체결 수</span>
+                            <strong>
+                              {backtestStrategyMetrics.avgTranchesFilled == null
+                                ? "-"
+                                : `${backtestStrategyMetrics.avgTranchesFilled.toFixed(2)}개`}
+                            </strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>1차 체결률</span>
+                            <strong>{formatPercent(backtestStrategyMetrics.fillRate1)}</strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>2차 체결률</span>
+                            <strong>{formatPercent(backtestStrategyMetrics.fillRate2)}</strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>3차 체결률</span>
+                            <strong>{formatPercent(backtestStrategyMetrics.fillRate3)}</strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>부분청산률</span>
+                            <strong>{formatPercent(backtestStrategyMetrics.partialExitRate)}</strong>
+                          </div>
+                          <div className="plan-item">
+                            <span>2R 도달률</span>
+                            <strong>{formatPercent(backtestStrategyMetrics.target2HitRate)}</strong>
+                          </div>
+                        </div>
+                      )}
                       <div className="backtest-table-wrap">
                         <table className="backtest-table">
                           <thead>
@@ -1926,11 +2263,49 @@ export default function App() {
                           </tbody>
                         </table>
                       </div>
+                      <div className="backtest-table-wrap" style={{ marginTop: "10px" }}>
+                        <table className="backtest-table">
+                          <thead>
+                            <tr>
+                              <th>진입일</th>
+                              <th>체결 단계</th>
+                              <th>평균단가</th>
+                              <th>무효화</th>
+                              <th>청산일</th>
+                              <th>청산 사유</th>
+                              <th>수익률</th>
+                              <th>R</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentBacktestTrades.length > 0 ? (
+                              recentBacktestTrades.map((trade, index) => (
+                                <tr key={`${trade.entryTime}-${trade.exitTime}-${index}`}>
+                                  <td>{trade.entryTime}</td>
+                                  <td>{backtestEntriesLabel(trade.entries)}</td>
+                                  <td>{formatPrice(trade.avgEntry ?? trade.entryPrice)}</td>
+                                  <td>{formatPrice(trade.invalidLow ?? trade.stopPrice)}</td>
+                                  <td>{trade.exitTime}</td>
+                                  <td>{backtestExitReasonLabel(trade.exitReason)}</td>
+                                  <td>{formatPercent(trade.returnPercent)}</td>
+                                  <td>{formatR(trade.r ?? trade.rMultiple)}</td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={8}>최근 거래 내역이 없습니다.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                       <p className="plan-note">
-                        신호 발생 다음 봉 시가 진입, 목표/손절/보유기간({backtest.meta.holdBars}봉) 기준 시뮬레이션입니다.
+                        룰 {backtest.meta.ruleId} · 보유기간 {backtest.meta.holdBars}봉 기준 시뮬레이션입니다.
                       </p>
                       <p className="plan-note">
-                        룰 {backtest.meta.ruleId} · 전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 손익비 {formatFactor(backtestSummary.payoffRatio)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
+                        전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 손익비 {formatFactor(backtestSummary.payoffRatio)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
+                        {backtest.meta.targetMode ? ` · 목표모드 ${backtest.meta.targetMode}` : ""}
+                        {backtest.meta.exitMode ? ` · 청산모드 ${backtest.meta.exitMode}` : ""}
                       </p>
                       {backtest.warnings.length > 0 && (
                         <p className="plan-note">{backtest.warnings.join(" · ")}</p>
@@ -2109,6 +2484,16 @@ export default function App() {
                             onChange={(e) => setHighlightSelectedCandle(e.target.checked)}
                           />
                           선택 캔들 강조
+                        </label>
+                      )}
+                      {activeTf === "day" && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={showWashoutEntries}
+                            onChange={(e) => setShowWashoutEntries(e.target.checked)}
+                          />
+                          눌림목 분할 진입선
                         </label>
                       )}
                     </div>

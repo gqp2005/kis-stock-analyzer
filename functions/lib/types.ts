@@ -142,6 +142,12 @@ export interface VolumePatternSignal {
 
 export type FundamentalLabel = "UNDERVALUED" | "FAIR" | "OVERVALUED" | "N/A";
 export type FlowLabel = "BUYING" | "BALANCED" | "SELLING" | "N/A";
+export type WashoutPullbackState =
+  | "NONE"
+  | "ANCHOR_DETECTED"
+  | "WASHOUT_CANDIDATE"
+  | "PULLBACK_READY"
+  | "REBOUND_CONFIRMED";
 
 export interface FundamentalSignal {
   per: number | null;
@@ -162,6 +168,84 @@ export interface FlowSignal {
   foreignHoldRate: number | null;
   label: FlowLabel;
   reasons: string[];
+}
+
+export interface WashoutPullbackEntry {
+  label: string;
+  price: number;
+}
+
+export interface WashoutPullbackCard {
+  id: "washout_pullback_v1";
+  displayName: "거래대금 설거지 + 눌림목 전략";
+  detected: boolean;
+  state: WashoutPullbackState;
+  score: number;
+  confidence: number;
+  anchorSpike: {
+    date: string | null;
+    priceHigh: number | null;
+    priceClose: number | null;
+    turnover: number | null;
+    turnoverRatio: number | null;
+  };
+  washoutReentry: {
+    date: string | null;
+    price: number | null;
+    turnoverRatio: number | null;
+  };
+  pullbackZone: {
+    low: number | null;
+    high: number | null;
+  };
+  entryPlan: {
+    style: "분할매수";
+    entries: WashoutPullbackEntry[];
+    invalidLow: number | null;
+  };
+  statusSummary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface WashoutPullbackOverlay {
+  anchorSpike: {
+    time: string | null;
+    price: number | null;
+    turnover: number | null;
+    turnoverRatio: number | null;
+    marker: "ANCHOR" | null;
+  };
+  washoutReentry: {
+    time: string | null;
+    price: number | null;
+    turnoverRatio: number | null;
+    marker: "REIN" | null;
+  };
+  pullbackZone: {
+    timeStart: string | null;
+    timeEnd: string | null;
+    low: number | null;
+    high: number | null;
+    label: string;
+    strength: number;
+  };
+  invalidLow: {
+    price: number | null;
+    label: string;
+    style: "dashed-bold";
+  };
+  entryPlan: {
+    entries: WashoutPullbackEntry[];
+  };
+}
+
+export interface StrategyCards {
+  washoutPullback: WashoutPullbackCard;
+}
+
+export interface StrategyOverlays {
+  washoutPullback: WashoutPullbackOverlay;
 }
 
 export type OverlayLineGroup = "level" | "zone";
@@ -330,6 +414,8 @@ export interface TimeframeAnalysis {
   levels: IndicatorLevels;
   tradePlan: TradePlan;
   indicators: IndicatorSeries;
+  strategyCards: StrategyCards;
+  strategyOverlays: StrategyOverlays;
   overlays: Overlays;
   confluence: ConfluenceBand[];
   explanations: string[];
@@ -357,6 +443,8 @@ export interface AnalysisPayload {
   levels: IndicatorLevels;
   tradePlan: TradePlan;
   indicators: IndicatorSeries;
+  strategyCards: StrategyCards;
+  strategyOverlays: StrategyOverlays;
   overlays: Overlays;
   confluence: ConfluenceBand[];
   explanations: string[];
@@ -390,7 +478,7 @@ export interface MultiAnalysisPayload {
 }
 
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
-export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS" | "VCP";
+export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS" | "VCP" | "WASHOUT_PULLBACK";
 export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
 
 export interface VcpContraction {
@@ -515,6 +603,26 @@ export interface CupHandleHit {
   reasons: string[];
 }
 
+export type WashoutZonePosition = "IN_ZONE" | "ABOVE_ZONE" | "BELOW_ZONE" | "N/A";
+
+export interface WashoutPullbackHit {
+  detected: boolean;
+  state: WashoutPullbackState;
+  score: number;
+  confidence: number;
+  anchorTurnoverRatio: number | null;
+  reentryTurnoverRatio: number | null;
+  pullbackZone: {
+    low: number | null;
+    high: number | null;
+  };
+  invalidPrice: number | null;
+  riskPct: number | null;
+  position: WashoutZonePosition;
+  reasons: string[];
+  warnings: string[];
+}
+
 export interface ScreenerItem {
   code: string;
   name: string;
@@ -530,6 +638,7 @@ export interface ScreenerItem {
     ihs: PatternHit;
     vcp: VcpHit;
     cupHandle: CupHandleHit;
+    washoutPullback: WashoutPullbackHit;
   };
   reasons: string[];
   levels: {
@@ -670,11 +779,25 @@ export interface ScreenerPayload {
       retriedSymbols: number;
       totalRetries: number;
     } | null;
+    filters?: {
+      washoutState: ScreenerWashoutStateFilter;
+      washoutPosition: ScreenerWashoutPositionFilter;
+      washoutRiskMax: number | null;
+    };
   };
   items: ScreenerItem[];
   warningItems: ScreenerItem[];
   warnings: string[];
 }
+
+export type ScreenerWashoutStateFilter =
+  | "ALL"
+  | "ANCHOR_DETECTED"
+  | "WASHOUT_CANDIDATE"
+  | "PULLBACK_READY"
+  | "REBOUND_CONFIRMED";
+
+export type ScreenerWashoutPositionFilter = "ALL" | "IN_ZONE" | "ABOVE_ZONE" | "BELOW_ZONE";
 
 export interface OhlcvPayload {
   meta: {
@@ -693,6 +816,19 @@ export interface OhlcvPayload {
 
 export type BacktestOutcome = "WIN" | "LOSS" | "FLAT";
 export type BacktestExitReason = "TARGET" | "STOP" | "TIMEOUT";
+export type BacktestRuleId =
+  | "score-card-v1-day-overall"
+  | "washout-pullback-v1"
+  | "washout-pullback-v1.1";
+export type BacktestWashoutTargetMode = "2R" | "3R" | "ANCHOR_HIGH";
+export type BacktestWashoutExitMode = "PARTIAL" | "SINGLE_2R";
+
+export interface BacktestTradeEntry {
+  label: string;
+  time: string;
+  price: number;
+  weight: number;
+}
 
 export interface BacktestTrade {
   entryTime: string;
@@ -706,6 +842,13 @@ export interface BacktestTrade {
   rMultiple: number;
   outcome: BacktestOutcome;
   exitReason: BacktestExitReason;
+  entries?: BacktestTradeEntry[];
+  avgEntry?: number | null;
+  invalidLow?: number | null;
+  r?: number;
+  tranchesFilled?: number;
+  partialExited?: boolean;
+  target2Reached?: boolean;
 }
 
 export interface BacktestPeriodMetrics {
@@ -732,6 +875,15 @@ export interface BacktestSummary {
   maxDrawdownPercent: number | null;
 }
 
+export interface BacktestStrategyMetrics {
+  avgTranchesFilled: number | null;
+  fillRate1: number | null;
+  fillRate2: number | null;
+  fillRate3: number | null;
+  partialExitRate: number | null;
+  target2HitRate: number | null;
+}
+
 export interface BacktestPayload {
   meta: {
     input: string;
@@ -744,10 +896,13 @@ export interface BacktestPayload {
     candleCount: number;
     holdBars: number;
     signalOverall: Overall;
-    ruleId: string;
+    ruleId: BacktestRuleId;
+    targetMode?: BacktestWashoutTargetMode;
+    exitMode?: BacktestWashoutExitMode;
   };
   summary: BacktestSummary;
   periods: BacktestPeriodMetrics[];
   trades: BacktestTrade[];
+  strategyMetrics?: BacktestStrategyMetrics | null;
   warnings: string[];
 }

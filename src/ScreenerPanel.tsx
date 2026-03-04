@@ -2,6 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   Overall,
   PatternState,
+  WashoutZonePosition,
+  ScreenerWashoutPositionFilter,
+  ScreenerWashoutStateFilter,
   VcpLeadershipLabel,
   VcpPivotLabel,
   VcpRiskGrade,
@@ -42,6 +45,9 @@ const formatFactor = (value: number | null): string =>
   value == null ? "-" : value.toFixed(2);
 const formatSignedScore = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value)}점`;
+
+const formatMultiple = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(2)}x`;
 
 const patternTypeLabel = (type: VolumePatternType): string => {
   if (type === "BreakoutConfirmed") return "돌파확인";
@@ -130,8 +136,59 @@ const cupHandleTagClass = (state: PatternState): string => {
   return "reason-tag neutral";
 };
 
-const sortItems = (items: ScreenerItem[], sortKey: SortKey): ScreenerItem[] => {
+const washoutStatePriority = (state: ScreenerWashoutStateFilter | "NONE"): number => {
+  if (state === "REBOUND_CONFIRMED") return 4;
+  if (state === "PULLBACK_READY") return 3;
+  if (state === "WASHOUT_CANDIDATE") return 2;
+  if (state === "ANCHOR_DETECTED") return 1;
+  return 0;
+};
+
+const washoutStateLabel = (state: ScreenerWashoutStateFilter | "NONE"): string => {
+  if (state === "REBOUND_CONFIRMED") return "반등 확인";
+  if (state === "PULLBACK_READY") return "눌림 준비";
+  if (state === "WASHOUT_CANDIDATE") return "설거지 후보";
+  if (state === "ANCHOR_DETECTED") return "앵커 탐지";
+  return "없음";
+};
+
+const washoutStateBadgeClass = (state: ScreenerWashoutStateFilter | "NONE"): string => {
+  if (state === "REBOUND_CONFIRMED") return "badge good";
+  if (state === "PULLBACK_READY") return "badge neutral";
+  if (state === "WASHOUT_CANDIDATE") return "badge neutral";
+  if (state === "ANCHOR_DETECTED") return "badge caution";
+  return "badge neutral";
+};
+
+const washoutPositionLabel = (position: WashoutZonePosition): string => {
+  if (position === "IN_ZONE") return "존 내부";
+  if (position === "ABOVE_ZONE") return "존 위";
+  if (position === "BELOW_ZONE") return "존 아래";
+  return "N/A";
+};
+
+const formatRiskPercent = (value: number | null): string =>
+  value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+
+const sortItems = (
+  items: ScreenerItem[],
+  sortKey: SortKey,
+  strategy: ScreenerStrategyFilter,
+): ScreenerItem[] => {
   const cloned = [...items];
+  if (strategy === "WASHOUT_PULLBACK") {
+    return cloned.sort((a, b) => {
+      const stateDiff =
+        washoutStatePriority(b.hits.washoutPullback.state) -
+        washoutStatePriority(a.hits.washoutPullback.state);
+      if (stateDiff !== 0) return stateDiff;
+      if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal;
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      const ar = a.hits.washoutPullback.riskPct ?? Number.POSITIVE_INFINITY;
+      const br = b.hits.washoutPullback.riskPct ?? Number.POSITIVE_INFINITY;
+      return ar - br;
+    });
+  }
   if (sortKey === "CONFIDENCE") {
     return cloned.sort((a, b) => b.confidence - a.confidence || b.scoreTotal - a.scoreTotal);
   }
@@ -150,6 +207,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   const { apiBase, onSelectSymbol } = props;
   const [market, setMarket] = useState<ScreenerMarketFilter>("ALL");
   const [strategy, setStrategy] = useState<ScreenerStrategyFilter>("ALL");
+  const [washoutState, setWashoutState] = useState<ScreenerWashoutStateFilter>("ALL");
+  const [washoutPosition, setWashoutPosition] = useState<ScreenerWashoutPositionFilter>("ALL");
+  const [washoutRiskMax, setWashoutRiskMax] = useState<string>("ALL");
   const [count, setCount] = useState(30);
   const [universe, setUniverse] = useState(500);
   const [sortKey, setSortKey] = useState<SortKey>("SCORE");
@@ -161,7 +221,20 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     setLoading(true);
     setError("");
     try {
-      const url = `${apiBase}/api/screener?market=${market}&strategy=${strategy}&count=${count}&universe=${universe}`;
+      const query = new URLSearchParams({
+        market,
+        strategy,
+        count: String(count),
+        universe: String(universe),
+      });
+      if (strategy === "WASHOUT_PULLBACK") {
+        query.set("state", washoutState);
+        query.set("position", washoutPosition);
+        if (washoutRiskMax !== "ALL") {
+          query.set("riskPctMax", washoutRiskMax);
+        }
+      }
+      const url = `${apiBase}/api/screener?${query.toString()}`;
       const result = await fetch(url);
       const data = (await result.json()) as ScreenerResponse | { error: string };
       if (!result.ok) throw new Error("error" in data ? data.error : "스크리너 조회 실패");
@@ -185,11 +258,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   };
 
   const rankedItems = useMemo(
-    () => sortItems(response?.items ?? [], sortKey),
-    [response?.items, sortKey],
+    () => sortItems(response?.items ?? [], sortKey, strategy),
+    [response?.items, sortKey, strategy],
   );
   const warningItems = useMemo(
-    () => sortItems(response?.warningItems ?? [], "SCORE"),
+    () => sortItems(response?.warningItems ?? [], "SCORE", "ALL"),
     [response?.warningItems],
   );
   const changeSummary = response?.meta.changeSummary ?? null;
@@ -217,13 +290,58 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
             <option value="ALL">ALL</option>
             <option value="VOLUME">VOLUME</option>
             <option value="VCP">VCP</option>
+            <option value="WASHOUT_PULLBACK">거래대금 설거지+눌림목</option>
             <option value="IHS">IHS</option>
             <option value="HS">HS</option>
           </select>
         </label>
+        {strategy === "WASHOUT_PULLBACK" && (
+          <>
+            <label>
+              상태
+              <select
+                value={washoutState}
+                onChange={(e) => setWashoutState(e.target.value as ScreenerWashoutStateFilter)}
+              >
+                <option value="ALL">전체</option>
+                <option value="REBOUND_CONFIRMED">반등 확인</option>
+                <option value="PULLBACK_READY">눌림 준비</option>
+                <option value="WASHOUT_CANDIDATE">설거지 후보</option>
+                <option value="ANCHOR_DETECTED">앵커 탐지</option>
+              </select>
+            </label>
+            <label>
+              현재가 위치
+              <select
+                value={washoutPosition}
+                onChange={(e) => setWashoutPosition(e.target.value as ScreenerWashoutPositionFilter)}
+              >
+                <option value="ALL">전체</option>
+                <option value="IN_ZONE">존 내부</option>
+                <option value="ABOVE_ZONE">존 위</option>
+                <option value="BELOW_ZONE">존 아래</option>
+              </select>
+            </label>
+            <label>
+              최대 리스크
+              <select value={washoutRiskMax} onChange={(e) => setWashoutRiskMax(e.target.value)}>
+                <option value="ALL">제한 없음</option>
+                <option value="0.06">6% 이하</option>
+                <option value="0.08">8% 이하</option>
+                <option value="0.10">10% 이하</option>
+                <option value="0.12">12% 이하</option>
+                <option value="0.15">15% 이하</option>
+              </select>
+            </label>
+          </>
+        )}
         <label>
           정렬
-          <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as SortKey)}
+            disabled={strategy === "WASHOUT_PULLBACK"}
+          >
             <option value="SCORE">점수순</option>
             <option value="CONFIDENCE">신뢰도순</option>
             <option value="BACKTEST">백테스트순</option>
@@ -351,7 +469,13 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
             {rankedItems.map((item) => (
               <article
                 key={`${item.market}-${item.code}`}
-                className={strategy === "VCP" ? "screener-card vcp-card" : "screener-card"}
+                className={
+                  strategy === "VCP"
+                    ? "screener-card vcp-card"
+                    : strategy === "WASHOUT_PULLBACK"
+                      ? "screener-card washout-card"
+                      : "screener-card"
+                }
               >
                 <div className="screener-card-head">
                   <div>
@@ -363,7 +487,19 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     </p>
                   </div>
                   <div className="final-badges">
-                    {strategy === "VCP" ? (
+                    {strategy === "WASHOUT_PULLBACK" ? (
+                      <>
+                        <span className={washoutStateBadgeClass(item.hits.washoutPullback.state)}>
+                          {washoutStateLabel(item.hits.washoutPullback.state)}
+                        </span>
+                        <span className="confidence neutral">
+                          점수 {item.hits.washoutPullback.score}
+                        </span>
+                        <span className="confidence good">
+                          신뢰도 {item.hits.washoutPullback.confidence}
+                        </span>
+                      </>
+                    ) : strategy === "VCP" ? (
                       <>
                         <span className="confidence neutral">VCPScore {item.hits.vcp.score}</span>
                         <span className={item.hits.vcp.pivot.label === "BREAKOUT_CONFIRMED" ? "badge good" : "badge neutral"}>
@@ -383,7 +519,38 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     )}
                   </div>
                 </div>
-                {strategy === "VCP" ? (
+                {strategy === "WASHOUT_PULLBACK" ? (
+                  <>
+                    <div className="screener-levels washout-kpi-row">
+                      <small>Anchor {formatMultiple(item.hits.washoutPullback.anchorTurnoverRatio)}</small>
+                      <small>Reentry {formatMultiple(item.hits.washoutPullback.reentryTurnoverRatio)}</small>
+                      <small>현재 상태 {washoutStateLabel(item.hits.washoutPullback.state)}</small>
+                    </div>
+                    <div className="screener-levels washout-kpi-row">
+                      <small>
+                        Pullback {formatPrice(item.hits.washoutPullback.pullbackZone.low)} ~{" "}
+                        {formatPrice(item.hits.washoutPullback.pullbackZone.high)}
+                      </small>
+                      <small>현재가 {washoutPositionLabel(item.hits.washoutPullback.position)}</small>
+                      <small>Invalid {formatPrice(item.hits.washoutPullback.invalidPrice)}</small>
+                      <small>Risk {formatRiskPercent(item.hits.washoutPullback.riskPct)}</small>
+                    </div>
+                    <ul className="washout-reasons">
+                      {(item.hits.washoutPullback.reasons.length > 0
+                        ? item.hits.washoutPullback.reasons
+                        : item.reasons
+                      )
+                        .slice(0, 2)
+                        .map((reason) => (
+                          <li key={`${item.code}-washout-reason-${reason}`}>{reason}</li>
+                        ))}
+                    </ul>
+                    <p className="washout-warning">
+                      {item.hits.washoutPullback.warnings[0] ??
+                        "위 조건은 전략 후보 판단용이며 참고용 시나리오입니다."}
+                    </p>
+                  </>
+                ) : strategy === "VCP" ? (
                   <>
                     <div className="screener-levels vcp-kpi-row">
                       <small>
@@ -542,6 +709,19 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
               </article>
             ))}
           </div>
+
+          {rankedItems.length === 0 && (
+            <div className="card">
+              <p className="meta">조건에 맞는 후보가 없습니다. 필터 조건을 완화해 다시 조회해 주세요.</p>
+              {response.warnings.length > 0 && (
+                <ul>
+                  {response.warnings.slice(0, 3).map((warning) => (
+                    <li key={`empty-${warning}`}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {warningItems.length > 0 && (
             <div className="card">

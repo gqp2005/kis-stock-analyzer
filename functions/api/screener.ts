@@ -20,6 +20,8 @@ import type {
   ScreenerMarketFilter,
   ScreenerPayload,
   ScreenerStrategyFilter,
+  ScreenerWashoutPositionFilter,
+  ScreenerWashoutStateFilter,
 } from "../lib/types";
 
 const sortByAllScore = <T extends { scoring: { all: { score: number; confidence: number } } }>(
@@ -46,11 +48,41 @@ const parseStrategy = (raw: string | null): ScreenerStrategyFilter => {
     normalized === "VOLUME" ||
     normalized === "HS" ||
     normalized === "IHS" ||
-    normalized === "VCP"
+    normalized === "VCP" ||
+    normalized === "WASHOUT_PULLBACK"
   ) {
     return normalized;
   }
   return "ALL";
+};
+
+const parseWashoutState = (raw: string | null): ScreenerWashoutStateFilter => {
+  const normalized = (raw ?? "ALL").toUpperCase();
+  if (
+    normalized === "ANCHOR_DETECTED" ||
+    normalized === "WASHOUT_CANDIDATE" ||
+    normalized === "PULLBACK_READY" ||
+    normalized === "REBOUND_CONFIRMED"
+  ) {
+    return normalized;
+  }
+  return "ALL";
+};
+
+const parseWashoutPosition = (raw: string | null): ScreenerWashoutPositionFilter => {
+  const normalized = (raw ?? "ALL").toUpperCase();
+  if (normalized === "IN_ZONE" || normalized === "ABOVE_ZONE" || normalized === "BELOW_ZONE") {
+    return normalized;
+  }
+  return "ALL";
+};
+
+const parseWashoutRiskMax = (url: URL): number | null => {
+  const raw = Number(url.searchParams.get("riskPctMax") ?? url.searchParams.get("riskMax") ?? "");
+  if (!Number.isFinite(raw)) return null;
+  if (raw <= 0) return null;
+  const normalized = raw > 1 ? raw / 100 : raw;
+  return Math.max(0.01, Math.min(0.5, normalized));
 };
 
 const parseCount = (raw: string | null): number => {
@@ -157,6 +189,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const market = parseMarket(url.searchParams.get("market"));
     const strategy = parseStrategy(url.searchParams.get("strategy"));
     const count = parseCount(url.searchParams.get("count"));
+    const washoutState = parseWashoutState(url.searchParams.get("state"));
+    const washoutPosition = parseWashoutPosition(url.searchParams.get("position"));
+    const washoutRiskMax = parseWashoutRiskMax(url);
     const autoBootstrapEnabled = parseBooleanEnv(
       context.env.SCREENER_AUTO_BOOTSTRAP,
       true,
@@ -359,7 +394,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       strategy,
       count,
       snapshot.validationSummary?.activeCutoffs ?? null,
+      {
+        state: washoutState,
+        position: washoutPosition,
+        riskPctMax: washoutRiskMax,
+      },
     );
+
+    if (strategy === "WASHOUT_PULLBACK" && view.items.length === 0) {
+      warnings.push("조건에 맞는 거래대금 설거지+눌림목 후보가 없습니다. 필터를 완화해 보세요.");
+    }
 
     const payload: ScreenerPayload = {
       meta: {
@@ -467,6 +511,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               retriedSymbols: snapshot.rebuildMeta?.retryStats.retriedSymbols ?? 0,
               totalRetries: snapshot.rebuildMeta?.retryStats.totalRetries ?? 0,
             },
+        filters:
+          strategy === "WASHOUT_PULLBACK"
+            ? {
+                washoutState,
+                washoutPosition,
+                washoutRiskMax,
+              }
+            : undefined,
       },
       items: view.items,
       warningItems: view.warningItems,

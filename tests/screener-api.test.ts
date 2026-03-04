@@ -143,6 +143,23 @@ const sampleCandidate: ScreenerStoredCandidate = {
       handleBars: 11,
       reasons: ["컵앤핸들 후보 구간입니다."],
     },
+    washoutPullback: {
+      detected: true,
+      state: "PULLBACK_READY",
+      score: 82,
+      confidence: 74,
+      anchorTurnoverRatio: 3.8,
+      reentryTurnoverRatio: 2.1,
+      pullbackZone: {
+        low: 98500,
+        high: 100800,
+      },
+      invalidPrice: 97200,
+      riskPct: 0.035,
+      position: "IN_ZONE",
+      reasons: ["앵커 이후 조정과 재유입이 확인되었습니다."],
+      warnings: ["invalidLow 이탈 시 전략 무효입니다."],
+    },
   },
   scoring: {
     all: { score: 80, confidence: 72 },
@@ -150,6 +167,7 @@ const sampleCandidate: ScreenerStoredCandidate = {
     hs: { score: 20, confidence: 30 },
     ihs: { score: 78, confidence: 74 },
     vcp: { score: 81, confidence: 79 },
+    washoutPullback: { score: 82, confidence: 74 },
   },
   reasons: {
     all: ["테스트 all"],
@@ -157,6 +175,7 @@ const sampleCandidate: ScreenerStoredCandidate = {
     hs: ["테스트 hs"],
     ihs: ["테스트 ihs"],
     vcp: ["테스트 vcp"],
+    washoutPullback: ["테스트 washout"],
   },
   backtestSummary: {
     all: null,
@@ -164,6 +183,7 @@ const sampleCandidate: ScreenerStoredCandidate = {
     hs: null,
     ihs: null,
     vcp: null,
+    washoutPullback: null,
   },
 };
 
@@ -377,5 +397,47 @@ describe("/api/screener (cache-only)", () => {
     expect(body.meta.strategy).toBe("VCP");
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.items[0]?.hits.vcp.detected).toBe(true);
+  });
+
+  it("supports strategy=WASHOUT_PULLBACK filters", async () => {
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      return sampleSnapshot as never;
+    });
+
+    const response = await onRequestGet(
+      makeContext(
+        "http://localhost/api/screener?market=ALL&strategy=WASHOUT_PULLBACK&state=PULLBACK_READY&position=IN_ZONE&riskPctMax=0.08&count=30",
+      ),
+    );
+    const body = (await response.json()) as {
+      meta: {
+        strategy: string;
+        filters?: {
+          washoutState: string;
+          washoutPosition: string;
+          washoutRiskMax: number | null;
+        };
+      };
+      items: Array<{
+        code: string;
+        hits: {
+          washoutPullback: {
+            detected: boolean;
+            state: string;
+            position: string;
+          };
+        };
+      }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.strategy).toBe("WASHOUT_PULLBACK");
+    expect(body.meta.filters?.washoutState).toBe("PULLBACK_READY");
+    expect(body.meta.filters?.washoutPosition).toBe("IN_ZONE");
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(body.items[0]?.hits.washoutPullback.detected).toBe(true);
+    expect(body.items[0]?.hits.washoutPullback.state).toBe("PULLBACK_READY");
   });
 });

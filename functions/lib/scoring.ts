@@ -1,6 +1,7 @@
 import { atr, bollingerBands, macd, rsi, sma } from "./indicators";
 import { buildMultiViewArtifacts } from "./overlays";
 import { detectVcpPattern } from "./vcp";
+import { detectWashoutPullback } from "./washoutPullback";
 import type {
   Candle,
   IndicatorPoint,
@@ -18,6 +19,8 @@ import type {
   VcpHit,
   VolumePatternSignal,
   VolumePatternType,
+  StrategyCards,
+  StrategyOverlays,
 } from "./types";
 import { clamp, round2 } from "./utils";
 
@@ -744,6 +747,78 @@ const emptyCupHandleSignal = (reason: string): Signals["cupHandle"] => ({
   reasons: [reason],
 });
 
+const emptyWashoutStrategy = (
+  reason: string,
+): { strategyCards: StrategyCards; strategyOverlays: StrategyOverlays } => ({
+  strategyCards: {
+    washoutPullback: {
+      id: "washout_pullback_v1",
+      displayName: "거래대금 설거지 + 눌림목 전략",
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      anchorSpike: {
+        date: null,
+        priceHigh: null,
+        priceClose: null,
+        turnover: null,
+        turnoverRatio: null,
+      },
+      washoutReentry: {
+        date: null,
+        price: null,
+        turnoverRatio: null,
+      },
+      pullbackZone: {
+        low: null,
+        high: null,
+      },
+      entryPlan: {
+        style: "분할매수",
+        entries: [],
+        invalidLow: null,
+      },
+      statusSummary: "일봉 기준 데이터가 부족해 전략 판단을 보류했습니다.",
+      reasons: [reason],
+      warnings: ["조건 미충족 시 전략 후보를 강제하지 않습니다."],
+    },
+  },
+  strategyOverlays: {
+    washoutPullback: {
+      anchorSpike: {
+        time: null,
+        price: null,
+        turnover: null,
+        turnoverRatio: null,
+        marker: null,
+      },
+      washoutReentry: {
+        time: null,
+        price: null,
+        turnoverRatio: null,
+        marker: null,
+      },
+      pullbackZone: {
+        timeStart: null,
+        timeEnd: null,
+        low: null,
+        high: null,
+        label: "눌림목 존",
+        strength: 0,
+      },
+      invalidLow: {
+        price: null,
+        label: "무효화",
+        style: "dashed-bold",
+      },
+      entryPlan: {
+        entries: [],
+      },
+    },
+  },
+});
+
 const detectCupHandlePattern = (
   candles: Candle[],
   volMa20Series: Array<number | null>,
@@ -1020,6 +1095,20 @@ const analyzeWithConfig = (
     config.tf === "day"
       ? detectCupHandlePattern(candles, volMa20Series)
       : emptyCupHandleSignal("컵앤핸들 분석은 일봉 기준으로 제공합니다.");
+  const washoutArtifacts =
+    config.tf === "day"
+      ? (() => {
+          const detected = detectWashoutPullback(candles);
+          return {
+            strategyCards: {
+              washoutPullback: detected.card,
+            },
+            strategyOverlays: {
+              washoutPullback: detected.overlay,
+            },
+          };
+        })()
+      : emptyWashoutStrategy("거래대금 설거지 + 눌림목 전략은 일봉 기준으로만 계산합니다.");
 
   const overall = overallFromScores(trend, momentum, risk);
   const profileScore = buildProfileScore(profile, trend, momentum, risk);
@@ -1248,6 +1337,8 @@ const analyzeWithConfig = (
     levels,
     tradePlan,
     indicators,
+    strategyCards: washoutArtifacts.strategyCards,
+    strategyOverlays: washoutArtifacts.strategyOverlays,
     overlays: multiView.overlays,
     confluence: multiView.confluence,
     explanations: multiView.explanations,

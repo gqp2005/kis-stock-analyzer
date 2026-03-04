@@ -7,6 +7,8 @@ import type {
   Candle,
   CupHandleHit,
   PatternHit,
+  ScreenerWashoutPositionFilter,
+  ScreenerWashoutStateFilter,
   ScreenerItem,
   ScreenerMarketFilter,
   ScreenerStrategyFilter,
@@ -15,6 +17,7 @@ import type {
   VcpHit,
   VolumeHit,
   VolumePatternType,
+  WashoutPullbackHit,
 } from "./types";
 import { clamp, round2 } from "./utils";
 
@@ -61,6 +64,7 @@ export interface ScreenerStoredCandidate {
     ihs: PatternHit;
     vcp: VcpHit;
     cupHandle: CupHandleHit;
+    washoutPullback: WashoutPullbackHit;
   };
   scoring: {
     all: { score: number; confidence: number };
@@ -68,6 +72,7 @@ export interface ScreenerStoredCandidate {
     hs: { score: number; confidence: number };
     ihs: { score: number; confidence: number };
     vcp: { score: number; confidence: number };
+    washoutPullback: { score: number; confidence: number };
   };
   reasons: {
     all: string[];
@@ -75,6 +80,7 @@ export interface ScreenerStoredCandidate {
     hs: string[];
     ihs: string[];
     vcp: string[];
+    washoutPullback: string[];
   };
   backtestSummary: {
     all: StrategyBacktestSummary | null;
@@ -82,6 +88,7 @@ export interface ScreenerStoredCandidate {
     hs: StrategyBacktestSummary | null;
     ihs: StrategyBacktestSummary | null;
     vcp: StrategyBacktestSummary | null;
+    washoutPullback: StrategyBacktestSummary | null;
   };
   rs: {
     benchmark: "KOSPI" | "KOSDAQ";
@@ -214,6 +221,24 @@ const defaultCupHandleHit = (reason: string): CupHandleHit => ({
   cupWidthBars: null,
   handleBars: null,
   reasons: [reason],
+});
+
+const defaultWashoutPullbackHit = (reason: string): WashoutPullbackHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  anchorTurnoverRatio: null,
+  reentryTurnoverRatio: null,
+  pullbackZone: {
+    low: null,
+    high: null,
+  },
+  invalidPrice: null,
+  riskPct: null,
+  position: "N/A",
+  reasons: [reason],
+  warnings: [],
 });
 
 const defaultBacktestSummary = (): StrategyBacktestSummary | null => null;
@@ -575,6 +600,50 @@ const computeVolumeHit = (analysis: TimeframeAnalysis): VolumeHit => {
   };
 };
 
+const washoutStatePriority = (state: WashoutPullbackHit["state"]): number => {
+  if (state === "REBOUND_CONFIRMED") return 4;
+  if (state === "PULLBACK_READY") return 3;
+  if (state === "WASHOUT_CANDIDATE") return 2;
+  if (state === "ANCHOR_DETECTED") return 1;
+  return 0;
+};
+
+const computeWashoutPosition = (
+  lastClose: number,
+  low: number | null,
+  high: number | null,
+): WashoutPullbackHit["position"] => {
+  if (low == null || high == null) return "N/A";
+  if (lastClose < low) return "BELOW_ZONE";
+  if (lastClose > high) return "ABOVE_ZONE";
+  return "IN_ZONE";
+};
+
+const computeWashoutRiskPct = (
+  entryRef: number | null,
+  invalidPrice: number | null,
+): number | null => {
+  if (entryRef == null || invalidPrice == null || entryRef <= 0) return null;
+  return Math.max(0, (entryRef - invalidPrice) / entryRef);
+};
+
+const computeWashoutConfidence = (
+  baseConfidence: number,
+  riskPct: number | null,
+  avgTurnover20: number,
+): number => {
+  let confidence = baseConfidence;
+  if (riskPct != null) {
+    if (riskPct <= 0.06) confidence += 8;
+    else if (riskPct <= 0.1) confidence += 4;
+    else if (riskPct > 0.15) confidence -= 12;
+    else if (riskPct > 0.12) confidence -= 6;
+  }
+  if (avgTurnover20 < 1_000_000_000) confidence -= 12;
+  else if (avgTurnover20 < 3_000_000_000) confidence -= 6;
+  return clampScore(confidence);
+};
+
 const getLiquidityAdjustment = (candles: Candle[]): { adjustment: number; reason: string | null } => {
   const sample = candles.slice(-20);
   if (sample.length === 0) {
@@ -865,6 +934,37 @@ export const analyzeScreenerRawCandidate = (
   const volume = computeVolumeHit(day);
   const vcp = detectVcpPattern(day.candles, marketBenchmark);
   const cupHandle = day.signals.cupHandle ?? defaultCupHandleHit("컵앤핸들 패턴 데이터가 없습니다.");
+  const washoutBase = day.strategyCards?.washoutPullback;
+  const washoutFallback = defaultWashoutPullbackHit("거래대금 설거지 + 눌림목 전략 데이터가 없습니다.");
+  const entryRef =
+    washoutBase?.pullbackZone.high ??
+    washoutBase?.entryPlan.entries?.[0]?.price ??
+    null;
+  const riskPct = computeWashoutRiskPct(entryRef, washoutBase?.entryPlan.invalidLow ?? null);
+  const avgTurnover20 = average(day.candles.slice(-20).map((candle) => candle.close * candle.volume));
+  const washout: WashoutPullbackHit = washoutBase
+    ? {
+        detected: washoutBase.detected,
+        state: washoutBase.state,
+        score: clampScore(washoutBase.score),
+        confidence: clampScore(washoutBase.confidence),
+        anchorTurnoverRatio: toNullableRounded(washoutBase.anchorSpike.turnoverRatio),
+        reentryTurnoverRatio: toNullableRounded(washoutBase.washoutReentry.turnoverRatio),
+        pullbackZone: {
+          low: toNullableRounded(washoutBase.pullbackZone.low),
+          high: toNullableRounded(washoutBase.pullbackZone.high),
+        },
+        invalidPrice: toNullableRounded(washoutBase.entryPlan.invalidLow),
+        riskPct: toNullableRounded(riskPct),
+        position: computeWashoutPosition(
+          day.candles[day.candles.length - 1].close,
+          washoutBase.pullbackZone.low,
+          washoutBase.pullbackZone.high,
+        ),
+        reasons: washoutBase.reasons.slice(0, 6),
+        warnings: washoutBase.warnings.slice(0, 3),
+      }
+    : washoutFallback;
   const rsInfo = computeRsLabel(day.candles, marketBenchmark);
   const rsScoreAdj = scoreAdjustmentFromRs(rsInfo.label);
   const rsConfidenceAdj = confidenceAdjustmentFromRs(rsInfo.label);
@@ -904,6 +1004,7 @@ export const analyzeScreenerRawCandidate = (
   const hsScore = clampScore(hs.score);
   const ihsScore = clampScore(ihs.score);
   const vcpScore = clampScore(vcp.score);
+  const washoutScore = clampScore(washout.score);
 
   const volumeConfidence = clampScore(
     volume.confidence +
@@ -941,6 +1042,11 @@ export const analyzeScreenerRawCandidate = (
         tuningResult.metrics.vcp.quality,
       ),
   );
+  const washoutConfidence = computeWashoutConfidence(
+    washout.confidence + adjustment,
+    washout.riskPct,
+    avgTurnover20,
+  );
   const allConfidence = clampScore(
     0.3 * volumeConfidence + 0.25 * ihsConfidence + 0.2 * hsConfidence + 0.25 * vcpConfidence,
   );
@@ -960,6 +1066,18 @@ export const analyzeScreenerRawCandidate = (
     sharedReasons.push(`컵앤핸들 돌파가 확정되었습니다(점수 ${cupHandle.score}점).`);
   } else if (cupHandle.state === "POTENTIAL") {
     sharedReasons.push(`컵앤핸들 후보 구간입니다(점수 ${cupHandle.score}점).`);
+  }
+  if (washout.detected) {
+    sharedReasons.push(
+      `거래대금 설거지+눌림목 상태 ${washout.state} (${washout.score}점, 신뢰도 ${washoutConfidence}점)입니다.`,
+    );
+  }
+  if (washout.position === "IN_ZONE") {
+    sharedReasons.push("눌림목 존 내부 구간으로 분할매수 관점의 관찰 구간입니다.");
+  } else if (washout.position === "ABOVE_ZONE") {
+    sharedReasons.push("현재가가 눌림목 존 위에 있어 추격보다 재눌림 확인이 유리합니다.");
+  } else if (washout.position === "BELOW_ZONE") {
+    sharedReasons.push("현재가가 눌림목 존 아래로 내려가 방어 확인이 필요합니다.");
   }
   if (vcp.pivot.pivotReady) {
     sharedReasons.push("VCP 피벗 준비 조건(distance/dry-up/depth)이 충족되었습니다.");
@@ -1008,6 +1126,7 @@ export const analyzeScreenerRawCandidate = (
   const hsReasons = [...hs.reasons, ...sharedReasons].slice(0, 6);
   const ihsReasons = [...ihs.reasons, ...sharedReasons].slice(0, 6);
   const vcpReasons = [...vcp.reasons, ...sharedReasons].slice(0, 6);
+  const washoutReasons = [...washout.reasons, ...washout.warnings, ...sharedReasons].slice(0, 6);
 
   const backtestAll = includeBacktest
     ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "ALL"))
@@ -1021,6 +1140,7 @@ export const analyzeScreenerRawCandidate = (
   const backtestVcp = includeBacktest
     ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "VCP"))
     : defaultBacktestSummary();
+  const backtestWashout = defaultBacktestSummary();
   const backtestHs = defaultBacktestSummary();
 
   return {
@@ -1040,6 +1160,7 @@ export const analyzeScreenerRawCandidate = (
       ihs,
       vcp,
       cupHandle,
+      washoutPullback: washout,
     },
     scoring: {
       all: { score: allScore, confidence: allConfidence },
@@ -1047,6 +1168,7 @@ export const analyzeScreenerRawCandidate = (
       hs: { score: hsScore, confidence: hsConfidence },
       ihs: { score: ihsScore, confidence: ihsConfidence },
       vcp: { score: vcpScore, confidence: vcpConfidence },
+      washoutPullback: { score: washoutScore, confidence: washoutConfidence },
     },
     reasons: {
       all: allReasons,
@@ -1054,6 +1176,7 @@ export const analyzeScreenerRawCandidate = (
       hs: hsReasons,
       ihs: ihsReasons,
       vcp: vcpReasons,
+      washoutPullback: washoutReasons,
     },
     backtestSummary: {
       all: backtestAll,
@@ -1061,6 +1184,7 @@ export const analyzeScreenerRawCandidate = (
       hs: backtestHs,
       ihs: backtestIhs,
       vcp: backtestVcp,
+      washoutPullback: backtestWashout,
     },
     rs: rsInfo,
     tuning: {
@@ -1077,6 +1201,7 @@ const strategyKey = (
   if (strategy === "HS") return "hs";
   if (strategy === "IHS") return "ihs";
   if (strategy === "VCP") return "vcp";
+  if (strategy === "WASHOUT_PULLBACK") return "washoutPullback";
   return "all";
 };
 
@@ -1085,16 +1210,21 @@ export const materializeScreenerItem = (
   strategy: ScreenerStrategyFilter,
 ): ScreenerItem => {
   const key = strategyKey(strategy);
-  const scoreTotal = raw.scoring[key].score;
-  const confidence = raw.scoring[key].confidence;
+  const scoreNode = raw.scoring[key] ?? raw.scoring.all;
+  const scoreTotal = scoreNode.score;
+  const confidence = scoreNode.confidence;
   const cupHandle = (raw.hits as { cupHandle?: CupHandleHit }).cupHandle ??
     defaultCupHandleHit("구버전 스냅샷에는 컵앤핸들 데이터가 없습니다.");
+  const washoutPullback =
+    (raw.hits as { washoutPullback?: WashoutPullbackHit }).washoutPullback ??
+    defaultWashoutPullbackHit("구버전 스냅샷에는 거래대금 설거지+눌림목 데이터가 없습니다.");
   const hits: ScreenerItem["hits"] = {
     volume: raw.hits.volume,
     hs: raw.hits.hs,
     ihs: raw.hits.ihs,
     vcp: raw.hits.vcp,
     cupHandle,
+    washoutPullback,
   };
   const overallLabel = getOverallLabel(scoreTotal, confidence, hits.hs);
   const rs =
@@ -1104,6 +1234,8 @@ export const materializeScreenerItem = (
       ret63Diff: null,
       label: "N/A",
     } as const);
+  const reasonsByKey = (raw.reasons?.[key] ?? raw.reasons?.all ?? []).slice(0, 6);
+  const backtestByKey = raw.backtestSummary?.[key] ?? raw.backtestSummary?.all ?? null;
 
   return {
     code: raw.code,
@@ -1115,9 +1247,9 @@ export const materializeScreenerItem = (
     confidence,
     overallLabel,
     hits,
-    reasons: raw.reasons[key].slice(0, 6),
+    reasons: reasonsByKey,
     levels: raw.levels,
-    backtestSummary: raw.backtestSummary[key],
+    backtestSummary: backtestByKey,
     rs,
     tuning: raw.tuning ?? null,
   };
@@ -1139,6 +1271,31 @@ const sortByHsRisk = (items: ScreenerItem[]): ScreenerItem[] =>
       b.hits.hs.confidence - a.hits.hs.confidence ||
       b.confidence - a.confidence,
   );
+
+const sortByWashoutPriority = (items: ScreenerItem[]): ScreenerItem[] =>
+  [...items].sort((a, b) => {
+    const stateDiff =
+      washoutStatePriority(b.hits.washoutPullback.state) -
+      washoutStatePriority(a.hits.washoutPullback.state);
+    if (stateDiff !== 0) return stateDiff;
+    if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal;
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    const riskA = a.hits.washoutPullback.riskPct ?? 999;
+    const riskB = b.hits.washoutPullback.riskPct ?? 999;
+    return riskA - riskB;
+  });
+
+export interface WashoutScreenerFilters {
+  state: ScreenerWashoutStateFilter;
+  position: ScreenerWashoutPositionFilter;
+  riskPctMax: number | null;
+}
+
+const defaultWashoutFilters = (): WashoutScreenerFilters => ({
+  state: "ALL",
+  position: "ALL",
+  riskPctMax: null,
+});
 
 export interface ScreenerAdaptiveCutoffs {
   all: number;
@@ -1249,10 +1406,15 @@ export const buildScreenerView = (
   strategy: ScreenerStrategyFilter,
   count: number,
   cutoffOverride?: Partial<ScreenerAdaptiveCutoffs> | null,
+  washoutFiltersInput?: Partial<WashoutScreenerFilters> | null,
 ): {
   items: ScreenerItem[];
   warningItems: ScreenerItem[];
 } => {
+  const washoutFilters: WashoutScreenerFilters = {
+    ...defaultWashoutFilters(),
+    ...(washoutFiltersInput ?? {}),
+  };
   const filteredCandidates = candidates.filter((candidate) =>
     market === "ALL" ? true : candidate.market === market,
   );
@@ -1279,6 +1441,19 @@ export const buildScreenerView = (
     if (strategy === "VCP") {
       return item.hits.vcp.detected && item.hits.vcp.score >= adaptiveCutoffs.vcp;
     }
+    if (strategy === "WASHOUT_PULLBACK") {
+      const washout = item.hits.washoutPullback;
+      if (!washout.detected || washout.state === "NONE") return false;
+      if (washoutFilters.state !== "ALL" && washout.state !== washoutFilters.state) return false;
+      if (washoutFilters.position !== "ALL" && washout.position !== washoutFilters.position) return false;
+      if (
+        washoutFilters.riskPctMax != null &&
+        (washout.riskPct == null || washout.riskPct > washoutFilters.riskPctMax)
+      ) {
+        return false;
+      }
+      return true;
+    }
     return item.scoreTotal >= adaptiveCutoffs.all || isWarningCandidate(item);
   });
 
@@ -1291,6 +1466,12 @@ export const buildScreenerView = (
   if (strategy === "VCP") {
     return {
       items: sortByScore(items).slice(0, count),
+      warningItems,
+    };
+  }
+  if (strategy === "WASHOUT_PULLBACK") {
+    return {
+      items: sortByWashoutPriority(items).slice(0, count),
       warningItems,
     };
   }

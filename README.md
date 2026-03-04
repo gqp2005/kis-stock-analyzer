@@ -292,18 +292,22 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
 - 참고:
   - `SCREENER_KV`/`SCREENER_DB` 미연결 시 빈 배열 + 안내 메시지를 반환
 
-### `GET /api/backtest?query=005930&count=520&holdBars=10&signal=GOOD`
+### `GET /api/backtest?query=005930&count=520&holdBars=10&signal=GOOD&ruleId=score-card-v1-day-overall`
 - 일봉 기반 시그널 백테스트 결과 반환
 - 파라미터:
   - `count`: 백테스트용 일봉 수(기본 520, 내부 최소치 자동 보정)
-  - `holdBars`: 최대 보유 봉 수(기본 10)
+  - `holdBars`: 최대 보유 봉 수(기본 day룰 10, washout 룰 20)
   - `signal`: 진입 신호 기준(`GOOD|NEUTRAL|CAUTION`, 기본 `GOOD`)
+  - `ruleId`: `score-card-v1-day-overall|washout-pullback-v1|washout-pullback-v1.1`
+  - `target`(washout 전용): `2R|3R|ANCHOR_HIGH` (기본 `2R`)
+  - `exit`(washout v1.1 전용): `PARTIAL|SINGLE_2R` (기본 `PARTIAL`)
 - 응답:
   - `summary`: 전체 구간 승률/평균손익률/평균R/손익비/PF/MDD
   - `periods`: 3개월/6개월/1년 구간별 지표(승률/손익비/MDD 포함)
-  - `trades`: 최근 거래 내역(최대 80건)
+  - `trades`: 최근 거래 내역(최대 80건, washout은 `entries/avgEntry/invalidLow/r` 포함)
+  - `strategyMetrics`(washout): `avgTranchesFilled, fillRate1, fillRate2, fillRate3, partialExitRate, target2HitRate`
   - `warnings`: 데이터/표본 부족 경고
-  - `meta.ruleId`: 적용된 백테스트 룰 ID (`score-card-v1-day-overall`)
+  - `meta.ruleId`: 적용된 백테스트 룰 ID
 - 시뮬레이션 규칙(현재):
   - 현재 운영 중인 day 스코어 룰을 과거 데이터에 롤링 적용
   - 신호 발생 다음 봉 시가 진입
@@ -314,6 +318,7 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
 - `strategy.ts`: 현재 스코어 룰을 과거 시점에 적용해 진입 신호/손절/목표 생성
 - `engine.ts`: 단일 포지션 시뮬레이션(진입/청산/보유기간)
 - `metrics.ts`: 승률/손익비/PF/MDD 등 검증 지표 집계
+- `washout.ts`: 거래대금 설거지+눌림목 전략(v1/v1.1) 전용 시뮬레이션(단일/분할)
 
 ### `GET /api/ohlcv?query=005930&tf=day&days=180`
 - `tf`: `day|week|month`

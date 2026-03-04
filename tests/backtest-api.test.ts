@@ -93,4 +93,31 @@ describe("/api/backtest", () => {
     expect(response.status).toBe(400);
     expect(body.code).toBe("BAD_REQUEST");
   });
+
+  it("supports washout-pullback-v1.1 rule with strategy metrics", async () => {
+    fetchMock.mockResolvedValue({
+      name: "삼성전자",
+      candles: makeDayCandles(620),
+      cacheTtlSec: 60,
+    });
+
+    const response = await onRequestGet(
+      makeContext(
+        "http://localhost/api/backtest?query=005930&ruleId=washout-pullback-v1.1&holdBars=20&target=2R&exit=PARTIAL",
+      ),
+    );
+    const body = (await response.json()) as {
+      meta: { ruleId: string; holdBars: number; targetMode?: string; exitMode?: string };
+      strategyMetrics?: { fillRate1: number | null; target2HitRate: number | null };
+      warnings: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.ruleId).toBe("washout-pullback-v1.1");
+    expect(body.meta.holdBars).toBe(20);
+    expect(body.meta.targetMode).toBe("2R");
+    expect(body.meta.exitMode).toBe("PARTIAL");
+    expect(body.strategyMetrics).toBeDefined();
+    expect(body.warnings.length).toBeGreaterThanOrEqual(1);
+  });
 });

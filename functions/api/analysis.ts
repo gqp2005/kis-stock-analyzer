@@ -73,7 +73,7 @@ const parseProfile = (raw: string | null): InvestmentProfile => {
 };
 
 const singleTfCount = (tf: Timeframe, dayCount: number): number => {
-  if (tf === "day") return Math.max(dayCount, 200);
+  if (tf === "day") return Math.max(dayCount, 260);
   if (tf === "week") return 200;
   return 80;
 };
@@ -261,7 +261,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const dayAnalysis = dayCandles
         ? withSnapshotSignals(
-            analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 160)), profile),
+            analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 260)), profile),
             snapshot,
           )
         : null;
@@ -383,6 +383,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       levels: analysisForChart.levels,
       tradePlan: analysisForChart.tradePlan,
       indicators: analysisForChart.indicators,
+      strategyCards: analysisForChart.strategyCards,
+      strategyOverlays: analysisForChart.strategyOverlays,
       overlays: analysisForChart.overlays,
       confluence: analysisForChart.confluence,
       explanations: analysisForChart.explanations,

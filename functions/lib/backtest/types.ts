@@ -1,4 +1,10 @@
-import type { BacktestTrade, Candle, Overall } from "../types";
+import type {
+  BacktestTrade,
+  BacktestWashoutExitMode,
+  BacktestWashoutTargetMode,
+  Candle,
+  Overall,
+} from "../types";
 
 export interface DayBacktestOptions {
   holdBars?: number;
@@ -6,8 +12,19 @@ export interface DayBacktestOptions {
   signalOverall?: Overall;
 }
 
+export interface WashoutBacktestOptions {
+  holdBars?: number;
+  lookbackBars?: number;
+  targetMode?: BacktestWashoutTargetMode;
+  exitMode?: BacktestWashoutExitMode;
+}
+
 export interface SimTrade extends BacktestTrade {
   entryIndex: number;
+  exitIndex?: number;
+  filled1?: boolean;
+  filled2?: boolean;
+  filled3?: boolean;
 }
 
 export interface DaySignalContext {
