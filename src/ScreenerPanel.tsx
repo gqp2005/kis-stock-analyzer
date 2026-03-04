@@ -272,6 +272,15 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   const changeRemoved = changeSummary?.removed ?? [];
   const changeScoreRisers = changeSummary?.scoreRisers ?? [];
   const changeScoreFallers = changeSummary?.scoreFallers ?? [];
+  const cupHandleDetectedCount = rankedItems.filter(
+    (item) => item.hits.cupHandle.detected || item.hits.cupHandle.state !== "NONE",
+  ).length;
+  const washoutDetectedCount = rankedItems.filter(
+    (item) =>
+      item.hits.washoutPullback.detected && item.hits.washoutPullback.state !== "NONE",
+  ).length;
+  const cupHandleUndetectedCount = Math.max(0, rankedItems.length - cupHandleDetectedCount);
+  const washoutUndetectedCount = Math.max(0, rankedItems.length - washoutDetectedCount);
 
   return (
     <section className="screener">
@@ -406,6 +415,16 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   : " 없음"}
               </p>
             )}
+            <div className="screener-hit-row">
+              <small className={cupHandleDetectedCount > 0 ? "reason-tag positive" : "reason-tag neutral"}>
+                컵앤핸들 포착 {cupHandleDetectedCount}건
+              </small>
+              <small className="reason-tag neutral">컵앤핸들 미포착 {cupHandleUndetectedCount}건</small>
+              <small className={washoutDetectedCount > 0 ? "reason-tag positive" : "reason-tag neutral"}>
+                설거지+눌림목 포착 {washoutDetectedCount}건
+              </small>
+              <small className="reason-tag neutral">설거지+눌림목 미포착 {washoutUndetectedCount}건</small>
+            </div>
             {response.meta.validationSummary && (
               <>
                 <p className="meta">

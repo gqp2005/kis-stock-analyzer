@@ -1276,6 +1276,82 @@ export default function App() {
         activeAnalysis.scores.risk,
       )
     : null;
+  const profileOneLiner = (() => {
+    if (!shortProfileScore || !midProfileScore) {
+      return {
+        verdict: "관망" as const,
+        text: "성향 점수 데이터가 부족해 종합 판단을 보류합니다.",
+      };
+    }
+    const short = shortProfileScore.score;
+    const mid = midProfileScore.score;
+    if (short >= 70 && mid >= 65) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "단기·중기 성향 점수가 모두 양호해 조건부 분할 접근을 검토할 수 있습니다.",
+      };
+    }
+    if (short < 45 && mid < 45) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "단기·중기 성향이 모두 약해 신규 진입보다 리스크 축소가 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "성향 신호가 혼재되어 지지/돌파 확인 후 대응하는 편이 안전합니다.",
+    };
+  })();
+  const technicalOneLiner = (() => {
+    if (!momentumSignal || !riskSignal) {
+      return {
+        verdict: "관망" as const,
+        text: "기술 지표 데이터가 부족해 판단을 보류합니다.",
+      };
+    }
+    const rsiHighOrMid = momentumSignal.rsiBand === "HIGH" || momentumSignal.rsiBand === "MID";
+    const bbStable = riskSignal.bbPosition === "INSIDE_BAND";
+    if (momentumSignal.macdBullish && rsiHighOrMid && bbStable) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "MACD 우위와 RSI/볼린저 안정 조합으로 단기 모멘텀 우위가 확인됩니다.",
+      };
+    }
+    if (!momentumSignal.macdBullish && riskSignal.bbPosition === "BELOW_LOWER") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "MACD 둔화와 밴드 하단 이탈 조합으로 하방 리스크 관리가 필요합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "지표가 혼조 구간이라 추격보다 확인 신호 누적을 기다리는 편이 유리합니다.",
+    };
+  })();
+  const cupHandleOneLiner = (() => {
+    if (!cupHandleSignal) {
+      return {
+        verdict: "관망" as const,
+        text: "컵앤핸들 패턴 데이터가 없어 판단을 보류합니다.",
+      };
+    }
+    if (cupHandleSignal.state === "CONFIRMED" && cupHandleSignal.breakout) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "컵앤핸들 돌파가 확인되어 손절 기준 하 조건부 접근을 검토할 수 있습니다.",
+      };
+    }
+    if (cupHandleSignal.state === "POTENTIAL" || cupHandleSignal.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "패턴 후보 단계라 넥라인 돌파·거래량 확증이 나오기 전까지 대기가 적절합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "현재 컵앤핸들 근거가 약해 다른 추세/거래량 신호를 우선 확인해야 합니다.",
+    };
+  })();
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -1756,6 +1832,12 @@ export default function App() {
                         </article>
                       ))}
                     </div>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(profileOneLiner.verdict)}>
+                        {profileOneLiner.verdict}
+                      </small>
+                      {profileOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -1788,6 +1870,12 @@ export default function App() {
                         <p>{bbSignalLabel(riskSignal.bbPosition)}</p>
                       </div>
                     </div>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(technicalOneLiner.verdict)}>
+                        {technicalOneLiner.verdict}
+                      </small>
+                      {technicalOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -1842,6 +1930,12 @@ export default function App() {
                         <li key={reason}>{reason}</li>
                       ))}
                     </ul>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(cupHandleOneLiner.verdict)}>
+                        {cupHandleOneLiner.verdict}
+                      </small>
+                      {cupHandleOneLiner.text}
+                    </p>
                   </div>
                 )}
 
