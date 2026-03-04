@@ -298,6 +298,12 @@ const patternStateText = (state: "NONE" | "POTENTIAL" | "CONFIRMED"): string => 
   return "없음";
 };
 
+const verdictToneClass = (verdict: "매수 검토" | "관망" | "비중 축소"): string => {
+  if (verdict === "매수 검토") return "signal-tag positive";
+  if (verdict === "비중 축소") return "signal-tag negative";
+  return "signal-tag neutral";
+};
+
 type ReasonTone = "positive" | "negative";
 
 const toneBadge = (tone: ReasonTone): { text: "긍정" | "부정"; className: string } =>
@@ -970,6 +976,138 @@ export default function App() {
       : null;
   const executionRiskLabel =
     executionRiskPct == null ? "데이터 부족" : executionRiskPct <= 4 ? "낮음" : executionRiskPct <= 8 ? "보통" : "높음";
+  const reliabilityOneLiner = (() => {
+    if (!reliabilitySummary) {
+      return {
+        verdict: "관망" as const,
+        text: "작도 신뢰도 데이터가 부족해 방향 판단을 보류하는 것이 좋습니다.",
+      };
+    }
+    if (reliabilitySummary.averageScore >= 75 && regimeSummary?.alignment === "UP") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "상승 추세선 신뢰가 높아 눌림 구간 분할 접근을 검토할 수 있습니다.",
+      };
+    }
+    if (reliabilitySummary.averageScore < 55 || regimeSummary?.alignment === "DOWN") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "하락/약한 작도 신호가 우세해 신규 진입보다 비중 관리가 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "추세 해석이 혼조라 돌파 또는 지지 확인 후 대응이 안전합니다.",
+    };
+  })();
+  const confluenceOneLiner = (() => {
+    if (confluenceTop.length === 0 || latestClose == null) {
+      return {
+        verdict: "관망" as const,
+        text: "컨플루언스 구간이 약해 명확한 진입 타이밍으로 보기 어렵습니다.",
+      };
+    }
+    const top = confluenceTop[0];
+    const center = (top.bandLow + top.bandHigh) / 2;
+    const isSupportBand = center < latestClose;
+    if ((top.distancePct ?? 99) <= 1.2 && isSupportBand) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "가까운 지지 컨플루언스가 있어 지지 확인 시 분할 접근을 검토할 수 있습니다.",
+      };
+    }
+    if ((top.distancePct ?? 99) <= 1.2 && !isSupportBand) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "가까운 상단 저항대와 맞닿아 추격보다 이익 보호가 유리합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "핵심 구간과 거리가 있어 진입보다 구간 접근을 기다리는 편이 좋습니다.",
+    };
+  })();
+  const patternOneLiner = (() => {
+    const vcpState = vcpSignal?.state ?? "NONE";
+    const cupState = cupHandleSignal?.state ?? "NONE";
+    if (vcpState === "CONFIRMED" || cupState === "CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "돌파 확정 패턴이 있어 손절 기준을 둔 조건부 접근을 고려할 수 있습니다.",
+      };
+    }
+    if (vcpState === "POTENTIAL" || cupState === "POTENTIAL") {
+      return {
+        verdict: "관망" as const,
+        text: "패턴 후보 단계라 확정 돌파 전까지 대기하는 전략이 유리합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "패턴 근거가 약해 추격 진입보다 신호 누적을 기다리는 편이 좋습니다.",
+    };
+  })();
+  const volumeOneLiner = (() => {
+    if (recentNegativeCount > recentPositiveCount) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "부정 거래량 패턴이 우세해 단기 추격은 피하고 리스크 축소가 우선입니다.",
+      };
+    }
+    if (recentPositiveCount >= 2 && (volumeSignal?.volumeScore ?? 0) >= 65) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "긍정 거래량 패턴이 누적되어 눌림 매수 관점의 우위가 있습니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "거래량 시그널이 중립권이라 추가 확증(돌파/지지)을 기다리는 편이 안전합니다.",
+    };
+  })();
+  const executionOneLiner = (() => {
+    const rr = tradePlan?.riskReward ?? null;
+    if (executionRiskPct != null && executionRiskPct > 10) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "손절 폭이 커 손익 관리가 불리하므로 진입 규모를 줄이는 편이 좋습니다.",
+      };
+    }
+    if (executionRiskPct != null && executionRiskPct <= 6 && rr != null && rr >= 2) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "리스크 대비 보상 비율이 양호해 계획된 손절 기준 하 접근이 가능합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "진입 대비 보상 우위가 크지 않아 가격 우호 구간 재진입을 기다리는 것이 좋습니다.",
+    };
+  })();
+  const regimeOneLiner = (() => {
+    if (!regimeSummary) {
+      return {
+        verdict: "관망" as const,
+        text: "레짐 정보가 부족해 방향성 판단을 보류하는 것이 안전합니다.",
+      };
+    }
+    if (regimeSummary.alignment === "UP") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "장·중·단기 레짐이 상방 정렬되어 눌림 매수 관점이 상대적으로 유리합니다.",
+      };
+    }
+    if (regimeSummary.alignment === "DOWN") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "다중 레짐이 하방이라 역추세 진입보다 방어적 대응이 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "레짐 혼합 구간이라 한 방향 베팅보다 확인 후 대응이 유리합니다.",
+    };
+  })();
   const shortProfileScore = activeAnalysis
     ? buildProfileScoreFromBase(
         "short",
@@ -1213,6 +1351,12 @@ export default function App() {
                             </li>
                           ))}
                         </ul>
+                        <p className="insight-opinion">
+                          <small className={verdictToneClass(reliabilityOneLiner.verdict)}>
+                            {reliabilityOneLiner.verdict}
+                          </small>
+                          {reliabilityOneLiner.text}
+                        </p>
                       </>
                     ) : (
                       <p className="plan-note">신뢰도 요약 데이터가 아직 없습니다.</p>
@@ -1222,19 +1366,27 @@ export default function App() {
                   <div className="card insight-card">
                     <h3>컨플루언스 TOP</h3>
                     {confluenceTop.length > 0 ? (
-                      <ul className="insight-list">
-                        {confluenceTop.map((band, index) => (
-                          <li key={`${band.bandLow}-${band.bandHigh}-${index}`}>
-                            <span>
-                              {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
-                            </span>
-                            <small className="signal-tag neutral">
-                              강도 {band.strength}
-                              {band.distancePct != null ? ` · 현재가 거리 ${band.distancePct.toFixed(2)}%` : ""}
-                            </small>
-                          </li>
-                        ))}
-                      </ul>
+                      <>
+                        <ul className="insight-list">
+                          {confluenceTop.map((band, index) => (
+                            <li key={`${band.bandLow}-${band.bandHigh}-${index}`}>
+                              <span>
+                                {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
+                              </span>
+                              <small className="signal-tag neutral">
+                                강도 {band.strength}
+                                {band.distancePct != null ? ` · 현재가 거리 ${band.distancePct.toFixed(2)}%` : ""}
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="insight-opinion">
+                          <small className={verdictToneClass(confluenceOneLiner.verdict)}>
+                            {confluenceOneLiner.verdict}
+                          </small>
+                          {confluenceOneLiner.text}
+                        </p>
+                      </>
                     ) : (
                       <p className="plan-note">컨플루언스 상위 구간이 없습니다.</p>
                     )}
@@ -1258,6 +1410,12 @@ export default function App() {
                         </li>
                       ))}
                     </ul>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(patternOneLiner.verdict)}>
+                        {patternOneLiner.verdict}
+                      </small>
+                      {patternOneLiner.text}
+                    </p>
                   </div>
 
                   <div className="card insight-card">
@@ -1283,6 +1441,12 @@ export default function App() {
                       {recentVolumePatterns[0]
                         ? `${VOLUME_PATTERN_TEXT[recentVolumePatterns[0].type] ?? recentVolumePatterns[0].label} (${recentVolumePatterns[0].t.slice(0, 10)})`
                         : "없음"}
+                    </p>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(volumeOneLiner.verdict)}>
+                        {volumeOneLiner.verdict}
+                      </small>
+                      {volumeOneLiner.text}
                     </p>
                   </div>
 
@@ -1311,6 +1475,12 @@ export default function App() {
                     <p className="plan-note">
                       목표 여력: {executionTargetPct != null ? `${executionTargetPct.toFixed(2)}%` : "-"} · ATR%{" "}
                       {riskSignal?.atrPercent != null ? `${riskSignal.atrPercent.toFixed(2)}%` : "-"}
+                    </p>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(executionOneLiner.verdict)}>
+                        {executionOneLiner.verdict}
+                      </small>
+                      {executionOneLiner.text}
                     </p>
                   </div>
 
@@ -1343,6 +1513,12 @@ export default function App() {
                             </div>
                           ))}
                         </div>
+                        <p className="insight-opinion">
+                          <small className={verdictToneClass(regimeOneLiner.verdict)}>
+                            {regimeOneLiner.verdict}
+                          </small>
+                          {regimeOneLiner.text}
+                        </p>
                       </>
                     ) : (
                       <p className="plan-note">레짐 요약 데이터가 없습니다.</p>
