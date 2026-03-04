@@ -1352,6 +1352,44 @@ export default function App() {
       text: "현재 컵앤핸들 근거가 약해 다른 추세/거래량 신호를 우선 확인해야 합니다.",
     };
   })();
+  const backtestOneLiner = (() => {
+    if (!backtestSummary) {
+      return {
+        verdict: "관망" as const,
+        text: "백테스트 표본이 없어 전략 성능을 해석할 수 없습니다.",
+      };
+    }
+    if (backtestSummary.tradeCount < 8) {
+      return {
+        verdict: "관망" as const,
+        text: "거래 표본이 적어 신뢰도가 낮습니다. 구간을 늘려 재확인이 필요합니다.",
+      };
+    }
+    if (
+      (backtestSummary.profitFactor ?? 0) >= 1.3 &&
+      (backtestSummary.winRate ?? 0) >= 55 &&
+      (backtestSummary.maxDrawdownPercent ?? 999) <= 12
+    ) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "승률·PF·낙폭 조합이 양호해 동일한 리스크 규칙 하에서 전략 후보로 참고할 수 있습니다.",
+      };
+    }
+    if (
+      (backtestSummary.profitFactor ?? 0) < 1 ||
+      (backtestSummary.expectancyR ?? 0) < 0 ||
+      (backtestSummary.maxDrawdownPercent ?? 0) >= 20
+    ) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "기대값 또는 손실 지표가 불리해 진입 비중 축소와 엄격한 손절 관리가 필요합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "지표가 중립권이라 추가 확증(표본 확대/최근 구간 개선) 후 전략 적용이 안전합니다.",
+    };
+  })();
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -2327,6 +2365,12 @@ export default function App() {
                           </div>
                         </div>
                       )}
+                      <p className="backtest-opinion">
+                        <small className={verdictToneClass(backtestOneLiner.verdict)}>
+                          {backtestOneLiner.verdict}
+                        </small>
+                        {backtestOneLiner.text}
+                      </p>
                       <div className="backtest-table-wrap">
                         <table className="backtest-table">
                           <thead>
