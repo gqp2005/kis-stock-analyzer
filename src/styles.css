@@ -1259,6 +1259,17 @@ h2 {
   margin-bottom: 4px;
 }
 
+.strategy-one-liner {
+  margin: 0 0 8px;
+  border: 1px solid rgba(87, 163, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(12, 24, 36, 0.5);
+  padding: 7px 8px;
+  color: #c8d9ec;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .screener-filter-chips {
   display: flex;
   flex-wrap: wrap;

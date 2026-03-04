@@ -156,11 +156,11 @@ const washoutStatePriority = (state: ScreenerWashoutStateFilter | "NONE"): numbe
 };
 
 const washoutStateLabel = (state: ScreenerWashoutStateFilter | "NONE"): string => {
-  if (state === "REBOUND_CONFIRMED") return "반등 확인";
-  if (state === "PULLBACK_READY") return "눌림 준비";
-  if (state === "WASHOUT_CANDIDATE") return "설거지 후보";
-  if (state === "ANCHOR_DETECTED") return "앵커 탐지";
-  return "없음";
+  if (state === "REBOUND_CONFIRMED") return "반등 재개";
+  if (state === "PULLBACK_READY") return "눌림 관찰";
+  if (state === "WASHOUT_CANDIDATE") return "반등 후보";
+  if (state === "ANCHOR_DETECTED") return "대금 흔적";
+  return "미감지";
 };
 
 const washoutStateBadgeClass = (state: ScreenerWashoutStateFilter | "NONE"): string => {
@@ -478,10 +478,10 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 onChange={(e) => setWashoutState(e.target.value as ScreenerWashoutStateFilter)}
               >
                 <option value="ALL">전체</option>
-                <option value="REBOUND_CONFIRMED">반등 확인</option>
-                <option value="PULLBACK_READY">눌림 준비</option>
-                <option value="WASHOUT_CANDIDATE">설거지 후보</option>
-                <option value="ANCHOR_DETECTED">앵커 탐지</option>
+                <option value="REBOUND_CONFIRMED">반등 재개(확인)</option>
+                <option value="PULLBACK_READY">눌림 관찰(준비)</option>
+                <option value="WASHOUT_CANDIDATE">반등 후보(설거지)</option>
+                <option value="ANCHOR_DETECTED">대금 흔적(앵커)</option>
               </select>
             </label>
             <label>

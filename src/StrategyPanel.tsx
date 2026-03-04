@@ -16,11 +16,11 @@ const formatPercent = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}%`;
 
 const washoutStateLabel = (state: WashoutPullbackState): string => {
-  if (state === "REBOUND_CONFIRMED") return "반등 확인";
-  if (state === "PULLBACK_READY") return "눌림 준비";
-  if (state === "WASHOUT_CANDIDATE") return "설거지 후보";
-  if (state === "ANCHOR_DETECTED") return "앵커 탐지";
-  return "없음";
+  if (state === "REBOUND_CONFIRMED") return "반등 재개";
+  if (state === "PULLBACK_READY") return "눌림 관찰";
+  if (state === "WASHOUT_CANDIDATE") return "반등 후보";
+  if (state === "ANCHOR_DETECTED") return "대금 흔적";
+  return "미감지";
 };
 
 const washoutStatePriority = (state: WashoutPullbackState): number => {
@@ -32,9 +32,9 @@ const washoutStatePriority = (state: WashoutPullbackState): number => {
 };
 
 const cupHandleStateLabel = (state: PatternState): string => {
-  if (state === "CONFIRMED") return "확정";
-  if (state === "POTENTIAL") return "후보";
-  return "없음";
+  if (state === "CONFIRMED") return "돌파 확인";
+  if (state === "POTENTIAL") return "모양 형성";
+  return "미감지";
 };
 
 const cupHandleStatePriority = (state: PatternState): number => {
@@ -61,6 +61,34 @@ const isCupHandleCandidate = (item: ScreenerItem): boolean =>
 
 const isWashoutCandidate = (item: ScreenerItem): boolean =>
   item.hits.washoutPullback.detected && item.hits.washoutPullback.state !== "NONE";
+
+const washoutOneLiner = (item: ScreenerItem): string => {
+  const state = item.hits.washoutPullback.state;
+  if (state === "ANCHOR_DETECTED") {
+    return "과거 큰 거래대금 고점 흔적만 확인된 초기 단계입니다. 아직 눌림 구간 확정 전입니다.";
+  }
+  if (state === "WASHOUT_CANDIDATE") {
+    return "조정 이후 거래대금 재유입이 감지된 단계입니다. 눌림 안정 여부를 추가 확인해야 합니다.";
+  }
+  if (state === "PULLBACK_READY") {
+    return "재유입 뒤 눌림이 유지되는 관찰 구간입니다. 분할 접근 후보로 보는 단계입니다.";
+  }
+  if (state === "REBOUND_CONFIRMED") {
+    return "눌림 구간 이후 반등 재개 신호가 확인되었습니다. 손절 기준을 둔 대응 단계입니다.";
+  }
+  return "설거지+눌림목 구조가 아직 감지되지 않았습니다.";
+};
+
+const cupHandleOneLiner = (item: ScreenerItem): string => {
+  const hit = item.hits.cupHandle;
+  if (hit.state === "CONFIRMED" && hit.breakout) {
+    return "컵앤핸들 돌파가 확인된 상태입니다. 추격보다 지지 확인 후 접근이 안전합니다.";
+  }
+  if (hit.state === "POTENTIAL" || hit.detected) {
+    return "컵과 핸들 모양이 형성 중인 단계입니다. 넥라인 돌파/거래량 확증 전까지 관찰이 유리합니다.";
+  }
+  return "현재는 컵앤핸들 패턴 근거가 약한 상태입니다.";
+};
 
 export default function StrategyPanel(props: StrategyPanelProps) {
   const { apiBase, onSelectSymbol } = props;
@@ -218,6 +246,7 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                         <li key={`${item.code}-${reason}`}>{reason}</li>
                       ))}
                   </ul>
+                  <p className="strategy-one-liner">{washoutOneLiner(item)}</p>
                   <button type="button" onClick={() => onSelectSymbol(item.code)}>
                     상세 분석으로 이동
                   </button>
@@ -269,6 +298,7 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                         <li key={`${item.code}-${reason}`}>{reason}</li>
                       ))}
                   </ul>
+                  <p className="strategy-one-liner">{cupHandleOneLiner(item)}</p>
                   <button type="button" onClick={() => onSelectSymbol(item.code)}>
                     상세 분석으로 이동
                   </button>
