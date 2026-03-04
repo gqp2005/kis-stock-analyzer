@@ -22,6 +22,15 @@ import type {
   ScreenerStrategyFilter,
 } from "../lib/types";
 
+const sortByAllScore = <T extends { scoring: { all: { score: number; confidence: number } } }>(
+  candidates: T[],
+): T[] =>
+  [...candidates].sort(
+    (a, b) =>
+      b.scoring.all.score - a.scoring.all.score ||
+      b.scoring.all.confidence - a.scoring.all.confidence,
+  );
+
 const parseMarket = (raw: string | null): ScreenerMarketFilter => {
   const normalized = (raw ?? "ALL").toUpperCase();
   if (normalized === "KOSPI" || normalized === "KOSDAQ" || normalized === "ALL") {
@@ -214,6 +223,40 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             `진행 중 실패 ${progress.failedItems.length}종목, 재시도 ${progress.retryStats.totalRetries}회`,
           );
         }
+      }
+      if (!snapshot && progress && progress.candidates.length > 0) {
+        const partialCandidates = sortByAllScore(progress.candidates);
+        snapshot = {
+          date: progress.date,
+          updatedAt: progress.updatedAt,
+          universeCount: progress.universeCount,
+          processedCount: progress.processedCount,
+          topN: Math.min(50, partialCandidates.length),
+          source: "KIS",
+          warnings: dedupeWarnings([
+            ...warnings,
+            `${progress.cursor}/${progress.universeCount} 종목 처리 기준 부분 결과입니다.`,
+          ]),
+          candidates: partialCandidates,
+          topCandidates: partialCandidates.slice(0, 50),
+          changeSummary: null,
+          rsSummary: null,
+          tuningSummary: null,
+          validationSummary: null,
+          rebuildMeta: {
+            durationMs: 0,
+            batchSize: progress.lastBatch?.batchSize ?? DEFAULT_AUTO_BOOTSTRAP_BATCH,
+            kisCalls: 0,
+            ohlcvFailures: progress.ohlcvFailures,
+            insufficientData: progress.insufficientData,
+            failedItems: progress.failedItems.slice(-40),
+            retryStats: progress.retryStats,
+          },
+          alertsMeta: null,
+        };
+        warnings.push(
+          `부분 스냅샷 제공: ${progress.cursor}/${progress.universeCount} 처리 결과`,
+        );
       }
       if (backend === "none") {
         warnings.push("영속 저장소(KV/D1)가 비활성화되어 캐시 소실 시 결과 복원이 제한됩니다.");

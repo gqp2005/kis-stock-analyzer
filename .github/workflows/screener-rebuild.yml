@@ -2,8 +2,12 @@ name: Screener Daily Rebuild
 
 on:
   schedule:
-    # 06:00 KST = 21:00 UTC (previous day)
+    # 06:00/06:05/06:10/06:15/06:20 KST = 21:00/21:05/21:10/21:15/21:20 UTC (previous day)
     - cron: "0 21 * * *"
+    - cron: "5 21 * * *"
+    - cron: "10 21 * * *"
+    - cron: "15 21 * * *"
+    - cron: "20 21 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -164,6 +168,18 @@ jobs:
           if [ "${final_code}" != "200" ]; then
             echo "Rebuild completed with unexpected HTTP status ${final_code}"
             exit 1
+          fi
+
+          has_more="$(echo "${final_body}" | jq -r '.hasMore // false')"
+          if [ "${has_more}" = "true" ]; then
+            phase_current="$(echo "${final_body}" | jq -r '.phase.current // 0')"
+            phase_total="$(echo "${final_body}" | jq -r '.phase.total // 0')"
+            next_start="$(echo "${final_body}" | jq -r '.phase.nextStart // 0')"
+            processed_now="$(echo "${final_body}" | jq -r '.progress.processed // 0')"
+            total_now="$(echo "${final_body}" | jq -r '.progress.total // 0')"
+            echo "Chunk rebuild completed: phase ${phase_current}/${phase_total}, processed=${processed_now}/${total_now}, nextStart=${next_start}"
+            echo "Has more chunks. This workflow run exits successfully and the next run will continue."
+            exit 0
           fi
 
           as_of="$(echo "${final_body}" | jq -r '.rebuiltAt // .meta.lastUpdatedAt // ""')"

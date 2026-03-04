@@ -101,14 +101,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       : persistedToday || persistedLastSuccess
         ? backend
         : "none";
-    const inProgress =
-      (!!lock && !lockState.stale) ||
-      (!!progress && progress.cursor < progress.universeCount);
+    const hasMore = !!progress && progress.cursor < progress.universeCount;
+    const inProgress = !!lock && !lockState.stale;
 
     return finalize(
       json({
         ok: true,
         inProgress,
+        hasMore,
         date,
         storage: {
           backend,
@@ -157,7 +157,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           : null,
         message: inProgress
           ? "rebuild 진행 중입니다."
-          : "현재 진행 중인 rebuild가 없습니다.",
+          : hasMore
+            ? "현재 단계가 완료되었습니다. 다음 호출에서 이어서 처리할 수 있습니다."
+            : "현재 진행 중인 rebuild가 없습니다.",
       }),
     );
   } catch (error) {

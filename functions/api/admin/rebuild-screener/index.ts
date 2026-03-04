@@ -49,6 +49,7 @@ import { ExternalProvider, MarketSummaryProvider, StaticProvider } from "../../.
 import type { Env } from "../../../lib/types";
 
 const TARGET_UNIVERSE = 500;
+const REBUILD_PHASE_SIZE = 100;
 const TOP_N_STORE = 50;
 const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 120;
@@ -1362,6 +1363,65 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           kisCalls: metrics.kisCalls,
         })}`,
       );
+
+      const chunkComplete =
+        progress.cursor > 0 &&
+        progress.cursor % REBUILD_PHASE_SIZE === 0;
+      if (chunkComplete) {
+        const currentPhase = Math.ceil(progress.cursor / REBUILD_PHASE_SIZE);
+        const totalPhases = Math.ceil(universe.length / REBUILD_PHASE_SIZE);
+        return finalize(
+          json(
+            {
+              ok: true,
+              inProgress: false,
+              hasMore: true,
+              mode,
+              validationMode,
+              rebuiltAt: null,
+              universe: {
+                label: "거래대금 상위 500",
+                source: universeLoad.snapshot.source,
+                count: universe.length,
+                cacheHit: universeLoad.cacheHit,
+              },
+              storage: {
+                backend: persistBackend,
+                enabled: persistBackend !== "none",
+              },
+              alertOptions,
+              phase: {
+                size: REBUILD_PHASE_SIZE,
+                current: currentPhase,
+                total: totalPhases,
+                nextStart: progress.cursor,
+              },
+              progress: {
+                processed: progress.cursor,
+                total: universe.length,
+                remaining: universe.length - progress.cursor,
+                batchSize,
+                nextCursor: progress.cursor,
+                failedCount: progress.failedItems.length,
+                retryStats: progress.retryStats,
+                lastBatch: progress.lastBatch,
+              },
+              summary: {
+                processedCount: progress.processedCount,
+                candidateCount: progress.candidates.length,
+                durationMs,
+                kisCalls: metrics.kisCalls,
+                failedCount: progress.failedItems.length,
+                retryStats: progress.retryStats,
+              },
+              failedItems: progress.failedItems.slice(-10),
+              warnings: progress.warnings,
+              message: `${REBUILD_PHASE_SIZE}종목 단계를 완료했습니다. 다음 호출에서 이어서 처리합니다.`,
+            },
+            200,
+          ),
+        );
+      }
 
       return finalize(
         json(
