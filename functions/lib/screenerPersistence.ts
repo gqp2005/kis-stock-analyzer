@@ -83,6 +83,27 @@ export const putPersistedJson = async (
   return true;
 };
 
+export const deletePersistedJson = async (
+  env: Env,
+  key: string,
+): Promise<boolean> => {
+  const backend = persistenceBackend(env);
+  if (backend === "none") return false;
+
+  const prefixed = withPrefix(key);
+  if (backend === "kv" && env.SCREENER_KV) {
+    await env.SCREENER_KV.delete(prefixed);
+    return true;
+  }
+
+  if (!env.SCREENER_DB) return false;
+  await ensureD1Schema(env);
+  await env.SCREENER_DB.prepare(`DELETE FROM ${D1_TABLE} WHERE k = ?`)
+    .bind(prefixed)
+    .run();
+  return true;
+};
+
 export const getPersistedJson = async <T>(
   env: Env,
   key: string,

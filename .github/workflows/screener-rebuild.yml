@@ -23,8 +23,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.SCREENER_TELEGRAM_CHAT_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SCREENER_SLACK_WEBHOOK_URL }}
           BATCH_SIZE: "20"
-          MAX_ATTEMPTS: "180"
-          SLEEP_SEC: "5"
+          MAX_ATTEMPTS: "360"
+          SLEEP_SEC: "4"
           NOTIFY_TOPN: "5"
           ALERT_MIN_SCORE: "80"
           ALERT_MIN_DELTA: "5"
@@ -136,7 +136,7 @@ jobs:
             fi
             prev_progress_key="${progress_key}"
 
-            if [ "${in_progress}" = "true" ] && [ "${no_progress_streak}" -ge 12 ]; then
+            if [ "${in_progress}" = "true" ] && [ "${no_progress_streak}" -ge 6 ]; then
               force_mode=1
               echo "No progress for ${no_progress_streak} attempts. Next call will use force=1."
             fi

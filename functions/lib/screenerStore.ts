@@ -24,6 +24,12 @@ export const rebuildLockKey = (): string =>
 export const rebuildProgressKey = (date: string): string =>
   toCacheUrl(`screener:v1:rebuild-progress:${date}`);
 
+export const persistRebuildLockKey = (): string =>
+  "runtime:lock:rebuild-screener";
+
+export const persistRebuildProgressKey = (date: string): string =>
+  `runtime:progress:rebuild-screener:${date}`;
+
 export const persistScreenerDateKey = (date: string): string =>
   `snapshot:date:${date}`;
 

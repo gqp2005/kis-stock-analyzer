@@ -10,6 +10,7 @@ import {
   type ScreenerSnapshot,
   persistScreenerDateKey,
   persistScreenerLastSuccessKey,
+  persistRebuildProgressKey,
   rebuildProgressKey,
   screenerDateKey,
   screenerLastSuccessKey,
@@ -162,7 +163,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const todayKey = screenerDateKey(today);
     const lastSuccessKey = screenerLastSuccessKey();
     const progress = normalizeProgress(
-      await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(today)),
+      ((backend !== "none"
+        ? await getPersistedJson<RebuildProgressSnapshot>(
+            context.env,
+            persistRebuildProgressKey(today),
+          )
+        : null) ??
+        (await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(today)))),
     );
 
     let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);

@@ -9,6 +9,8 @@ import {
   type ScreenerSnapshot,
   persistScreenerDateKey,
   persistScreenerLastSuccessKey,
+  persistRebuildLockKey,
+  persistRebuildProgressKey,
   rebuildLockKey,
   rebuildProgressKey,
   screenerDateKey,
@@ -65,10 +67,23 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const date = nowIsoKst().slice(0, 10);
     const backend = persistenceBackend(context.env);
 
-    const lock = await getCachedJson<{ startedAt?: string }>(cache, rebuildLockKey());
+    const lock =
+      (backend !== "none"
+        ? await getPersistedJson<{ startedAt?: string }>(
+            context.env,
+            persistRebuildLockKey(),
+          )
+        : null) ??
+      (await getCachedJson<{ startedAt?: string }>(cache, rebuildLockKey()));
     const lockState = computeLockState(lock?.startedAt);
     const progress = normalizeProgress(
-      await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date)),
+      ((backend !== "none"
+        ? await getPersistedJson<RebuildProgressSnapshot>(
+            context.env,
+            persistRebuildProgressKey(date),
+          )
+        : null) ??
+        (await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date)))),
     );
     const todaySnapshot = await getCachedJson<ScreenerSnapshot>(cache, screenerDateKey(date));
     const cacheLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey());

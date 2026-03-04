@@ -28,6 +28,8 @@ import {
   persistAlertStateKey,
   persistChangeHistoryKey,
   persistFailureHistoryKey,
+  persistRebuildLockKey,
+  persistRebuildProgressKey,
   persistValidationHistoryKey,
   persistValidationStateKey,
   persistScreenerDateKey,
@@ -38,6 +40,7 @@ import {
   universeLastSuccessKey,
 } from "../../../lib/screenerStore";
 import {
+  deletePersistedJson,
   getPersistedJson,
   persistenceBackend,
   putPersistedJson,
@@ -282,6 +285,97 @@ const normalizeProgress = (progress: RebuildProgressSnapshot): RebuildProgressSn
   },
   lastBatch: progress.lastBatch ?? null,
 });
+
+const loadRuntimeLock = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  cacheKey: string,
+): Promise<{ startedAt: string } | null> => {
+  if (backend !== "none") {
+    const persisted = await getPersistedJson<{ startedAt: string }>(
+      env,
+      persistRebuildLockKey(),
+    );
+    if (persisted) return persisted;
+  }
+  return await getCachedJson<{ startedAt: string }>(cache, cacheKey);
+};
+
+const saveRuntimeLock = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  cacheKey: string,
+  payload: { startedAt: string; ttlSec: number },
+): Promise<void> => {
+  await putCachedJson(cache, cacheKey, payload, REBUILD_LOCK_TTL_SEC);
+  if (backend !== "none") {
+    // 락은 TTL이 매우 짧아야 하므로 영속 스토리지에도 동일 TTL로 기록한다.
+    await putPersistedJson(env, persistRebuildLockKey(), payload, REBUILD_LOCK_TTL_SEC);
+  }
+};
+
+const clearRuntimeLock = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  cacheRequest: Request,
+): Promise<void> => {
+  await cache.delete(cacheRequest);
+  if (backend !== "none") {
+    await deletePersistedJson(env, persistRebuildLockKey());
+  }
+};
+
+const loadRuntimeProgress = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  date: string,
+  cacheKey: string,
+): Promise<RebuildProgressSnapshot | null> => {
+  if (backend !== "none") {
+    const persisted = await getPersistedJson<RebuildProgressSnapshot>(
+      env,
+      persistRebuildProgressKey(date),
+    );
+    if (persisted) return persisted;
+  }
+  return await getCachedJson<RebuildProgressSnapshot>(cache, cacheKey);
+};
+
+const saveRuntimeProgress = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  date: string,
+  cacheKey: string,
+  payload: RebuildProgressSnapshot,
+): Promise<void> => {
+  await putCachedJson(cache, cacheKey, payload, SCREENER_CACHE_TTL_SEC);
+  if (backend !== "none") {
+    await putPersistedJson(
+      env,
+      persistRebuildProgressKey(date),
+      payload,
+      SCREENER_CACHE_TTL_SEC,
+    );
+  }
+};
+
+const clearRuntimeProgress = async (
+  env: Env,
+  cache: Cache,
+  backend: ReturnType<typeof persistenceBackend>,
+  date: string,
+  cacheRequest: Request,
+): Promise<void> => {
+  await cache.delete(cacheRequest);
+  if (backend !== "none") {
+    await deletePersistedJson(env, persistRebuildProgressKey(date));
+  }
+};
 
 const buildChangeSummary = (
   previous: ScreenerSnapshot | null,
@@ -879,15 +973,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const persistBackend = persistenceBackend(context.env);
   const progressKey = rebuildProgressKey(date);
   const lockKey = rebuildLockKey();
+  const progressReq = new Request(progressKey);
   const lockReq = new Request(lockKey);
-  const existingLock = await getCachedJson<{ startedAt: string }>(cache, lockKey);
+  const existingLock = await loadRuntimeLock(context.env, cache, persistBackend, lockKey);
   if (forceRun && existingLock) {
     console.log("[rebuild-screener-force] force=1 lock bypass requested");
-    await cache.delete(lockReq);
+    await clearRuntimeLock(context.env, cache, persistBackend, lockReq);
   }
   if (!forceRun && existingLock && !isLockStale(existingLock.startedAt)) {
-    const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
-    const progress = cachedProgress ? normalizeProgress(cachedProgress) : null;
+    const runtimeProgress = await loadRuntimeProgress(
+      context.env,
+      cache,
+      persistBackend,
+      date,
+      progressKey,
+    );
+    const progress = runtimeProgress ? normalizeProgress(runtimeProgress) : null;
     const recoverLockOnly = shouldRecoverLockOnlyState(existingLock.startedAt, progress);
     const recoverStaleProgress =
       !recoverLockOnly && isProgressStale(progress, existingLock.startedAt);
@@ -945,7 +1046,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const ageSec = lockAgeSec(existingLock.startedAt);
     const recoverReason = recoverLockOnly ? "lock-only-no-progress" : "stale-progress";
     console.log(`[rebuild-screener-lock-recover] reason=${recoverReason} ageSec=${ageSec ?? -1}`);
-    await cache.delete(lockReq);
+    await clearRuntimeLock(context.env, cache, persistBackend, lockReq);
   }
 
   if (!forceRun && existingLock && isLockStale(existingLock.startedAt)) {
@@ -953,7 +1054,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     console.log(
       `[rebuild-screener-lock-recover] reason=stale-lock ageSec=${ageSec ?? -1}`,
     );
-    await cache.delete(lockReq);
+    await clearRuntimeLock(context.env, cache, persistBackend, lockReq);
   }
 
   const startedAtMs = Date.now();
@@ -961,26 +1062,40 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   try {
     const lockStartedAt = nowIsoKst();
-    await putCachedJson(
+    await saveRuntimeLock(
+      context.env,
       cache,
+      persistBackend,
       lockKey,
       {
         startedAt: lockStartedAt,
         ttlSec: REBUILD_LOCK_TTL_SEC,
       },
-      REBUILD_LOCK_TTL_SEC,
     );
     lockAcquired = true;
 
-    const cachedProgress = await getCachedJson<RebuildProgressSnapshot>(cache, progressKey);
-    let prevProgress = cachedProgress ? normalizeProgress(cachedProgress) : null;
+    const runtimePrevProgress = await loadRuntimeProgress(
+      context.env,
+      cache,
+      persistBackend,
+      date,
+      progressKey,
+    );
+    let prevProgress = runtimePrevProgress ? normalizeProgress(runtimePrevProgress) : null;
     if (!prevProgress) {
       prevProgress = createProgress(date, TARGET_UNIVERSE, [
         "리빌드 초기화 중입니다. 잠시 후 진행률이 갱신됩니다.",
       ]);
       prevProgress.startedAt = lockStartedAt;
       prevProgress.updatedAt = lockStartedAt;
-      await putCachedJson(cache, progressKey, prevProgress, SCREENER_CACHE_TTL_SEC);
+      await saveRuntimeProgress(
+        context.env,
+        cache,
+        persistBackend,
+        date,
+        progressKey,
+        prevProgress,
+      );
     }
 
     const batchSize = parseBatchSize(url);
@@ -1022,7 +1137,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           ]);
 
     if (mode === "trigger") {
-      await putCachedJson(cache, progressKey, progress, SCREENER_CACHE_TTL_SEC);
+      await saveRuntimeProgress(
+        context.env,
+        cache,
+        persistBackend,
+        date,
+        progressKey,
+        progress,
+      );
       return finalize(
         json(
           {
@@ -1216,7 +1338,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ].filter((msg) => msg.length > 0));
 
     if (progress.cursor < universe.length) {
-      await putCachedJson(cache, progressKey, progress, SCREENER_CACHE_TTL_SEC);
+      await saveRuntimeProgress(
+        context.env,
+        cache,
+        persistBackend,
+        date,
+        progressKey,
+        progress,
+      );
       const durationMs = Date.now() - startedAtMs;
       console.log(
         `[rebuild-screener-progress] ${JSON.stringify({
@@ -1369,7 +1498,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         ),
       ]);
     }
-    await cache.delete(new Request(progressKey));
+    await clearRuntimeProgress(
+      context.env,
+      cache,
+      persistBackend,
+      date,
+      progressReq,
+    );
 
     console.log(
       `[rebuild-screener-done] ${JSON.stringify({
@@ -1434,7 +1569,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return finalize(serverError(message, context.request));
   } finally {
     if (lockAcquired) {
-      await cache.delete(lockReq);
+      await clearRuntimeLock(context.env, cache, persistBackend, lockReq);
     }
   }
 };
