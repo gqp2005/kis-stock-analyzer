@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import AdminOpsPanel from "./AdminOpsPanel";
 import ScreenerPanel from "./ScreenerPanel";
+import StrategyPanel from "./StrategyPanel";
 
 interface StockLookup {
   code: string;
@@ -364,7 +365,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "admin">("analysis");
+  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "admin">("analysis");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -1422,6 +1423,13 @@ export default function App() {
             onClick={() => setPageMode("screener")}
           >
             종목 추천(스크리너)
+          </button>
+          <button
+            type="button"
+            className={pageMode === "strategy" ? "tab active" : "tab"}
+            onClick={() => setPageMode("strategy")}
+          >
+            전략
           </button>
           <button
             type="button"
@@ -2727,6 +2735,8 @@ export default function App() {
           </>
         ) : pageMode === "screener" ? (
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : pageMode === "strategy" ? (
+          <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : (
           <AdminOpsPanel apiBase={apiBase} />
         )}
