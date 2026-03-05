@@ -180,6 +180,19 @@ const buildClearSessionCookie = (secure: boolean): string => {
   return `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${securePart}`;
 };
 
+const createRedirectResponse = (
+  to: string,
+  status = 302,
+  extraHeaders?: Record<string, string>,
+): Response =>
+  new Response(null, {
+    status,
+    headers: {
+      location: to,
+      ...(extraHeaders ?? {}),
+    },
+  });
+
 const renderLoginPage = (
   request: Request,
   redirectPath: string,
@@ -272,7 +285,7 @@ const handleAuthRoutes = async (
     const loggedOut = url.searchParams.get("logged_out") === "1";
     const activeSession = await hasValidSession(context.request, env);
     if (activeSession) {
-      return Response.redirect(new URL(redirectPath, url.origin).toString(), 302);
+      return createRedirectResponse(new URL(redirectPath, url.origin).toString(), 302);
     }
     return renderLoginPage(context.request, redirectPath, { loggedOut });
   }
@@ -306,21 +319,21 @@ const handleAuthRoutes = async (
       getAuthSecret(env),
     );
 
-    const response = Response.redirect(new URL(nextPath, url.origin).toString(), 302);
-    response.headers.append("set-cookie", buildSessionCookie(token, maxAgeSec, secureCookie));
-    response.headers.set("cache-control", "no-store");
-    return response;
+    return createRedirectResponse(new URL(nextPath, url.origin).toString(), 302, {
+      "set-cookie": buildSessionCookie(token, maxAgeSec, secureCookie),
+      "cache-control": "no-store",
+    });
   }
 
   if (url.pathname === AUTH_LOGOUT_PATH) {
-    const response = Response.redirect(new URL(`${AUTH_PAGE_PATH}?logged_out=1`, url.origin).toString(), 302);
-    response.headers.append("set-cookie", buildClearSessionCookie(secureCookie));
-    response.headers.set("cache-control", "no-store");
-    return response;
+    return createRedirectResponse(new URL(`${AUTH_PAGE_PATH}?logged_out=1`, url.origin).toString(), 302, {
+      "set-cookie": buildClearSessionCookie(secureCookie),
+      "cache-control": "no-store",
+    });
   }
 
   if (url.pathname.startsWith(AUTH_PAGE_PATH)) {
-    return Response.redirect(new URL(AUTH_PAGE_PATH, url.origin).toString(), 302);
+    return createRedirectResponse(new URL(AUTH_PAGE_PATH, url.origin).toString(), 302);
   }
 
   return null;
