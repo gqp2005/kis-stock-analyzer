@@ -28,6 +28,7 @@ import type {
   VolumePatternType,
 } from "./types";
 import AdminOpsPanel from "./AdminOpsPanel";
+import AccountPanel from "./AccountPanel";
 import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
 
@@ -453,7 +454,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "admin">("analysis");
+  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "account" | "admin">("analysis");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -1957,6 +1958,13 @@ export default function App() {
             onClick={() => setPageMode("strategy")}
           >
             전략
+          </button>
+          <button
+            type="button"
+            className={pageMode === "account" ? "tab active" : "tab"}
+            onClick={() => setPageMode("account")}
+          >
+            내 계좌
           </button>
           <button
             type="button"
@@ -3489,6 +3497,8 @@ export default function App() {
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : pageMode === "strategy" ? (
           <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : pageMode === "account" ? (
+          <AccountPanel apiBase={apiBase} />
         ) : (
           <AdminOpsPanel apiBase={apiBase} />
         )}

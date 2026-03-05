@@ -3,6 +3,8 @@ export interface Env {
   KIS_APP_SECRET: string;
   KIS_BASE_URL?: string;
   KIS_ENV?: "real" | "demo";
+  KIS_ACCOUNT_NO?: string;
+  KIS_ACCOUNT_PRDT_CD?: string;
   RATE_LIMIT_MAX_REQUESTS?: string;
   RATE_LIMIT_WINDOW_SEC?: string;
   ADMIN_TOKEN?: string;

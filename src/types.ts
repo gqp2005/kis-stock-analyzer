@@ -563,6 +563,39 @@ export interface MultiAnalysisResponse {
   warnings: string[];
 }
 
+export interface AccountHolding {
+  code: string;
+  name: string;
+  quantity: number;
+  orderableQuantity: number | null;
+  purchaseAvgPrice: number | null;
+  currentPrice: number | null;
+  purchaseAmount: number | null;
+  evaluationAmount: number | null;
+  profitAmount: number | null;
+  profitRate: number | null;
+  weightPercent: number | null;
+}
+
+export interface AccountResponse {
+  meta: {
+    asOf: string;
+    source: "KIS";
+    account: string;
+    cacheTtlSec: number;
+  };
+  summary: {
+    totalAssetAmount: number | null;
+    totalEvaluationAmount: number | null;
+    totalPurchaseAmount: number | null;
+    totalProfitAmount: number | null;
+    totalProfitRate: number | null;
+    cashAmount: number | null;
+  };
+  holdings: AccountHolding[];
+  warnings: string[];
+}
+
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
 export type ScreenerStrategyFilter =
   | "ALL"

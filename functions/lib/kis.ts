@@ -25,7 +25,7 @@ interface KisTokenLockRecord {
   expires_at: number; // epoch seconds
 }
 
-interface KisResponseBase {
+export interface KisResponseBase {
   rt_cd: string;
   msg_cd: string;
   msg1: string;
@@ -335,7 +335,7 @@ const isTokenRelatedError = (data: unknown): boolean => {
   return msg.includes("token") || msg.includes("토큰") || msg.includes("authorization");
 };
 
-interface KisFetchOptions {
+export interface KisFetchOptions {
   method?: "GET" | "POST";
   trId?: string;
   params?: Record<string, string>;
@@ -344,7 +344,7 @@ interface KisFetchOptions {
   metrics?: RequestMetrics;
 }
 
-const kisFetch = async <T extends KisResponseBase>(
+export const kisFetch = async <T extends KisResponseBase>(
   env: Env,
   path: string,
   options: KisFetchOptions,
