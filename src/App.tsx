@@ -128,6 +128,10 @@ const PROFILE_WEIGHT_CONFIG: Record<
 
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month"];
+const DEFAULT_PRICE_CHART_HEIGHT = 420;
+const MIN_PRICE_CHART_HEIGHT = 320;
+const MAX_PRICE_CHART_HEIGHT = 980;
+const PRICE_CHART_HEIGHT_STEP = 80;
 const BACKTEST_RULE_LABEL: Record<BacktestRuleId, string> = {
   "score-card-v1-day-overall": "일봉 점수룰 v1",
   "washout-pullback-v1": "설거지+눌림 v1(단일)",
@@ -418,6 +422,7 @@ export default function App() {
   const [showPatternReferenceLevel, setShowPatternReferenceLevel] = useState(true);
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
   const [showWashoutEntries, setShowWashoutEntries] = useState(false);
+  const [priceChartHeight, setPriceChartHeight] = useState(DEFAULT_PRICE_CHART_HEIGHT);
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
@@ -629,7 +634,7 @@ export default function App() {
     const mainContainer = priceChartRef.current;
     const mainChart = createChart(mainContainer, {
       width: mainContainer.clientWidth,
-      height: 420,
+      height: priceChartHeight,
       layout: {
         background: { type: ColorType.Solid, color: "#0f1722" },
         textColor: "#9fb2c7",
@@ -1026,7 +1031,7 @@ export default function App() {
     }
 
     const onResize = () => {
-      mainChart.applyOptions({ width: mainContainer.clientWidth });
+      mainChart.applyOptions({ width: mainContainer.clientWidth, height: priceChartHeight });
       if (rsiChart && rsiChartRef.current) {
         rsiChart.applyOptions({ width: rsiChartRef.current.clientWidth });
       }
@@ -1059,8 +1064,16 @@ export default function App() {
     showAdvancedPatternMarkers,
     showPatternReferenceLevel,
     highlightSelectedCandle,
+    showWashoutEntries,
+    priceChartHeight,
     selectedPattern,
   ]);
+
+  const decreasePriceChartHeight = () =>
+    setPriceChartHeight((prev) => Math.max(MIN_PRICE_CHART_HEIGHT, prev - PRICE_CHART_HEIGHT_STEP));
+  const increasePriceChartHeight = () =>
+    setPriceChartHeight((prev) => Math.min(MAX_PRICE_CHART_HEIGHT, prev + PRICE_CHART_HEIGHT_STEP));
+  const resetPriceChartHeight = () => setPriceChartHeight(DEFAULT_PRICE_CHART_HEIGHT);
 
   const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
   const maInfo = activeAnalysis?.indicators.ma ?? null;
@@ -3077,6 +3090,31 @@ export default function App() {
                           상세형
                         </button>
                       </div>
+                      <div className="chart-height-controls">
+                        <span>차트 높이</span>
+                        <div className="chart-height-buttons">
+                          <button
+                            type="button"
+                            className="preset-btn"
+                            onClick={decreasePriceChartHeight}
+                            disabled={priceChartHeight <= MIN_PRICE_CHART_HEIGHT}
+                          >
+                            -80
+                          </button>
+                          <strong>{priceChartHeight}px</strong>
+                          <button
+                            type="button"
+                            className="preset-btn"
+                            onClick={increasePriceChartHeight}
+                            disabled={priceChartHeight >= MAX_PRICE_CHART_HEIGHT}
+                          >
+                            +80
+                          </button>
+                          <button type="button" className="preset-btn" onClick={resetPriceChartHeight}>
+                            기본
+                          </button>
+                        </div>
+                      </div>
                       <>
                         <label>
                           <input
@@ -3195,7 +3233,7 @@ export default function App() {
                       )}
                     </div>
                   )}
-                  <div ref={priceChartRef} className="chart" />
+                  <div ref={priceChartRef} className="chart" style={{ height: `${priceChartHeight}px` }} />
                   {activeTf === "day" && showMarkers && selectedPattern && (
                     <div className="marker-detail-panel">
                       <div className="marker-detail-head">

@@ -534,6 +534,32 @@ h2 {
   font-size: 12px;
 }
 
+.chart-height-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 6px;
+}
+
+.chart-height-controls > span {
+  color: #9fb5cc;
+  font-size: 12px;
+}
+
+.chart-height-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-height-buttons strong {
+  min-width: 64px;
+  text-align: center;
+  font-family: "Space Grotesk", sans-serif;
+  color: #e5f2ff;
+  font-size: 12px;
+}
+
 .preset-btn {
   height: 30px;
   padding: 0 10px;
@@ -1748,6 +1774,12 @@ h2 {
   }
 
   .drawing-presets {
+    width: 100%;
+    margin-right: 0;
+    flex-wrap: wrap;
+  }
+
+  .chart-height-controls {
     width: 100%;
     margin-right: 0;
     flex-wrap: wrap;
