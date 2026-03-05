@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import AdminOpsPanel from "./AdminOpsPanel";
 import AccountPanel from "./AccountPanel";
+import AutoTradePanel from "./AutoTradePanel";
 import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
 
@@ -454,7 +455,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "account" | "admin">("analysis");
+  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "autotrade" | "account" | "admin">("analysis");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -1958,6 +1959,13 @@ export default function App() {
             onClick={() => setPageMode("strategy")}
           >
             전략
+          </button>
+          <button
+            type="button"
+            className={pageMode === "autotrade" ? "tab active" : "tab"}
+            onClick={() => setPageMode("autotrade")}
+          >
+            자동매매
           </button>
           <button
             type="button"
@@ -3497,6 +3505,8 @@ export default function App() {
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : pageMode === "strategy" ? (
           <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : pageMode === "autotrade" ? (
+          <AutoTradePanel apiBase={apiBase} />
         ) : pageMode === "account" ? (
           <AccountPanel apiBase={apiBase} />
         ) : (

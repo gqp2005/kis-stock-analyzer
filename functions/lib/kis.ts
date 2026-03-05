@@ -49,6 +49,12 @@ interface KisInvestorResponse extends KisResponseBase {
   output?: Array<Record<string, string>> | Record<string, string>;
 }
 
+interface KisHashKeyResponse extends KisResponseBase {
+  HASH?: string;
+  hash?: string;
+  hashkey?: string;
+}
+
 export interface KisMarketSnapshot {
   fundamental: FundamentalSignal;
   flow: FlowSignal;
@@ -341,8 +347,33 @@ export interface KisFetchOptions {
   params?: Record<string, string>;
   body?: unknown;
   headers?: Record<string, string>;
+  useHashKey?: boolean;
   metrics?: RequestMetrics;
 }
+
+const fetchHashKey = async (env: Env, body: unknown): Promise<string | null> => {
+  try {
+    const response = await fetchWithTimeout(`${getBaseUrl(env)}/uapi/hashkey`, {
+      method: "POST",
+      headers: {
+        appkey: env.KIS_APP_KEY,
+        appsecret: env.KIS_APP_SECRET,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as KisHashKeyResponse;
+    const hash =
+      (typeof payload.HASH === "string" && payload.HASH) ||
+      (typeof payload.hash === "string" && payload.hash) ||
+      (typeof payload.hashkey === "string" && payload.hashkey) ||
+      "";
+    return hash || null;
+  } catch {
+    return null;
+  }
+};
 
 export const kisFetch = async <T extends KisResponseBase>(
   env: Env,
@@ -361,19 +392,26 @@ export const kisFetch = async <T extends KisResponseBase>(
 
     console.log(`[kis-call] ${path}${options.trId ? ` tr_id=${options.trId}` : ""}`);
     bumpMetric(options.metrics, "kisCalls");
+    const requestHeaders: Record<string, string> = {
+      authorization: `Bearer ${token}`,
+      appkey: env.KIS_APP_KEY,
+      appsecret: env.KIS_APP_SECRET,
+      custtype: "P",
+      "content-type": "application/json",
+      ...(options.trId ? { tr_id: options.trId } : {}),
+      ...(options.headers ?? {}),
+    };
+    if (method === "POST" && options.useHashKey && options.body) {
+      const hashKey = await fetchHashKey(env, options.body);
+      if (hashKey) {
+        requestHeaders.hashkey = hashKey;
+      }
+    }
     let response: Response;
     try {
       response = await fetchWithTimeout(url.toString(), {
         method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          appkey: env.KIS_APP_KEY,
-          appsecret: env.KIS_APP_SECRET,
-          custtype: "P",
-          "content-type": "application/json",
-          ...(options.trId ? { tr_id: options.trId } : {}),
-          ...(options.headers ?? {}),
-        },
+        headers: requestHeaders,
         body: options.body ? JSON.stringify(options.body) : undefined,
       });
     } catch (error) {

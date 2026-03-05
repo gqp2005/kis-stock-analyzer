@@ -6,6 +6,7 @@ KIS_APP_SECRET=your_kis_app_secret
 # KIS_ACCOUNT_NO=12345678
 # KIS_ACCOUNT_PRDT_CD=01
 # KIS_KV is a Cloudflare KV binding (set in Pages/Workers bindings, not in .dev.vars)
+# AUTOTRADE_KV is a Cloudflare KV binding (포지션/손실/쿨다운 상태 저장)
 # RATE_LIMIT_MAX_REQUESTS=120
 # RATE_LIMIT_WINDOW_SEC=60
 # ADMIN_TOKEN=change-me

@@ -596,6 +596,202 @@ export interface AccountResponse {
   warnings: string[];
 }
 
+export type AutotradeMarketFilter = "ALL" | "KOSPI" | "KOSDAQ";
+
+export interface AutotradeCandidate {
+  code: string;
+  name: string;
+  market: string;
+  state: WashoutPullbackState;
+  entryPrice: number;
+  stopPrice: number;
+  target1Price: number;
+  target2Price: number;
+  qty: number;
+  investedWon: number;
+  riskWon: number;
+  riskPct: number;
+  score: number;
+  confidence: number;
+  triggerType: "A" | "B" | "C" | "N/A";
+  currentPrice: number;
+  positionToZone: WashoutZonePosition;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface AutotradeExecutionResult {
+  code: string;
+  name: string;
+  side: "BUY" | "SELL";
+  action:
+    | "ENTRY"
+    | "ENTRY_DRY_RUN"
+    | "TARGET1_PARTIAL"
+    | "TARGET2_EXIT"
+    | "STOP_EXIT"
+    | "TIME_EXIT"
+    | "EXIT_FAILED";
+  qty: number;
+  success: boolean;
+  orderNo: string | null;
+  message: string;
+  price: number;
+  at: string;
+}
+
+export interface AutotradeOpenPosition {
+  code: string;
+  name: string;
+  market: string;
+  qty: number;
+  avgEntryPrice: number;
+  stopPrice: number;
+  target1Price: number;
+  target2Price: number;
+  status: "OPEN" | "PLANNED" | "CLOSED";
+  target1Hit: boolean;
+  createdAt: string;
+  lastUpdatedAt: string;
+  entryDate: string;
+  exitReason: "STOP" | "TARGET2" | "TIMEOUT" | null;
+  closedAt: string | null;
+  realizedPnlWon: number | null;
+}
+
+export interface AutotradeRunSummary {
+  strategyId: string;
+  capitalWon: number;
+  maxRiskPerTradeWon: number;
+  maxDailyLossWon: number;
+  maxPositionWon: number;
+  maxConcurrentPositions: number;
+  execute: boolean;
+  dryRun: boolean;
+  market: AutotradeMarketFilter;
+  universeSize: number;
+  sourceDate: string | null;
+  dailyLossWon: number;
+  blockedByDailyLoss: boolean;
+  openPositionCount: number;
+  executedCount: number;
+  blockedReasons: string[];
+}
+
+export interface AutotradeResponse {
+  ok: boolean;
+  meta: {
+    asOf: string;
+    source: "KIS";
+    strategyId: string;
+    market: AutotradeMarketFilter;
+    universeSize: number;
+    execute: boolean;
+    dryRun: boolean;
+    accountMode: "모의" | "실전";
+    storage: {
+      kvEnabled: boolean;
+    };
+  };
+  summary: AutotradeRunSummary;
+  candidates: AutotradeCandidate[];
+  executions: AutotradeExecutionResult[];
+  positions: AutotradeOpenPosition[];
+  warnings: string[];
+  logs: string[];
+}
+
+export type TradeOrderState =
+  | "IDLE"
+  | "PRECHECK"
+  | "ORDER_SUBMITTING"
+  | "ORDER_ACCEPTED"
+  | "WORKING"
+  | "PARTIALLY_FILLED"
+  | "FILLED"
+  | "POSITION_OPEN"
+  | "EXIT_SUBMITTING"
+  | "CLOSED"
+  | "CANCEL_REQUESTED"
+  | "CANCELED"
+  | "ORDER_REJECTED";
+
+export interface TradeCandidateCard {
+  code: string;
+  name: string;
+  market: string;
+  state: WashoutPullbackState;
+  entry: number;
+  stop: number;
+  tp1: number;
+  tp2: number;
+  qty: number;
+  maxLossWon: number;
+  riskPct: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface TradeCandidatesResponse {
+  ok: boolean;
+  meta: {
+    asOf: string;
+    source: "KIS";
+    market: AutotradeMarketFilter;
+    universeSize: number;
+  };
+  summary: {
+    dailyLossWon: number;
+    blockedByDailyLoss: boolean;
+    openPositionCount: number;
+    strategyId: string;
+    sourceDate: string | null;
+  };
+  candidates: TradeCandidateCard[];
+  warnings: string[];
+}
+
+export interface TradeStateTransition {
+  at: string;
+  state: TradeOrderState;
+  reason: string;
+  summary?: string | null;
+}
+
+export interface TradeOrderResult {
+  clientOrderId: string;
+  code: string;
+  name: string;
+  state: TradeOrderState;
+  orderNo: string | null;
+  filledQty: number;
+  orderedQty: number;
+  remainingQty: number;
+  avgFillPrice: number | null;
+  positionOpened: boolean;
+  canceled: boolean;
+  rejected: boolean;
+  message: string;
+  transitions: TradeStateTransition[];
+}
+
+export interface TradeOrderResponse {
+  ok: boolean;
+  meta: {
+    asOf: string;
+    source: "KIS";
+    market: AutotradeMarketFilter;
+    universeSize: number;
+    dryRun: boolean;
+    autoExecute: boolean;
+    useHashKey: boolean;
+    retryOnce: boolean;
+  };
+  result: TradeOrderResult;
+  warnings: string[];
+  logs: string[];
+}
+
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
 export type ScreenerStrategyFilter =
   | "ALL"
