@@ -123,18 +123,18 @@ const makeSessionToken = async (payload: SessionPayload, secret: string): Promis
 };
 
 const verifySessionToken = async (token: string, secret: string): Promise<SessionPayload | null> => {
-  const [payloadB64, signatureB64] = token.split(".");
-  if (!payloadB64 || !signatureB64) return null;
-
-  const key = await getSigningKey(secret);
-  const signature = fromBase64Url(signatureB64);
-  if (!signature) return null;
-  const valid = await crypto.subtle.verify("HMAC", key, toArrayBuffer(signature), encoder.encode(payloadB64));
-  if (!valid) return null;
-
-  const payloadBytes = fromBase64Url(payloadB64);
-  if (!payloadBytes) return null;
   try {
+    const [payloadB64, signatureB64] = token.split(".");
+    if (!payloadB64 || !signatureB64) return null;
+
+    const key = await getSigningKey(secret);
+    const signature = fromBase64Url(signatureB64);
+    if (!signature) return null;
+    const valid = await crypto.subtle.verify("HMAC", key, toArrayBuffer(signature), encoder.encode(payloadB64));
+    if (!valid) return null;
+
+    const payloadBytes = fromBase64Url(payloadB64);
+    if (!payloadBytes) return null;
     const payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as Partial<SessionPayload>;
     if (!payload || typeof payload.sub !== "string" || typeof payload.exp !== "number" || typeof payload.iat !== "number") {
       return null;
@@ -146,6 +146,7 @@ const verifySessionToken = async (token: string, secret: string): Promise<Sessio
       iat: payload.iat,
     };
   } catch {
+    // 손상된 쿠키/서명은 예외 대신 세션 무효로 처리
     return null;
   }
 };
@@ -369,43 +370,48 @@ const applyRateLimit = async (context: EventContext<unknown, string, unknown>): 
 };
 
 export const onRequest: PagesFunction = async (context) => {
-  if (context.request.method === "OPTIONS") {
-    return withCors(
-      new Response(null, {
-        status: 204,
-        headers: {
-          "access-control-allow-methods": "GET,POST,OPTIONS",
-          "access-control-allow-headers": "content-type,x-request-id,x-admin-token",
-        },
-      }),
-    );
-  }
-
-  const env = context.env as MiddlewareEnv;
-  const url = new URL(context.request.url);
-
-  if (isAuthEnabled(env)) {
-    const authRouteResponse = await handleAuthRoutes(context, env);
-    if (authRouteResponse) return withCors(authRouteResponse);
-
-    const bypass = isAdminBypassRequest(context.request, url, env);
-    const authenticated = bypass || (await hasValidSession(context.request, env));
-    if (!authenticated) {
-      if (url.pathname.startsWith("/api/")) {
-        const unauthorized = errorJson(401, "UNAUTHORIZED", "로그인이 필요합니다.", context.request);
-        return withCors(unauthorized);
-      }
-      const redirectTarget = `${url.pathname}${url.search}`;
-      const loginUrl = new URL(AUTH_PAGE_PATH, url.origin);
-      loginUrl.searchParams.set("redirect", redirectTarget);
-      return withCors(Response.redirect(loginUrl.toString(), 302));
+  try {
+    if (context.request.method === "OPTIONS") {
+      return withCors(
+        new Response(null, {
+          status: 204,
+          headers: {
+            "access-control-allow-methods": "GET,POST,OPTIONS",
+            "access-control-allow-headers": "content-type,x-request-id,x-admin-token",
+          },
+        }),
+      );
     }
-  } else if (url.pathname.startsWith(AUTH_PAGE_PATH)) {
-    return withCors(Response.redirect(new URL("/", url.origin).toString(), 302));
+
+    const env = context.env as MiddlewareEnv;
+    const url = new URL(context.request.url);
+
+    if (isAuthEnabled(env)) {
+      const authRouteResponse = await handleAuthRoutes(context, env);
+      if (authRouteResponse) return withCors(authRouteResponse);
+
+      const bypass = isAdminBypassRequest(context.request, url, env);
+      const authenticated = bypass || (await hasValidSession(context.request, env));
+      if (!authenticated) {
+        if (url.pathname.startsWith("/api/")) {
+          const unauthorized = errorJson(401, "UNAUTHORIZED", "로그인이 필요합니다.", context.request);
+          return withCors(unauthorized);
+        }
+        const redirectTarget = `${url.pathname}${url.search}`;
+        const loginUrl = new URL(AUTH_PAGE_PATH, url.origin);
+        loginUrl.searchParams.set("redirect", redirectTarget);
+        return withCors(Response.redirect(loginUrl.toString(), 302));
+      }
+    } else if (url.pathname.startsWith(AUTH_PAGE_PATH)) {
+      return withCors(Response.redirect(new URL("/", url.origin).toString(), 302));
+    }
+
+    const limited = await applyRateLimit(context);
+    if (limited) return withCors(limited);
+
+    return withCors(await context.next());
+  } catch (error) {
+    console.error("[middleware-error]", error);
+    return withCors(errorJson(500, "MIDDLEWARE_ERROR", "요청 처리 중 내부 오류가 발생했습니다.", context.request));
   }
-
-  const limited = await applyRateLimit(context);
-  if (limited) return withCors(limited);
-
-  return withCors(await context.next());
 };
