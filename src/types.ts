@@ -1190,6 +1190,7 @@ export interface AdminRebuildStatusResponse {
   date: string;
   storage?: {
     backend: "kv" | "d1" | "none";
+    runtimeBackend: "cache" | "d1";
     enabled: boolean;
     snapshotSource: "cache" | "kv" | "d1" | "none";
   };

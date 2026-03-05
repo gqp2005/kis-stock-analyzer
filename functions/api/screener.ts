@@ -1,17 +1,18 @@
 import { getCachedJson } from "../lib/cache";
 import { nowIsoKst } from "../lib/market";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
+import {
+  loadRebuildRuntimeLock,
+  loadRebuildRuntimeProgress,
+} from "../lib/rebuildRuntime";
 import { json, serverError } from "../lib/response";
 import { buildScreenerView } from "../lib/screener";
 import { getPersistedJson, persistenceBackend } from "../lib/screenerPersistence";
 import {
   SCREENER_CACHE_TTL_SEC,
-  type RebuildProgressSnapshot,
   type ScreenerSnapshot,
   persistScreenerDateKey,
   persistScreenerLastSuccessKey,
-  persistRebuildProgressKey,
-  rebuildProgressKey,
   screenerDateKey,
   screenerLastSuccessKey,
 } from "../lib/screenerStore";
@@ -212,14 +213,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const todayKey = screenerDateKey(today);
     const lastSuccessKey = screenerLastSuccessKey();
     const progress = normalizeProgress(
-      ((backend !== "none"
-        ? await getPersistedJson<RebuildProgressSnapshot>(
-            context.env,
-            persistRebuildProgressKey(today),
-          )
-        : null) ??
-        (await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(today)))),
+      await loadRebuildRuntimeProgress(context.env, cache, today),
     );
+    const runtimeLock = await loadRebuildRuntimeLock(context.env, cache);
 
     let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
     let servedFromPersist = false;
@@ -254,7 +250,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       } else {
         warnings.push("스크리너 결과 캐시가 없습니다. /api/admin/rebuild-screener 실행이 필요합니다.");
       }
-      if (progress && progress.universeCount > 0) {
+      const hasPendingProgress =
+        !!progress && progress.universeCount > 0 && progress.cursor < progress.universeCount;
+      const progressInProgress = !!runtimeLock && hasPendingProgress;
+      if (progressInProgress && progress) {
         warnings.push(
           `현재 rebuild 진행 중: ${progress.cursor}/${progress.universeCount} 처리됨`,
         );
@@ -263,6 +262,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
             `진행 중 실패 ${progress.failedItems.length}종목, 재시도 ${progress.retryStats.totalRetries}회`,
           );
         }
+      } else if (hasPendingProgress && progress) {
+        warnings.push(
+          `이전 단계 완료: ${progress.cursor}/${progress.universeCount} 처리됨. 다음 step 호출에서 이어서 진행합니다.`,
+        );
       }
       if (!snapshot && progress && progress.candidates.length > 0) {
         const partialCandidates = sortByAllScore(progress.candidates);
@@ -302,8 +305,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         warnings.push("영속 저장소(KV/D1)가 비활성화되어 캐시 소실 시 결과 복원이 제한됩니다.");
       }
 
-      const progressInProgress =
-        !!progress && progress.universeCount > 0 && progress.cursor < progress.universeCount;
+      const activeRebuild =
+        !!runtimeLock &&
+        !!progress &&
+        progress.universeCount > 0 &&
+        progress.cursor < progress.universeCount;
       const firstBootstrap = !snapshot;
       const dailyRefreshNeeded = !!snapshot && snapshot.date !== today;
       const afterDailyRefreshHour = kstHourNow() >= 5;
@@ -313,7 +319,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         !!context.env.ADMIN_TOKEN &&
         url.protocol === "https:";
 
-      if (rebuildRequired && !progressInProgress && canTriggerByTime && canUseAutoBootstrap) {
+      if (rebuildRequired && !activeRebuild && canTriggerByTime && canUseAutoBootstrap) {
         autoBootstrapTriggered = true;
         warnings.push(
           `오늘 스크리너 스냅샷이 없어 자동 rebuild를 시작했습니다(batch=${autoBootstrapBatch}). 잠시 후 다시 조회해 주세요.`,
@@ -323,21 +329,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         );
       } else if (
         rebuildRequired &&
-        !progressInProgress &&
+        !activeRebuild &&
         autoBootstrapEnabled &&
         !context.env.ADMIN_TOKEN
       ) {
         warnings.push("ADMIN_TOKEN이 없어 자동 rebuild를 시작할 수 없습니다.");
       } else if (
         rebuildRequired &&
-        !progressInProgress &&
+        !activeRebuild &&
         autoBootstrapEnabled &&
         url.protocol !== "https:"
       ) {
         warnings.push("HTTP(local) 환경에서는 자동 rebuild가 비활성화됩니다.");
       } else if (
         rebuildRequired &&
-        !progressInProgress &&
+        !activeRebuild &&
         autoBootstrapEnabled &&
         dailyRefreshNeeded &&
         !afterDailyRefreshHour
@@ -368,7 +374,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           alertsMeta: null,
           lastRebuildStatus: progress
             ? {
-                inProgress: true,
+                inProgress:
+                  !!runtimeLock &&
+                  progress.universeCount > 0 &&
+                  progress.cursor < progress.universeCount,
                 processed: progress.cursor,
                 total: progress.universeCount,
                 updatedAt: progress.updatedAt,
@@ -499,7 +508,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         alertsMeta: snapshot.alertsMeta ?? null,
         lastRebuildStatus: progress
           ? {
-              inProgress: true,
+              inProgress:
+                !!runtimeLock &&
+                progress.universeCount > 0 &&
+                progress.cursor < progress.universeCount,
               processed: progress.cursor,
               total: progress.universeCount,
               updatedAt: progress.updatedAt,

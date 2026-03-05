@@ -2,17 +2,17 @@ import { getCachedJson } from "../../../lib/cache";
 import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
 import { getPersistedJson, persistenceBackend } from "../../../lib/screenerPersistence";
+import {
+  loadRebuildRuntimeLock,
+  loadRebuildRuntimeProgress,
+  rebuildRuntimeBackend,
+} from "../../../lib/rebuildRuntime";
 import { errorJson, json, serverError } from "../../../lib/response";
 import {
   REBUILD_LOCK_TTL_SEC,
-  type RebuildProgressSnapshot,
   type ScreenerSnapshot,
   persistScreenerDateKey,
   persistScreenerLastSuccessKey,
-  persistRebuildLockKey,
-  persistRebuildProgressKey,
-  rebuildLockKey,
-  rebuildProgressKey,
   screenerDateKey,
   screenerLastSuccessKey,
 } from "../../../lib/screenerStore";
@@ -36,10 +36,14 @@ const computeLockState = (startedAt: string | undefined): { stale: boolean; ageS
   return { stale: ageSec > LOCK_STALE_SEC, ageSec };
 };
 
-const normalizeProgress = (
-  progress: RebuildProgressSnapshot | null,
-): RebuildProgressSnapshot | null => {
-  if (!progress) return null;
+const normalizeProgress = <T extends {
+  failedItems?: unknown[];
+  retryStats?: { totalRetries: number; retriedSymbols: number; maxRetryPerSymbol: number } | null;
+  lastBatch?: { from: number; to: number; batchSize: number } | null;
+} | null>(
+  progress: T,
+): T => {
+  if (!progress) return null as T;
   return {
     ...progress,
     failedItems: Array.isArray(progress.failedItems) ? progress.failedItems : [],
@@ -49,7 +53,7 @@ const normalizeProgress = (
       maxRetryPerSymbol: 0,
     },
     lastBatch: progress.lastBatch ?? null,
-  };
+  } as T;
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -66,24 +70,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const cache = await caches.open("kis-analyzer-cache-v3");
     const date = nowIsoKst().slice(0, 10);
     const backend = persistenceBackend(context.env);
+    const runtimeBackend = rebuildRuntimeBackend(context.env);
 
-    const lock =
-      (backend !== "none"
-        ? await getPersistedJson<{ startedAt?: string }>(
-            context.env,
-            persistRebuildLockKey(),
-          )
-        : null) ??
-      (await getCachedJson<{ startedAt?: string }>(cache, rebuildLockKey()));
+    const lock = await loadRebuildRuntimeLock(context.env, cache);
     const lockState = computeLockState(lock?.startedAt);
     const progress = normalizeProgress(
-      ((backend !== "none"
-        ? await getPersistedJson<RebuildProgressSnapshot>(
-            context.env,
-            persistRebuildProgressKey(date),
-          )
-        : null) ??
-        (await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date)))),
+      await loadRebuildRuntimeProgress(context.env, cache, date),
     );
     const todaySnapshot = await getCachedJson<ScreenerSnapshot>(cache, screenerDateKey(date));
     const cacheLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, screenerLastSuccessKey());
@@ -112,6 +104,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         date,
         storage: {
           backend,
+          runtimeBackend,
           enabled: backend !== "none",
           snapshotSource,
         },

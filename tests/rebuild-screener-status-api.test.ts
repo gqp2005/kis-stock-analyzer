@@ -53,6 +53,13 @@ describe("/api/admin/rebuild-screener/status", () => {
       insufficientData: 5,
       warnings: [],
       candidates: [],
+      failedItems: [],
+      retryStats: {
+        totalRetries: 0,
+        retriedSymbols: 0,
+        maxRetryPerSymbol: 0,
+      },
+      lastBatch: null,
     };
 
     mockedGetCachedJson.mockImplementation(async (_cache, key) => {
@@ -72,6 +79,7 @@ describe("/api/admin/rebuild-screener/status", () => {
     const body = (await response.json()) as {
       ok: boolean;
       inProgress: boolean;
+      storage: { runtimeBackend: string };
       progress: { processed: number; total: number };
       lock: { exists: boolean };
     };
@@ -79,6 +87,7 @@ describe("/api/admin/rebuild-screener/status", () => {
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.inProgress).toBe(true);
+    expect(body.storage.runtimeBackend).toBe("cache");
     expect(body.progress.processed).toBe(40);
     expect(body.progress.total).toBe(500);
     expect(body.lock.exists).toBe(true);

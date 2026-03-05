@@ -132,6 +132,8 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `KIS_KV` 바인딩이 있으면 KIS 토큰을 `kis:token` 키에 저장/재사용하며, 만료 2시간 전 자동 갱신합니다.
 - `SCREENER_KV`/`SCREENER_DB`는 문자열 env가 아니라 Cloudflare Pages의 Binding으로 연결합니다.
   - 둘 다 없으면 스크리너는 Cache API만 사용하며, 캐시 소실 시 히스토리/마지막 성공 복원이 제한됩니다.
+  - 스크리너 snapshot/히스토리는 `KV` 또는 `D1`을 사용할 수 있습니다.
+  - 단, `rebuild` 런타임 락/진행률은 KV eventual consistency 문제를 피하기 위해 `D1`이 있으면 `D1`, 없으면 `Cache API`만 사용합니다.
 - `AUTOTRADE_KV`가 없으면 자동매매 엔진은 실행되지만, 포지션/손실/재진입 제한 상태를 요청 간 유지하지 못합니다.
 - 자동 부트스트랩 동작:
   - `SCREENER_AUTO_BOOTSTRAP=true` + `ADMIN_TOKEN` 설정 시
@@ -556,6 +558,9 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
     - `history:changes:YYYY-MM-DD`, `history:failures:YYYY-MM-DD`
     - `alerts:last_sent` (알림 쿨다운 상태)
 - rebuild lock: `lock:rebuild-screener`
+- 런타임 coordination backend:
+  - 우선순위 `D1 -> Cache API`
+  - `SCREENER_KV`는 snapshot/히스토리 영속 저장용이며, 락/진행률 저장에는 사용하지 않습니다.
 - multi 디버그를 위해 `warnings`에 `timeframes.*.candles.length`를 포함
 - TTL:
   - `day`

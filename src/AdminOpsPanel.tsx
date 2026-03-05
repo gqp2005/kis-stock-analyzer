@@ -229,7 +229,7 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
                 <span>스토리지</span>
                 <strong>
                   {statusData.storage?.enabled
-                    ? `${statusData.storage.backend.toUpperCase()} (${statusData.storage.snapshotSource})`
+                    ? `${statusData.storage.backend.toUpperCase()} (${statusData.storage.snapshotSource}) · 실행상태 ${statusData.storage.runtimeBackend.toUpperCase()}`
                     : "Cache API만 사용"}
                 </strong>
               </div>

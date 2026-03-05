@@ -1,6 +1,6 @@
 import type { Env } from "./types";
 
-type PersistBackend = "kv" | "d1" | "none";
+export type PersistBackend = "kv" | "d1" | "none";
 
 export interface PersistListItem<T> {
   key: string;
@@ -23,6 +23,19 @@ export const persistenceBackend = (env: Env): PersistBackend => {
   if (env.SCREENER_KV) return "kv";
   if (env.SCREENER_DB) return "d1";
   return "none";
+};
+
+const resolvePersistenceBackend = (
+  env: Env,
+  preferredBackend?: Exclude<PersistBackend, "none">,
+): PersistBackend => {
+  if (preferredBackend === "kv") {
+    return env.SCREENER_KV ? "kv" : "none";
+  }
+  if (preferredBackend === "d1") {
+    return env.SCREENER_DB ? "d1" : "none";
+  }
+  return persistenceBackend(env);
 };
 
 const ensureD1Schema = async (env: Env): Promise<void> => {
@@ -54,8 +67,9 @@ export const putPersistedJson = async (
   key: string,
   payload: unknown,
   ttlSec?: number,
+  preferredBackend?: Exclude<PersistBackend, "none">,
 ): Promise<boolean> => {
-  const backend = persistenceBackend(env);
+  const backend = resolvePersistenceBackend(env, preferredBackend);
   if (backend === "none") return false;
 
   const prefixed = withPrefix(key);
@@ -86,8 +100,9 @@ export const putPersistedJson = async (
 export const deletePersistedJson = async (
   env: Env,
   key: string,
+  preferredBackend?: Exclude<PersistBackend, "none">,
 ): Promise<boolean> => {
-  const backend = persistenceBackend(env);
+  const backend = resolvePersistenceBackend(env, preferredBackend);
   if (backend === "none") return false;
 
   const prefixed = withPrefix(key);
@@ -107,8 +122,9 @@ export const deletePersistedJson = async (
 export const getPersistedJson = async <T>(
   env: Env,
   key: string,
+  preferredBackend?: Exclude<PersistBackend, "none">,
 ): Promise<T | null> => {
-  const backend = persistenceBackend(env);
+  const backend = resolvePersistenceBackend(env, preferredBackend);
   if (backend === "none") return null;
 
   const prefixed = withPrefix(key);
@@ -137,8 +153,9 @@ export const listPersistedByPrefix = async <T>(
   env: Env,
   prefix: string,
   limit: number,
+  preferredBackend?: Exclude<PersistBackend, "none">,
 ): Promise<Array<PersistListItem<T>>> => {
-  const backend = persistenceBackend(env);
+  const backend = resolvePersistenceBackend(env, preferredBackend);
   if (backend === "none") return [];
   const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
   const prefixedPrefix = withPrefix(prefix);
