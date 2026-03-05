@@ -6,6 +6,13 @@ interface StrategyPanelProps {
   onSelectSymbol: (code: string) => void;
 }
 
+type StrategyVerdict = "긍정" | "중립" | "주의";
+
+type StrategyOpinion = {
+  verdict: StrategyVerdict;
+  text: string;
+};
+
 const formatPrice = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
 
@@ -62,32 +69,56 @@ const isCupHandleCandidate = (item: ScreenerItem): boolean =>
 const isWashoutCandidate = (item: ScreenerItem): boolean =>
   item.hits.washoutPullback.detected && item.hits.washoutPullback.state !== "NONE";
 
-const washoutOneLiner = (item: ScreenerItem): string => {
-  const state = item.hits.washoutPullback.state;
-  if (state === "ANCHOR_DETECTED") {
-    return "과거 큰 거래대금 고점 흔적만 확인된 초기 단계입니다. 아직 눌림 구간 확정 전입니다.";
-  }
-  if (state === "WASHOUT_CANDIDATE") {
-    return "조정 이후 거래대금 재유입이 감지된 단계입니다. 눌림 안정 여부를 추가 확인해야 합니다.";
-  }
-  if (state === "PULLBACK_READY") {
-    return "재유입 뒤 눌림이 유지되는 관찰 구간입니다. 분할 접근 후보로 보는 단계입니다.";
-  }
-  if (state === "REBOUND_CONFIRMED") {
-    return "눌림 구간 이후 반등 재개 신호가 확인되었습니다. 손절 기준을 둔 대응 단계입니다.";
-  }
-  return "설거지+눌림목 구조가 아직 감지되지 않았습니다.";
+const verdictClass = (verdict: StrategyVerdict): "positive" | "neutral" | "negative" => {
+  if (verdict === "긍정") return "positive";
+  if (verdict === "주의") return "negative";
+  return "neutral";
 };
 
-const cupHandleOneLiner = (item: ScreenerItem): string => {
+const washoutOneLiner = (item: ScreenerItem): StrategyOpinion => {
+  const state = item.hits.washoutPullback.state;
+  if (state === "ANCHOR_DETECTED") {
+    return {
+      verdict: "주의",
+      text: "과거 큰 거래대금 고점 흔적만 확인된 초기 단계입니다. 아직 눌림 구간 확정 전입니다.",
+    };
+  }
+  if (state === "WASHOUT_CANDIDATE") {
+    return {
+      verdict: "중립",
+      text: "조정 이후 거래대금 재유입이 감지된 단계입니다. 눌림 안정 여부를 추가 확인해야 합니다.",
+    };
+  }
+  if (state === "PULLBACK_READY") {
+    return {
+      verdict: "중립",
+      text: "재유입 뒤 눌림이 유지되는 관찰 구간입니다. 분할 접근 후보로 보는 단계입니다.",
+    };
+  }
+  if (state === "REBOUND_CONFIRMED") {
+    return {
+      verdict: "긍정",
+      text: "눌림 구간 이후 반등 재개 신호가 확인되었습니다. 손절 기준을 둔 대응 단계입니다.",
+    };
+  }
+  return { verdict: "주의", text: "설거지+눌림목 구조가 아직 감지되지 않았습니다." };
+};
+
+const cupHandleOneLiner = (item: ScreenerItem): StrategyOpinion => {
   const hit = item.hits.cupHandle;
   if (hit.state === "CONFIRMED" && hit.breakout) {
-    return "컵앤핸들 돌파가 확인된 상태입니다. 추격보다 지지 확인 후 접근이 안전합니다.";
+    return {
+      verdict: "긍정",
+      text: "컵앤핸들 돌파가 확인된 상태입니다. 추격보다 지지 확인 후 접근이 안전합니다.",
+    };
   }
   if (hit.state === "POTENTIAL" || hit.detected) {
-    return "컵과 핸들 모양이 형성 중인 단계입니다. 넥라인 돌파/거래량 확증 전까지 관찰이 유리합니다.";
+    return {
+      verdict: "중립",
+      text: "컵과 핸들 모양이 형성 중인 단계입니다. 넥라인 돌파/거래량 확증 전까지 관찰이 유리합니다.",
+    };
   }
-  return "현재는 컵앤핸들 패턴 근거가 약한 상태입니다.";
+  return { verdict: "주의", text: "현재는 컵앤핸들 패턴 근거가 약한 상태입니다." };
 };
 
 export default function StrategyPanel(props: StrategyPanelProps) {
@@ -198,7 +229,9 @@ export default function StrategyPanel(props: StrategyPanelProps) {
             <p className="meta">현재 조건에서 감지된 종목이 없습니다.</p>
           ) : (
             <div className="screener-grid">
-              {washoutItems.map((item) => (
+              {washoutItems.map((item) => {
+                const opinion = washoutOneLiner(item);
+                return (
                 <div key={`washout-${item.code}`} className="screener-card washout-card">
                   <div className="screener-card-head">
                     <div>
@@ -246,12 +279,16 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                         <li key={`${item.code}-${reason}`}>{reason}</li>
                       ))}
                   </ul>
-                  <p className="strategy-one-liner">{washoutOneLiner(item)}</p>
+                  <p className="strategy-one-liner">
+                    <small className={`reason-tag ${verdictClass(opinion.verdict)}`}>{opinion.verdict}</small>
+                    {opinion.text}
+                  </p>
                   <button type="button" onClick={() => onSelectSymbol(item.code)}>
                     상세 분석으로 이동
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </article>
@@ -262,7 +299,9 @@ export default function StrategyPanel(props: StrategyPanelProps) {
             <p className="meta">현재 조건에서 감지된 종목이 없습니다.</p>
           ) : (
             <div className="screener-grid">
-              {cupHandleItems.map((item) => (
+              {cupHandleItems.map((item) => {
+                const opinion = cupHandleOneLiner(item);
+                return (
                 <div key={`cup-${item.code}`} className="screener-card">
                   <div className="screener-card-head">
                     <div>
@@ -298,12 +337,16 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                         <li key={`${item.code}-${reason}`}>{reason}</li>
                       ))}
                   </ul>
-                  <p className="strategy-one-liner">{cupHandleOneLiner(item)}</p>
+                  <p className="strategy-one-liner">
+                    <small className={`reason-tag ${verdictClass(opinion.verdict)}`}>{opinion.verdict}</small>
+                    {opinion.text}
+                  </p>
                   <button type="button" onClick={() => onSelectSymbol(item.code)}>
                     상세 분석으로 이동
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </article>

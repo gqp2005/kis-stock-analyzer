@@ -1391,6 +1391,257 @@ export default function App() {
       text: "지표가 중립권이라 추가 확증(표본 확대/최근 구간 개선) 후 전략 적용이 안전합니다.",
     };
   })();
+  const fundamentalOneLiner = (() => {
+    if (!fundamentalSignal) {
+      return {
+        verdict: "관망" as const,
+        text: "펀더멘털 데이터가 부족해 가치 측면 판단을 보류합니다.",
+      };
+    }
+    if (fundamentalSignal.label === "UNDERVALUED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "밸류에이션이 상대적으로 저평가 구간이라 기술 신호와 함께 조건부 접근을 검토할 수 있습니다.",
+      };
+    }
+    if (fundamentalSignal.label === "OVERVALUED") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "밸류에이션 부담이 있어 신규 진입보다 가격 조정 확인이 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "가치 지표가 중립권이라 수급/추세 확증과 함께 보는 편이 안전합니다.",
+    };
+  })();
+  const flowOneLiner = (() => {
+    if (!flowSignal) {
+      return {
+        verdict: "관망" as const,
+        text: "수급 데이터가 부족해 매매 주체 방향을 판단하기 어렵습니다.",
+      };
+    }
+    if (flowSignal.label === "BUYING") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "주요 수급이 순유입 상태라 추세 확인 시 분할 접근 우위가 있습니다.",
+      };
+    }
+    if (flowSignal.label === "SELLING") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "매도 우위 수급으로 단기 변동성 확대 가능성이 있어 방어적 대응이 필요합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "수급이 균형 구간이라 단독 신호보다는 가격 레벨 확인이 중요합니다.",
+    };
+  })();
+  const volumeCardOneLiner = (() => {
+    if (!volumeSignal) {
+      return {
+        verdict: "관망" as const,
+        text: "거래량 신호가 부족해 패턴 해석 신뢰도가 낮습니다.",
+      };
+    }
+    if (volumeSignal.volumeScore >= 70 && recentPositiveCount >= recentNegativeCount) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "거래량 점수와 긍정 패턴 누적이 양호해 눌림 확인 시 진입 후보로 볼 수 있습니다.",
+      };
+    }
+    if (volumeSignal.volumeScore < 45 || recentNegativeCount > recentPositiveCount) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "부정 거래량 신호가 우세해 추격보다 리스크 축소가 유리합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "거래량이 중립권이라 돌파/지지 확증 전까지 대기 전략이 적절합니다.",
+    };
+  })();
+  const washoutCardOneLiner = (() => {
+    if (!washoutCard) {
+      return {
+        verdict: "관망" as const,
+        text: "설거지+눌림목 데이터가 없어 전략 판단을 보류합니다.",
+      };
+    }
+    if (washoutCard.state === "REBOUND_CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "눌림 이후 반등 재개 조건이 확인되어 손절 기준 하 조건부 접근이 가능합니다.",
+      };
+    }
+    if (washoutCard.state === "PULLBACK_READY" || washoutCard.state === "WASHOUT_CANDIDATE") {
+      return {
+        verdict: "관망" as const,
+        text: "후보/준비 단계라 지지 유지와 거래대금 재유입을 추가 확인한 뒤 대응이 안전합니다.",
+      };
+    }
+    if (washoutCard.state === "ANCHOR_DETECTED") {
+      return {
+        verdict: "관망" as const,
+        text: "대금 흔적만 있는 초기 단계라 눌림 구조가 형성되는지 관찰이 필요합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "전략 신호가 약해 다른 추세/수급 신호를 우선 확인해야 합니다.",
+    };
+  })();
+  const riskBreakdownOneLiner = (() => {
+    if (!riskBreakdown) {
+      return {
+        verdict: "관망" as const,
+        text: "위험도 분해 데이터가 없어 상세 리스크 판단을 보류합니다.",
+      };
+    }
+    if (riskBreakdown.finalRisk >= 70) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "변동성/낙폭 리스크가 상대적으로 낮은 편이라 계획된 진입 전략과 궁합이 좋습니다.",
+      };
+    }
+    if (riskBreakdown.finalRisk < 40) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "리스크 점수가 낮아 급변동 구간일 수 있어 보수적 비중 관리가 필요합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "리스크가 중립권이라 손절/분할 규칙을 엄격히 지키는 접근이 중요합니다.",
+    };
+  })();
+  const tradePlanOneLiner = (() => {
+    if (!tradePlan) {
+      return {
+        verdict: "관망" as const,
+        text: "진입/손절/목표 데이터가 부족해 실행 판단을 보류합니다.",
+      };
+    }
+    if ((tradePlan.riskReward ?? 0) >= 2 && (executionRiskPct ?? 999) <= 6) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "손익비 대비 손절 폭이 양호해 계획된 리스크 한도 내 접근을 검토할 수 있습니다.",
+      };
+    }
+    if ((tradePlan.riskReward ?? 0) < 1 || (executionRiskPct ?? 0) > 10) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "손절 폭 대비 기대 보상이 부족해 진입 비중을 낮추거나 대기하는 편이 유리합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "실행 지표가 중간 구간이라 추가 확증 후 접근하는 전략이 안전합니다.",
+    };
+  })();
+  const overlayOneLiner = (() => {
+    if (overlayExplanations.length === 0) {
+      return {
+        verdict: "관망" as const,
+        text: "오버레이 설명이 부족해 선 해석 신뢰도가 낮습니다.",
+      };
+    }
+    if ((reliabilitySummary?.averageScore ?? 0) >= 75) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "작도 신뢰도가 높은 편이라 핵심 레벨 중심의 시나리오 접근이 가능합니다.",
+      };
+    }
+    if ((reliabilitySummary?.averageScore ?? 100) < 55) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "작도 신뢰도가 낮아 선 기반 매매 비중을 줄이고 확인 신호를 우선해야 합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "오버레이는 참고 신호로 사용하고, 가격/거래량 확증과 함께 판단하는 편이 안전합니다.",
+    };
+  })();
+  const reasonsOneLiner = (() => {
+    if (!activeAnalysis || activeAnalysis.reasons.length === 0) {
+      return {
+        verdict: "관망" as const,
+        text: "근거 데이터가 부족해 종합 판정을 보류합니다.",
+      };
+    }
+    const positiveCount = activeAnalysis.reasons.reduce(
+      (acc, _, index) => acc + (coreReasonTone(activeAnalysis, index) === "positive" ? 1 : 0),
+      0,
+    );
+    const negativeCount = activeAnalysis.reasons.length - positiveCount;
+    if (positiveCount >= negativeCount + 2) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "긍정 근거가 우세해 추세 연장 가능성을 우선 시나리오로 볼 수 있습니다.",
+      };
+    }
+    if (negativeCount >= positiveCount + 2) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "부정 근거가 우세해 신규 진입보다 리스크 방어가 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "긍·부정 근거가 혼재되어 핵심 레벨 확인 후 대응하는 편이 유리합니다.",
+    };
+  })();
+  const chartOneLiner = (() => {
+    if (!activeAnalysis) {
+      return {
+        verdict: "관망" as const,
+        text: "차트 데이터가 부족해 추세 판단을 보류합니다.",
+      };
+    }
+    if (activeAnalysis.regime === "UP" && activeAnalysis.scores.trend >= 70) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "상승 레짐과 추세 점수가 양호해 지지 구간 분할 접근을 검토할 수 있습니다.",
+      };
+    }
+    if (activeAnalysis.regime === "DOWN" || activeAnalysis.scores.trend < 40) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "하락 레짐/약한 추세 구간이라 추격보다 반등 확인 후 대응이 안전합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "추세가 혼조라 과도한 베팅보다 주요 레벨 확인 중심 대응이 적절합니다.",
+    };
+  })();
+  const rsiPanelOneLiner = (() => {
+    if (!hasRsiPanel || activeRsiLast?.value == null) {
+      return {
+        verdict: "관망" as const,
+        text: "RSI 데이터가 충분하지 않아 모멘텀 해석을 보류합니다.",
+      };
+    }
+    if (activeRsiLast.value >= 70) {
+      return {
+        verdict: "비중 축소" as const,
+        text: "RSI 과열 구간이라 추격보다 눌림 확인 후 진입이 유리합니다.",
+      };
+    }
+    if (activeRsiLast.value >= 55 && momentumSignal?.macdBullish) {
+      return {
+        verdict: "매수 검토" as const,
+        text: "RSI와 MACD가 함께 우호적이라 단기 모멘텀 관점 접근이 가능합니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "RSI가 중립권이라 방향 확증 신호가 더 필요합니다.",
+    };
+  })();
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -2024,6 +2275,12 @@ export default function App() {
                         <li key={reason}>{reason}</li>
                       ))}
                     </ul>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(fundamentalOneLiner.verdict)}>
+                        {fundamentalOneLiner.verdict}
+                      </small>
+                      {fundamentalOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2065,6 +2322,12 @@ export default function App() {
                         <li key={reason}>{reason}</li>
                       ))}
                     </ul>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(flowOneLiner.verdict)}>
+                        {flowOneLiner.verdict}
+                      </small>
+                      {flowOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2134,6 +2397,12 @@ export default function App() {
                         <p>최근 10개 구간에서 감지된 패턴이 없습니다.</p>
                       )}
                     </div>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(volumeCardOneLiner.verdict)}>
+                        {volumeCardOneLiner.verdict}
+                      </small>
+                      {volumeCardOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2231,6 +2500,12 @@ export default function App() {
                     </div>
 
                     <p className="plan-note">{washoutCard.statusSummary}</p>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(washoutCardOneLiner.verdict)}>
+                        {washoutCardOneLiner.verdict}
+                      </small>
+                      {washoutCardOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2278,6 +2553,12 @@ export default function App() {
                     ) : (
                       <p className="plan-note">기본은 접힘 상태입니다. 펼치기를 누르면 상세 점수를 확인할 수 있습니다.</p>
                     )}
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(riskBreakdownOneLiner.verdict)}>
+                        {riskBreakdownOneLiner.verdict}
+                      </small>
+                      {riskBreakdownOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2303,6 +2584,12 @@ export default function App() {
                       </div>
                     </div>
                     <p className="plan-note">{tradePlan.note}</p>
+                    <p className="insight-opinion">
+                      <small className={verdictToneClass(tradePlanOneLiner.verdict)}>
+                        {tradePlanOneLiner.verdict}
+                      </small>
+                      {tradePlanOneLiner.text}
+                    </p>
                   </div>
                 )}
 
@@ -2483,6 +2770,12 @@ export default function App() {
                   ) : (
                     <p className="plan-note">컨플루언스 구간이 아직 충분하지 않습니다.</p>
                   )}
+                  <p className="insight-opinion">
+                    <small className={verdictToneClass(confluenceOneLiner.verdict)}>
+                      {confluenceOneLiner.verdict}
+                    </small>
+                    {confluenceOneLiner.text}
+                  </p>
                 </div>
 
                 <div className="card">
@@ -2496,6 +2789,12 @@ export default function App() {
                   ) : (
                     <p className="plan-note">오버레이 설명이 없습니다.</p>
                   )}
+                  <p className="insight-opinion">
+                    <small className={verdictToneClass(overlayOneLiner.verdict)}>
+                      {overlayOneLiner.verdict}
+                    </small>
+                    {overlayOneLiner.text}
+                  </p>
                 </div>
 
                 <div className="card">
@@ -2511,6 +2810,12 @@ export default function App() {
                       </li>
                     ))}
                   </ul>
+                  <p className="insight-opinion">
+                    <small className={verdictToneClass(reasonsOneLiner.verdict)}>
+                      {reasonsOneLiner.verdict}
+                    </small>
+                    {reasonsOneLiner.text}
+                  </p>
                 </div>
 
                 <div className="card">
@@ -2707,6 +3012,12 @@ export default function App() {
                   {activeTf === "day" && (
                     <p className="plan-note">CONFIRMED 조건: close&gt;R &amp;&amp; volRatio&gt;=1.5</p>
                   )}
+                  <p className="insight-opinion">
+                    <small className={verdictToneClass(chartOneLiner.verdict)}>
+                      {chartOneLiner.verdict}
+                    </small>
+                    {chartOneLiner.text}
+                  </p>
                 </div>
 
                 <div className="card">
@@ -2721,6 +3032,12 @@ export default function App() {
                   ) : (
                     <p className="rsi-empty">{rsiDisabledMessage}</p>
                   )}
+                  <p className="insight-opinion">
+                    <small className={verdictToneClass(rsiPanelOneLiner.verdict)}>
+                      {rsiPanelOneLiner.verdict}
+                    </small>
+                    {rsiPanelOneLiner.text}
+                  </p>
                 </div>
               </>
             )}
