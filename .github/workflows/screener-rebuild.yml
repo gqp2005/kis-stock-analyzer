@@ -2,12 +2,12 @@ name: Screener Daily Rebuild
 
 on:
   schedule:
-    # 06:00/06:05/06:10/06:15/06:20 KST = 21:00/21:05/21:10/21:15/21:20 UTC (previous day)
-    - cron: "0 21 * * *"
-    - cron: "5 21 * * *"
-    - cron: "10 21 * * *"
-    - cron: "15 21 * * *"
-    - cron: "20 21 * * *"
+    # 05:00/05:05/05:10/05:15/05:20 KST = 20:00/20:05/20:10/20:15/20:20 UTC (previous day)
+    - cron: "0 20 * * *"
+    - cron: "5 20 * * *"
+    - cron: "10 20 * * *"
+    - cron: "15 20 * * *"
+    - cron: "20 20 * * *"
   workflow_dispatch:
 
 concurrency:

@@ -1148,6 +1148,18 @@ export default function App() {
       : null;
   const executionRiskLabel =
     executionRiskPct == null ? "데이터 부족" : executionRiskPct <= 4 ? "낮음" : executionRiskPct <= 8 ? "보통" : "높음";
+  const headerQuote = (() => {
+    const dayCandles = result?.timeframes.day?.candles ?? [];
+    const fallbackCandles = activeAnalysis?.candles ?? [];
+    const candles = dayCandles.length > 0 ? dayCandles : fallbackCandles;
+    if (candles.length === 0) return null;
+    const latest = candles[candles.length - 1];
+    const prev = candles.length > 1 ? candles[candles.length - 2] : null;
+    const change = prev ? latest.close - prev.close : null;
+    const changePct = prev && prev.close !== 0 ? (change / prev.close) * 100 : null;
+    const tone = change == null ? "neutral" : change > 0 ? "positive" : change < 0 ? "negative" : "neutral";
+    return { close: latest.close, change, changePct, tone };
+  })();
   const washoutZonePosition = (() => {
     if (!washoutCard || latestClose == null || washoutCard.pullbackZone.low == null || washoutCard.pullbackZone.high == null) {
       return "-";
@@ -1960,6 +1972,14 @@ export default function App() {
                 <h2>
                   {result.meta.name} ({result.meta.symbol})
                 </h2>
+                <p className="meta current-quote">
+                  <span>현재가 {formatPrice(headerQuote?.close ?? null)}</span>
+                  {headerQuote?.changePct != null && (
+                    <small className={`reason-tag ${headerQuote.tone}`}>
+                      {`${headerQuote.change != null && headerQuote.change > 0 ? "+" : ""}${headerQuote.change != null ? Math.round(headerQuote.change).toLocaleString("ko-KR") : "0"}원 (${formatSignedDecimal(headerQuote.changePct)}%)`}
+                    </small>
+                  )}
+                </p>
                 <p className="meta">
                   {result.meta.market} · {result.meta.asOf} · 성향 단기/중기 동시 표시 · 출처 {result.meta.source}
                 </p>

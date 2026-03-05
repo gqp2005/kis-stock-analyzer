@@ -214,6 +214,14 @@ h2 {
   font-size: 13px;
 }
 
+.current-quote {
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .summary-text {
   margin: 0;
   color: #c7d8ea;

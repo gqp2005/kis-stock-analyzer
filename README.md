@@ -115,7 +115,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - 자동 부트스트랩 동작:
   - `SCREENER_AUTO_BOOTSTRAP=true` + `ADMIN_TOKEN` 설정 시
   - `/api/screener`가 오늘 스냅샷 미존재를 감지하면 백그라운드로 자동 rebuild를 시작합니다.
-  - 일일 갱신은 기본적으로 GitHub Actions `06:00 KST` 스케줄이 담당합니다.
+  - 일일 갱신은 기본적으로 GitHub Actions `05:00 KST` 스케줄이 담당합니다.
 
 ## 로컬 실행
 
@@ -183,7 +183,7 @@ npm run cf:dev
 - 자동 실행:
   - 첫 기동/초기 빈 상태에서 `/api/screener` 조회 시 자동 1회 bootstrap 실행 가능
   - 조건: `SCREENER_AUTO_BOOTSTRAP=true`, `ADMIN_TOKEN` 설정, HTTPS 환경
-  - 일일 갱신 누락 시(오늘 스냅샷 없음) 06:00 KST 이후 첫 조회에서 자동 재시도
+  - 일일 갱신 누락 시(오늘 스냅샷 없음) 05:00 KST 이후 첫 조회에서 자동 재시도
 - 주의:
   - UI/문구는 후보/시그널 참고용이며 매수 추천/수익 보장을 의미하지 않습니다.
 
@@ -509,7 +509,7 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
     - `CLOUDFLARE_ACCOUNT_ID`
     - `CLOUDFLARE_PROJECT_NAME`
 - `.github/workflows/screener-rebuild.yml`
-  - 매일 `KST 06:00`(UTC `21:00`) 자동 실행
+  - 매일 `KST 05:00`(UTC `20:00`) 자동 실행
   - `/api/admin/rebuild-screener?mode=trigger` 1회 호출 후
   - `/api/admin/rebuild-screener?mode=step`를 batch(기본 20) 반복 호출하며 `inProgress=false`까지 진행
   - 동시 실행 방지를 위해 workflow concurrency 적용

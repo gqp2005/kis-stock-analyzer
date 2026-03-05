@@ -306,7 +306,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         !!progress && progress.universeCount > 0 && progress.cursor < progress.universeCount;
       const firstBootstrap = !snapshot;
       const dailyRefreshNeeded = !!snapshot && snapshot.date !== today;
-      const afterDailyRefreshHour = kstHourNow() >= 6;
+      const afterDailyRefreshHour = kstHourNow() >= 5;
       const canTriggerByTime = firstBootstrap || (dailyRefreshNeeded && afterDailyRefreshHour);
       const canUseAutoBootstrap =
         autoBootstrapEnabled &&
@@ -342,7 +342,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         dailyRefreshNeeded &&
         !afterDailyRefreshHour
       ) {
-        warnings.push("06:00 KST 이전이라 자동 daily rebuild를 대기 중입니다.");
+        warnings.push("05:00 KST 이전이라 자동 daily rebuild를 대기 중입니다.");
       }
     }
 
