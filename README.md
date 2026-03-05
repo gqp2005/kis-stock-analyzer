@@ -104,6 +104,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `SITE_AUTH_USERNAME` (선택, 기본 `owner`)
 - `SITE_AUTH_COOKIE_SECRET` (선택, 세션 서명 키 / 미설정 시 `ADMIN_TOKEN` 또는 비밀번호 사용)
 - `SITE_AUTH_SESSION_HOURS` (선택, 기본 `12`)
+- `SITE_AUTH_DEBUG` (선택, `true`면 인증 미들웨어 오류 응답에 `stage/detail` 포함)
 - `SCREENER_AUTO_BOOTSTRAP` (선택, 기본 `true`)
 - `SCREENER_AUTO_BOOTSTRAP_BATCH` (선택, 기본 `20`)
 - `SCREENER_KV` (선택, KV 바인딩명)
@@ -125,6 +126,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
   - 로그인 페이지: `/__auth`
   - 로그아웃: `/__auth/logout`
   - GitHub Actions 리빌드는 기존처럼 `x-admin-token` 또는 `?token=`이 맞으면 인증 우회 허용됩니다.
+  - 장애 추적 시 `SITE_AUTH_DEBUG=true`를 잠시 켜면 `MIDDLEWARE_ERROR` 응답에 실패 단계(`stage`)와 원인(`detail`)이 포함됩니다.
 
 ## 로컬 실행
 

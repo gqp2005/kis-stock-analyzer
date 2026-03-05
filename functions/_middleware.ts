@@ -1,4 +1,4 @@
-import { errorJson, tooManyRequests } from "./lib/response";
+import { errorJson, json, tooManyRequests } from "./lib/response";
 
 type MiddlewareEnv = {
   RATE_LIMIT_MAX_REQUESTS?: string;
@@ -8,6 +8,7 @@ type MiddlewareEnv = {
   SITE_AUTH_USERNAME?: string;
   SITE_AUTH_COOKIE_SECRET?: string;
   SITE_AUTH_SESSION_HOURS?: string;
+  SITE_AUTH_DEBUG?: string;
 };
 
 type SessionPayload = {
@@ -48,6 +49,11 @@ const withCors = (response: Response): Response => {
     statusText: response.statusText,
     headers,
   });
+};
+
+const isDebugEnabled = (env: MiddlewareEnv): boolean => {
+  const value = env.SITE_AUTH_DEBUG?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes";
 };
 
 const parseCookies = (request: Request): Record<string, string> => {
@@ -329,48 +335,55 @@ const applyRateLimit = async (context: EventContext<unknown, string, unknown>): 
   const env = context.env as MiddlewareEnv;
   const maxRequests = toPositiveInt(env.RATE_LIMIT_MAX_REQUESTS, 120);
   const windowSec = toPositiveInt(env.RATE_LIMIT_WINDOW_SEC, 60);
+  try {
+    const ip = getClientIp(context.request);
+    const nowMs = Date.now();
+    const bucket = Math.floor(nowMs / (windowSec * 1000));
+    const cacheKey = `https://cache.local/ratelimit/v1?ip=${encodeURIComponent(ip)}&bucket=${bucket}`;
+    const cache = await caches.open("kis-rate-limit-v1");
+    const cacheRequest = new Request(cacheKey);
+    const cached = await cache.match(cacheRequest);
+    const count = cached ? Number(await cached.text()) || 0 : 0;
+    const nextCount = count + 1;
 
-  const ip = getClientIp(context.request);
-  const nowMs = Date.now();
-  const bucket = Math.floor(nowMs / (windowSec * 1000));
-  const cacheKey = `https://cache.local/ratelimit/v1?ip=${encodeURIComponent(ip)}&bucket=${bucket}`;
-  const cache = await caches.open("kis-rate-limit-v1");
-  const cacheRequest = new Request(cacheKey);
-  const cached = await cache.match(cacheRequest);
-  const count = cached ? Number(await cached.text()) || 0 : 0;
-  const nextCount = count + 1;
+    await cache.put(
+      cacheRequest,
+      new Response(String(nextCount), {
+        headers: {
+          "cache-control": `public, max-age=${windowSec}`,
+        },
+      }),
+    );
 
-  await cache.put(
-    cacheRequest,
-    new Response(String(nextCount), {
-      headers: {
-        "cache-control": `public, max-age=${windowSec}`,
-      },
-    }),
-  );
+    if (nextCount <= maxRequests) return null;
 
-  if (nextCount <= maxRequests) return null;
+    const retryAfterSec = Math.max(1, windowSec - Math.floor((nowMs % (windowSec * 1000)) / 1000));
+    const limited = tooManyRequests(
+      `요청이 너무 많습니다. ${retryAfterSec}초 후 다시 시도하세요.`,
+      context.request,
+      retryAfterSec,
+    );
 
-  const retryAfterSec = Math.max(1, windowSec - Math.floor((nowMs % (windowSec * 1000)) / 1000));
-  const limited = tooManyRequests(
-    `요청이 너무 많습니다. ${retryAfterSec}초 후 다시 시도하세요.`,
-    context.request,
-    retryAfterSec,
-  );
-
-  const headers = new Headers(limited.headers);
-  headers.set("x-rate-limit-limit", String(maxRequests));
-  headers.set("x-rate-limit-remaining", "0");
-  headers.set("x-rate-limit-reset-sec", String(retryAfterSec));
-  return new Response(limited.body, {
-    status: limited.status,
-    statusText: limited.statusText,
-    headers,
-  });
+    const headers = new Headers(limited.headers);
+    headers.set("x-rate-limit-limit", String(maxRequests));
+    headers.set("x-rate-limit-remaining", "0");
+    headers.set("x-rate-limit-reset-sec", String(retryAfterSec));
+    return new Response(limited.body, {
+      status: limited.status,
+      statusText: limited.statusText,
+      headers,
+    });
+  } catch (error) {
+    // rate limit 저장소 오류는 서비스 전체 장애로 확산시키지 않음
+    console.error("[rate-limit-error]", error);
+    return null;
+  }
 };
 
 export const onRequest: PagesFunction = async (context) => {
+  let stage = "init";
   try {
+    stage = "options";
     if (context.request.method === "OPTIONS") {
       return withCors(
         new Response(null, {
@@ -386,10 +399,13 @@ export const onRequest: PagesFunction = async (context) => {
     const env = context.env as MiddlewareEnv;
     const url = new URL(context.request.url);
 
+    stage = "auth-check";
     if (isAuthEnabled(env)) {
+      stage = "auth-route";
       const authRouteResponse = await handleAuthRoutes(context, env);
       if (authRouteResponse) return withCors(authRouteResponse);
 
+      stage = "auth-session";
       const bypass = isAdminBypassRequest(context.request, url, env);
       const authenticated = bypass || (await hasValidSession(context.request, env));
       if (!authenticated) {
@@ -406,12 +422,37 @@ export const onRequest: PagesFunction = async (context) => {
       return withCors(Response.redirect(new URL("/", url.origin).toString(), 302));
     }
 
+    stage = "rate-limit";
     const limited = await applyRateLimit(context);
     if (limited) return withCors(limited);
 
+    stage = "next";
     return withCors(await context.next());
   } catch (error) {
-    console.error("[middleware-error]", error);
+    const env = context.env as MiddlewareEnv;
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.error("[middleware-error]", {
+      stage,
+      detail,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    if (isDebugEnabled(env)) {
+      const requestId = context.request.headers.get("x-request-id") ?? crypto.randomUUID();
+      return withCors(
+        json(
+          {
+            ok: false,
+            error: "요청 처리 중 내부 오류가 발생했습니다.",
+            code: "MIDDLEWARE_ERROR",
+            stage,
+            detail,
+            requestId,
+            timestamp: new Date().toISOString(),
+          },
+          500,
+        ),
+      );
+    }
     return withCors(errorJson(500, "MIDDLEWARE_ERROR", "요청 처리 중 내부 오류가 발생했습니다.", context.request));
   }
 };
