@@ -1802,3 +1802,27 @@ h2 {
     grid-template-columns: 1fr;
   }
 }
+
+.strategy-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.strategy-mini-item {
+  border: 1px solid #1d3c5a;
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(9, 27, 46, 0.55);
+}
+
+.strategy-mini-item p {
+  margin: 6px 0;
+}
+
+.strategy-mini-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

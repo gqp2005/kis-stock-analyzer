@@ -22,6 +22,7 @@ import type {
   Overall,
   Timeframe,
   TimeframeAnalysis,
+  StrategySignalState,
   WashoutPullbackState,
   VolumePatternSignal,
   VolumePatternType,
@@ -145,6 +146,15 @@ const BASIC_PATTERN_TYPES = new Set<OverlayMarkerType>([
   "BreakoutConfirmed",
   "Upthrust",
   "PullbackReaccumulation",
+  "DarvasBreakout",
+  "DarvasRetest",
+  "NR7Setup",
+  "NR7Breakout",
+  "TrendTemplate",
+  "RsiDivLow1",
+  "RsiDivLow2",
+  "RsiDivBreakout",
+  "FlowPersistence",
 ]);
 const isVcpMarkerType = (type: OverlayMarkerType): boolean =>
   type === "VCPPeak" || type === "VCPTrough" || type === "VCPBreakout";
@@ -334,6 +344,18 @@ const washoutStateClass = (state: WashoutPullbackState): string => {
   if (state === "PULLBACK_READY" || state === "WASHOUT_CANDIDATE" || state === "ANCHOR_DETECTED") {
     return "signal-tag neutral";
   }
+  return "signal-tag muted";
+};
+
+const strategySignalStateLabel = (state: StrategySignalState): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "미감지";
+};
+
+const strategySignalStateClass = (state: StrategySignalState): string => {
+  if (state === "CONFIRMED") return "signal-tag positive";
+  if (state === "POTENTIAL") return "signal-tag neutral";
   return "signal-tag muted";
 };
 
@@ -1049,6 +1071,11 @@ export default function App() {
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
   const cupHandleSignal = activeAnalysis?.signals.cupHandle ?? null;
   const washoutCard = activeAnalysis?.strategyCards?.washoutPullback ?? null;
+  const darvasCard = activeAnalysis?.strategyCards?.darvasRetest ?? null;
+  const nr7Card = activeAnalysis?.strategyCards?.nr7InsideBar ?? null;
+  const trendTemplateCard = activeAnalysis?.strategyCards?.trendTemplate ?? null;
+  const rsiDivergenceCard = activeAnalysis?.strategyCards?.rsiDivergence ?? null;
+  const flowPersistenceCard = activeAnalysis?.strategyCards?.flowPersistence ?? null;
   const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
   const flowSignal = activeAnalysis?.signals.flow ?? null;
   const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
@@ -1491,6 +1518,102 @@ export default function App() {
     return {
       verdict: "관망" as const,
       text: "전략 신호가 약해 다른 추세/수급 신호를 우선 확인해야 합니다.",
+    };
+  })();
+  const darvasCardOneLiner = (() => {
+    if (!darvasCard || !darvasCard.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "다르바스 박스 돌파 신호가 없어 상단 돌파/리테스트 확인이 필요합니다.",
+      };
+    }
+    if (darvasCard.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "박스 돌파 후 리테스트 지지가 확인되어 추세 재개 관점의 후보입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "박스 상단 근접/돌파 후보 구간으로 재지지 확인 후 대응이 안전합니다.",
+    };
+  })();
+  const nr7CardOneLiner = (() => {
+    if (!nr7Card || !nr7Card.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "NR7 수축 패턴이 없어 변동성 확장 신호를 기다리는 구간입니다.",
+      };
+    }
+    if (nr7Card.state === "CONFIRMED" && nr7Card.breakoutDirection === "UP") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "NR7 수축 이후 상방 돌파가 확인되어 단기 모멘텀 우위가 나타났습니다.",
+      };
+    }
+    if (nr7Card.breakoutDirection === "DOWN") {
+      return {
+        verdict: "비중 축소" as const,
+        text: "NR7 세팅 후 하방 이탈이 발생해 방어적 대응이 우선입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "NR7 세팅은 형성됐지만 방향성 돌파 확증 전입니다.",
+    };
+  })();
+  const trendTemplateOneLiner = (() => {
+    if (!trendTemplateCard || !trendTemplateCard.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "장기 정배열/고점 근접 조건이 약해 추세 템플릿 신호가 제한적입니다.",
+      };
+    }
+    if (trendTemplateCard.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "추세 템플릿 핵심 조건이 충족되어 강한 추세 종목 후보로 볼 수 있습니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "추세 템플릿 일부만 충족한 후보 단계로 추가 정렬 확인이 필요합니다.",
+    };
+  })();
+  const rsiDivergenceOneLiner = (() => {
+    if (!rsiDivergenceCard || !rsiDivergenceCard.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "RSI 다이버전스 근거가 약해 반등 확증 신호를 더 기다려야 합니다.",
+      };
+    }
+    if (rsiDivergenceCard.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "강세 다이버전스 후 넥라인 돌파가 확인되어 반등 시나리오가 강화됐습니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "다이버전스 후보 구간으로 넥라인 돌파 확인 전까지는 보수적 대응이 적절합니다.",
+    };
+  })();
+  const flowPersistenceOneLiner = (() => {
+    if (!flowPersistenceCard || !flowPersistenceCard.detected) {
+      return {
+        verdict: "관망" as const,
+        text: "수급 지속성 신호가 약해 가격/거래량 우위 확인이 더 필요합니다.",
+      };
+    }
+    if (flowPersistenceCard.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토" as const,
+        text: "수급/거래량 지속성이 확인되어 추세 추종 관점에서 우호적입니다.",
+      };
+    }
+    return {
+      verdict: "관망" as const,
+      text: "수급 지속성 일부만 충족한 단계라 추세 유지 여부를 추가 확인해야 합니다.",
     };
   })();
   const riskBreakdownOneLiner = (() => {
@@ -2508,6 +2631,109 @@ export default function App() {
                     </p>
                   </div>
                 )}
+
+                {activeTf === "day" &&
+                  darvasCard &&
+                  nr7Card &&
+                  trendTemplateCard &&
+                  rsiDivergenceCard &&
+                  flowPersistenceCard && (
+                    <div className="card">
+                      <h3>추가 전략 카드 (1~5)</h3>
+                      <div className="strategy-mini-grid">
+                        <article className="strategy-mini-item">
+                          <div className="strategy-mini-head">
+                            <strong>다르바스 박스</strong>
+                            <small className={strategySignalStateClass(darvasCard.state)}>
+                              {strategySignalStateLabel(darvasCard.state)}
+                            </small>
+                          </div>
+                          <p className="plan-note">
+                            점수 {darvasCard.score} · 신뢰도 {darvasCard.confidence}
+                          </p>
+                          <p>{darvasCard.summary}</p>
+                          <p className="insight-opinion">
+                            <small className={verdictToneClass(darvasCardOneLiner.verdict)}>
+                              {darvasCardOneLiner.verdict}
+                            </small>
+                            {darvasCardOneLiner.text}
+                          </p>
+                        </article>
+                        <article className="strategy-mini-item">
+                          <div className="strategy-mini-head">
+                            <strong>NR7+인사이드바</strong>
+                            <small className={strategySignalStateClass(nr7Card.state)}>
+                              {strategySignalStateLabel(nr7Card.state)}
+                            </small>
+                          </div>
+                          <p className="plan-note">
+                            점수 {nr7Card.score} · 신뢰도 {nr7Card.confidence}
+                          </p>
+                          <p>{nr7Card.summary}</p>
+                          <p className="insight-opinion">
+                            <small className={verdictToneClass(nr7CardOneLiner.verdict)}>
+                              {nr7CardOneLiner.verdict}
+                            </small>
+                            {nr7CardOneLiner.text}
+                          </p>
+                        </article>
+                        <article className="strategy-mini-item">
+                          <div className="strategy-mini-head">
+                            <strong>추세 템플릿</strong>
+                            <small className={strategySignalStateClass(trendTemplateCard.state)}>
+                              {strategySignalStateLabel(trendTemplateCard.state)}
+                            </small>
+                          </div>
+                          <p className="plan-note">
+                            점수 {trendTemplateCard.score} · 신뢰도 {trendTemplateCard.confidence}
+                          </p>
+                          <p>{trendTemplateCard.summary}</p>
+                          <p className="insight-opinion">
+                            <small className={verdictToneClass(trendTemplateOneLiner.verdict)}>
+                              {trendTemplateOneLiner.verdict}
+                            </small>
+                            {trendTemplateOneLiner.text}
+                          </p>
+                        </article>
+                        <article className="strategy-mini-item">
+                          <div className="strategy-mini-head">
+                            <strong>RSI 다이버전스</strong>
+                            <small className={strategySignalStateClass(rsiDivergenceCard.state)}>
+                              {strategySignalStateLabel(rsiDivergenceCard.state)}
+                            </small>
+                          </div>
+                          <p className="plan-note">
+                            점수 {rsiDivergenceCard.score} · 신뢰도 {rsiDivergenceCard.confidence}
+                          </p>
+                          <p>{rsiDivergenceCard.summary}</p>
+                          <p className="insight-opinion">
+                            <small className={verdictToneClass(rsiDivergenceOneLiner.verdict)}>
+                              {rsiDivergenceOneLiner.verdict}
+                            </small>
+                            {rsiDivergenceOneLiner.text}
+                          </p>
+                        </article>
+                        <article className="strategy-mini-item">
+                          <div className="strategy-mini-head">
+                            <strong>수급 지속성</strong>
+                            <small className={strategySignalStateClass(flowPersistenceCard.state)}>
+                              {strategySignalStateLabel(flowPersistenceCard.state)}
+                            </small>
+                          </div>
+                          <p className="plan-note">
+                            점수 {flowPersistenceCard.score} · 신뢰도 {flowPersistenceCard.confidence}
+                          </p>
+                          <p>{flowPersistenceCard.summary}</p>
+                          <p className="insight-opinion">
+                            <small className={verdictToneClass(flowPersistenceOneLiner.verdict)}>
+                              {flowPersistenceOneLiner.verdict}
+                            </small>
+                            {flowPersistenceOneLiner.text}
+                          </p>
+                        </article>
+                      </div>
+                    </div>
+                  )}
 
                 {riskBreakdown && (
                   <div className="card">

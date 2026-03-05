@@ -49,7 +49,12 @@ const parseStrategy = (raw: string | null): ScreenerStrategyFilter => {
     normalized === "HS" ||
     normalized === "IHS" ||
     normalized === "VCP" ||
-    normalized === "WASHOUT_PULLBACK"
+    normalized === "WASHOUT_PULLBACK" ||
+    normalized === "DARVAS" ||
+    normalized === "NR7" ||
+    normalized === "TREND_TEMPLATE" ||
+    normalized === "RSI_DIVERGENCE" ||
+    normalized === "FLOW_PERSISTENCE"
   ) {
     return normalized;
   }

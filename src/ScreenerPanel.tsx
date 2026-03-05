@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   Overall,
   PatternState,
+  StrategySignalState,
   WashoutZonePosition,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
@@ -171,6 +172,18 @@ const washoutStateBadgeClass = (state: ScreenerWashoutStateFilter | "NONE"): str
   return "badge neutral";
 };
 
+const simpleStrategyStateLabel = (state: StrategySignalState | undefined): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "미감지";
+};
+
+const simpleStrategyStateClass = (state: StrategySignalState | undefined): string => {
+  if (state === "CONFIRMED") return "reason-tag positive";
+  if (state === "POTENTIAL") return "reason-tag neutral";
+  return "reason-tag neutral";
+};
+
 const washoutPositionLabel = (position: WashoutZonePosition): string => {
   if (position === "IN_ZONE") return "존 내부";
   if (position === "ABOVE_ZONE") return "존 위";
@@ -186,6 +199,11 @@ const strategyLabel = (value: ScreenerStrategyFilter): string => {
   if (value === "VOLUME") return "거래량";
   if (value === "VCP") return "VCP";
   if (value === "WASHOUT_PULLBACK") return "설거지+눌림목";
+  if (value === "DARVAS") return "다르바스";
+  if (value === "NR7") return "NR7";
+  if (value === "TREND_TEMPLATE") return "추세 템플릿";
+  if (value === "RSI_DIVERGENCE") return "RSI 다이버전스";
+  if (value === "FLOW_PERSISTENCE") return "수급 지속성";
   if (value === "IHS") return "IHS";
   return "H&S";
 };
@@ -245,6 +263,106 @@ const buildCardOneLiner = (item: ScreenerItem, strategy: ScreenerStrategyFilter)
     return {
       verdict: "비중 축소",
       text: "VCP 근거가 약해 추격 진입보다 신호 누적을 기다리는 편이 좋습니다.",
+    };
+  }
+
+  if (strategy === "DARVAS") {
+    const hit = item.hits.darvasRetest;
+    if (hit?.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토",
+        text: "다르바스 돌파-리테스트 확정 상태로 지지 유지 시나리오를 우선 볼 수 있습니다.",
+      };
+    }
+    if (hit?.state === "POTENTIAL") {
+      return {
+        verdict: "관망",
+        text: "다르바스 후보 구간으로 리테스트 지지 확인 전까지는 대기가 유리합니다.",
+      };
+    }
+    return {
+      verdict: "비중 축소",
+      text: "다르바스 조건이 약해 추격 진입보다 관찰 우선이 적절합니다.",
+    };
+  }
+
+  if (strategy === "NR7") {
+    const hit = item.hits.nr7InsideBar;
+    if (hit?.state === "CONFIRMED" && hit.breakoutDirection === "UP") {
+      return {
+        verdict: "매수 검토",
+        text: "NR7 수축 후 상방 돌파가 확인되어 단기 모멘텀 우위가 나타났습니다.",
+      };
+    }
+    if (hit?.state === "POTENTIAL") {
+      return {
+        verdict: "관망",
+        text: "NR7 세팅은 형성됐지만 방향성 돌파 확증이 필요합니다.",
+      };
+    }
+    return {
+      verdict: "비중 축소",
+      text: "NR7 신호가 약하거나 하방 이탈 이력이 있어 보수적 대응이 필요합니다.",
+    };
+  }
+
+  if (strategy === "TREND_TEMPLATE") {
+    const hit = item.hits.trendTemplate;
+    if (hit?.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토",
+        text: "장기 정배열 템플릿이 충족되어 추세 추종 후보로 해석할 수 있습니다.",
+      };
+    }
+    if (hit?.state === "POTENTIAL") {
+      return {
+        verdict: "관망",
+        text: "추세 템플릿 일부 충족 상태라 추가 정렬 확인이 필요합니다.",
+      };
+    }
+    return {
+      verdict: "비중 축소",
+      text: "추세 템플릿 근거가 약해 단기 신호보다 장기 정렬 확인이 우선입니다.",
+    };
+  }
+
+  if (strategy === "RSI_DIVERGENCE") {
+    const hit = item.hits.rsiDivergence;
+    if (hit?.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토",
+        text: "RSI 다이버전스 확정으로 반등 시나리오 우위가 강화됐습니다.",
+      };
+    }
+    if (hit?.state === "POTENTIAL") {
+      return {
+        verdict: "관망",
+        text: "다이버전스 후보 단계라 넥라인 돌파 확증을 먼저 확인해야 합니다.",
+      };
+    }
+    return {
+      verdict: "비중 축소",
+      text: "다이버전스 근거가 약해 반등 매매의 우선순위가 낮습니다.",
+    };
+  }
+
+  if (strategy === "FLOW_PERSISTENCE") {
+    const hit = item.hits.flowPersistence;
+    if (hit?.state === "CONFIRMED") {
+      return {
+        verdict: "매수 검토",
+        text: "수급 지속성 확정 신호로 추세 유지 관점의 조건부 접근이 가능합니다.",
+      };
+    }
+    if (hit?.state === "POTENTIAL") {
+      return {
+        verdict: "관망",
+        text: "수급 지속성 후보 단계로 거래량/가격 동시 확증을 더 기다려야 합니다.",
+      };
+    }
+    return {
+      verdict: "비중 축소",
+      text: "수급 지속성 신호가 약해 관망 또는 비중 축소 대응이 유리합니다.",
     };
   }
 
@@ -465,6 +583,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
             <option value="VOLUME">VOLUME</option>
             <option value="VCP">VCP</option>
             <option value="WASHOUT_PULLBACK">거래대금 설거지+눌림목</option>
+            <option value="DARVAS">다르바스 박스</option>
+            <option value="NR7">NR7+인사이드바</option>
+            <option value="TREND_TEMPLATE">추세 템플릿</option>
+            <option value="RSI_DIVERGENCE">RSI 다이버전스</option>
+            <option value="FLOW_PERSISTENCE">수급 지속성</option>
             <option value="IHS">IHS</option>
             <option value="HS">HS</option>
           </select>
@@ -925,6 +1048,70 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     </>
                   ) : (
                     <>
+                      {strategy === "DARVAS" && (
+                        <div className="screener-hit-row">
+                          <small className={simpleStrategyStateClass(item.hits.darvasRetest?.state)}>
+                            다르바스 {simpleStrategyStateLabel(item.hits.darvasRetest?.state)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            박스 {formatPrice(item.hits.darvasRetest?.boxLow ?? null)} ~{" "}
+                            {formatPrice(item.hits.darvasRetest?.boxHigh ?? null)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            리테스트 {item.hits.darvasRetest?.retestDate ?? "-"}
+                          </small>
+                        </div>
+                      )}
+                      {strategy === "NR7" && (
+                        <div className="screener-hit-row">
+                          <small className={simpleStrategyStateClass(item.hits.nr7InsideBar?.state)}>
+                            NR7 {simpleStrategyStateLabel(item.hits.nr7InsideBar?.state)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            트리거 {formatPrice(item.hits.nr7InsideBar?.triggerLow ?? null)} ~{" "}
+                            {formatPrice(item.hits.nr7InsideBar?.triggerHigh ?? null)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            방향 {item.hits.nr7InsideBar?.breakoutDirection ?? "NONE"}
+                          </small>
+                        </div>
+                      )}
+                      {strategy === "TREND_TEMPLATE" && (
+                        <div className="screener-hit-row">
+                          <small className={simpleStrategyStateClass(item.hits.trendTemplate?.state)}>
+                            템플릿 {simpleStrategyStateLabel(item.hits.trendTemplate?.state)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            52주 고점 근접 {formatPercent(item.hits.trendTemplate?.nearHigh52wPct ?? null)}
+                          </small>
+                        </div>
+                      )}
+                      {strategy === "RSI_DIVERGENCE" && (
+                        <div className="screener-hit-row">
+                          <small className={simpleStrategyStateClass(item.hits.rsiDivergence?.state)}>
+                            RSI 다이버전스 {simpleStrategyStateLabel(item.hits.rsiDivergence?.state)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            넥라인 {formatPrice(item.hits.rsiDivergence?.neckline ?? null)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            돌파일 {item.hits.rsiDivergence?.breakoutDate ?? "-"}
+                          </small>
+                        </div>
+                      )}
+                      {strategy === "FLOW_PERSISTENCE" && (
+                        <div className="screener-hit-row">
+                          <small className={simpleStrategyStateClass(item.hits.flowPersistence?.state)}>
+                            수급 지속성 {simpleStrategyStateLabel(item.hits.flowPersistence?.state)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            상승거래량 {formatPercent(item.hits.flowPersistence?.upVolumeRatio20 ?? null)}
+                          </small>
+                          <small className="reason-tag neutral">
+                            OBV 기울기 {formatPercent(item.hits.flowPersistence?.obvSlope20 ?? null)}
+                          </small>
+                        </div>
+                      )}
                       <div className="screener-hit-row">
                         <span className="reason-tag positive">
                           거래량 {formatScore(item.hits.volume.score)} / {item.hits.volume.confidence}

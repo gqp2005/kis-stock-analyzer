@@ -261,15 +261,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
       const dayAnalysis = dayCandles
         ? withSnapshotSignals(
-            analyzeTimeframe("day", dayCandles.slice(-Math.max(dayCount, 260)), profile),
+            analyzeTimeframe(
+              "day",
+              dayCandles.slice(-Math.max(dayCount, 260)),
+              profile,
+              snapshot?.flow ?? null,
+            ),
             snapshot,
           )
         : null;
       const weekAnalysis = weekCandles
-        ? withSnapshotSignals(analyzeTimeframe("week", weekCandles.slice(-200), profile), snapshot)
+        ? withSnapshotSignals(
+            analyzeTimeframe("week", weekCandles.slice(-200), profile, snapshot?.flow ?? null),
+            snapshot,
+          )
         : null;
       const monthAnalysis = monthCandles
-        ? withSnapshotSignals(analyzeTimeframe("month", monthCandles.slice(-120), profile), snapshot)
+        ? withSnapshotSignals(
+            analyzeTimeframe("month", monthCandles.slice(-120), profile, snapshot?.flow ?? null),
+            snapshot,
+          )
         : null;
 
       const timeframes: MultiAnalysisPayload["timeframes"] = {
@@ -359,7 +370,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       console.warn(`[snapshot-fallback] symbol=${resolved.code} ${message}`);
     }
 
-    const analysis = withSnapshotSignals(analyzeTimeframe(tf, candlesForAnalysis, profile), snapshot);
+    const analysis = withSnapshotSignals(
+      analyzeTimeframe(tf, candlesForAnalysis, profile, snapshot?.flow ?? null),
+      snapshot,
+    );
     const chartCount = visibleCount(tf, dayCount);
     const analysisForChart = sliceAnalysis(analysis, chartCount);
     const payload: AnalysisPayload = {

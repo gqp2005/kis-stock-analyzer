@@ -148,6 +148,7 @@ export type WashoutPullbackState =
   | "WASHOUT_CANDIDATE"
   | "PULLBACK_READY"
   | "REBOUND_CONFIRMED";
+export type StrategySignalState = "NONE" | "POTENTIAL" | "CONFIRMED";
 
 export interface FundamentalSignal {
   per: number | null;
@@ -240,12 +241,131 @@ export interface WashoutPullbackOverlay {
   };
 }
 
+export interface DarvasRetestCard {
+  id: "darvas_retest_v1";
+  displayName: "다르바스 박스 돌파-리테스트";
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  boxHigh: number | null;
+  boxLow: number | null;
+  boxWidthPct: number | null;
+  breakoutDate: string | null;
+  retestDate: string | null;
+  triggerPrice: number | null;
+  supportPrice: number | null;
+  invalidationPrice: number | null;
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface Nr7InsideBarCard {
+  id: "nr7_insidebar_v1";
+  displayName: "NR7+인사이드바 변동성 수축 돌파";
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  setupDate: string | null;
+  triggerHigh: number | null;
+  triggerLow: number | null;
+  breakoutDate: string | null;
+  breakoutDirection: "UP" | "DOWN" | "NONE";
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface TrendTemplateCard {
+  id: "trend_template_v1";
+  displayName: "추세 템플릿 + RS 필터";
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  ma50: number | null;
+  ma150: number | null;
+  ma200: number | null;
+  high52w: number | null;
+  low52w: number | null;
+  nearHigh52wPct: number | null;
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface RsiDivergenceCard {
+  id: "rsi_divergence_v1";
+  displayName: "RSI 다이버전스 + 넥라인 돌파";
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  low1Date: string | null;
+  low2Date: string | null;
+  low1Price: number | null;
+  low2Price: number | null;
+  rsiLow1: number | null;
+  rsiLow2: number | null;
+  neckline: number | null;
+  breakoutDate: string | null;
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface FlowPersistenceCard {
+  id: "flow_persistence_v1";
+  displayName: "기관/외인 수급 지속성 추종";
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  upVolumeRatio20: number | null;
+  obvSlope20: number | null;
+  flowSignalUsed: boolean;
+  foreignNet: number | null;
+  institutionNet: number | null;
+  programNet: number | null;
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface SimpleStrategyOverlay {
+  markers: Array<{
+    time: string | null;
+    price: number | null;
+    label: string;
+    shape: "arrowUp" | "arrowDown" | "circle" | "square";
+    color: string;
+  }>;
+  lines: Array<{
+    price: number | null;
+    label: string;
+    style: "solid" | "dashed" | "dotted";
+    color: string;
+  }>;
+}
+
 export interface StrategyCards {
   washoutPullback: WashoutPullbackCard;
+  darvasRetest?: DarvasRetestCard;
+  nr7InsideBar?: Nr7InsideBarCard;
+  trendTemplate?: TrendTemplateCard;
+  rsiDivergence?: RsiDivergenceCard;
+  flowPersistence?: FlowPersistenceCard;
 }
 
 export interface StrategyOverlays {
   washoutPullback: WashoutPullbackOverlay;
+  darvasRetest?: SimpleStrategyOverlay;
+  nr7InsideBar?: SimpleStrategyOverlay;
+  trendTemplate?: SimpleStrategyOverlay;
+  rsiDivergence?: SimpleStrategyOverlay;
+  flowPersistence?: SimpleStrategyOverlay;
 }
 
 export type OverlayLineGroup = "level" | "zone";
@@ -256,7 +376,20 @@ export type OverlaySegmentKind =
   | "channelHigh"
   | "fanlineUp"
   | "fanlineDown";
-export type OverlayMarkerType = VolumePatternType | "VCPPeak" | "VCPTrough" | "VCPBreakout";
+export type OverlayMarkerType =
+  | VolumePatternType
+  | "VCPPeak"
+  | "VCPTrough"
+  | "VCPBreakout"
+  | "DarvasBreakout"
+  | "DarvasRetest"
+  | "NR7Setup"
+  | "NR7Breakout"
+  | "TrendTemplate"
+  | "RsiDivLow1"
+  | "RsiDivLow2"
+  | "RsiDivBreakout"
+  | "FlowPersistence";
 
 export interface OverlayPriceLine {
   id: string;
@@ -478,7 +611,18 @@ export interface MultiAnalysisPayload {
 }
 
 export type ScreenerMarketFilter = "KOSPI" | "KOSDAQ" | "ALL";
-export type ScreenerStrategyFilter = "ALL" | "VOLUME" | "HS" | "IHS" | "VCP" | "WASHOUT_PULLBACK";
+export type ScreenerStrategyFilter =
+  | "ALL"
+  | "VOLUME"
+  | "HS"
+  | "IHS"
+  | "VCP"
+  | "WASHOUT_PULLBACK"
+  | "DARVAS"
+  | "NR7"
+  | "TREND_TEMPLATE"
+  | "RSI_DIVERGENCE"
+  | "FLOW_PERSISTENCE";
 export type PatternState = "NONE" | "POTENTIAL" | "CONFIRMED";
 
 export interface VcpContraction {
@@ -623,6 +767,60 @@ export interface WashoutPullbackHit {
   warnings: string[];
 }
 
+export interface DarvasRetestHit {
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  boxHigh: number | null;
+  boxLow: number | null;
+  breakoutDate: string | null;
+  retestDate: string | null;
+  reasons: string[];
+}
+
+export interface Nr7InsideBarHit {
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  setupDate: string | null;
+  triggerHigh: number | null;
+  triggerLow: number | null;
+  breakoutDate: string | null;
+  breakoutDirection: "UP" | "DOWN" | "NONE";
+  reasons: string[];
+}
+
+export interface TrendTemplateHit {
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  nearHigh52wPct: number | null;
+  reasons: string[];
+}
+
+export interface RsiDivergenceHit {
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  neckline: number | null;
+  breakoutDate: string | null;
+  reasons: string[];
+}
+
+export interface FlowPersistenceHit {
+  detected: boolean;
+  state: StrategySignalState;
+  score: number;
+  confidence: number;
+  upVolumeRatio20: number | null;
+  obvSlope20: number | null;
+  reasons: string[];
+}
+
 export interface ScreenerItem {
   code: string;
   name: string;
@@ -639,6 +837,11 @@ export interface ScreenerItem {
     vcp: VcpHit;
     cupHandle: CupHandleHit;
     washoutPullback: WashoutPullbackHit;
+    darvasRetest?: DarvasRetestHit;
+    nr7InsideBar?: Nr7InsideBarHit;
+    trendTemplate?: TrendTemplateHit;
+    rsiDivergence?: RsiDivergenceHit;
+    flowPersistence?: FlowPersistenceHit;
   };
   reasons: string[];
   levels: {

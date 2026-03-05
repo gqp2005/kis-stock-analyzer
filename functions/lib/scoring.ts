@@ -2,8 +2,10 @@ import { atr, bollingerBands, macd, rsi, sma } from "./indicators";
 import { buildMultiViewArtifacts } from "./overlays";
 import { detectVcpPattern } from "./vcp";
 import { detectWashoutPullback } from "./washoutPullback";
+import { detectExtraStrategies, emptyExtraStrategies } from "./extraStrategies";
 import type {
   Candle,
+  FlowSignal,
   IndicatorPoint,
   IndicatorSeries,
   IndicatorLevels,
@@ -21,6 +23,8 @@ import type {
   VolumePatternType,
   StrategyCards,
   StrategyOverlays,
+  OverlayMarkerType,
+  SimpleStrategyOverlay,
 } from "./types";
 import { clamp, round2 } from "./utils";
 
@@ -819,6 +823,79 @@ const emptyWashoutStrategy = (
   },
 });
 
+const defaultFlowSignal = (reason: string): FlowSignal => ({
+  foreignNet: null,
+  institutionNet: null,
+  individualNet: null,
+  programNet: null,
+  foreignHoldRate: null,
+  label: "N/A",
+  reasons: [reason],
+});
+
+const toStrategyMarkerType = (label: string): OverlayMarkerType => {
+  if (label.startsWith("DARVAS BRK")) return "DarvasBreakout";
+  if (label.startsWith("DARVAS RT")) return "DarvasRetest";
+  if (label.startsWith("NR7 BRK") || label.startsWith("NR7 DN")) return "NR7Breakout";
+  if (label.startsWith("NR7")) return "NR7Setup";
+  if (label.startsWith("TREND")) return "TrendTemplate";
+  if (label.startsWith("RSI L1")) return "RsiDivLow1";
+  if (label.startsWith("RSI L2")) return "RsiDivLow2";
+  if (label.startsWith("RSI BRK")) return "RsiDivBreakout";
+  if (label.startsWith("FLOW")) return "FlowPersistence";
+  return "FlowPersistence";
+};
+
+const appendStrategyOverlays = (
+  overlays: TimeframeAnalysis["overlays"],
+  strategyOverlays: StrategyOverlays,
+): void => {
+  const entries: Array<{
+    key:
+      | "darvasRetest"
+      | "nr7InsideBar"
+      | "trendTemplate"
+      | "rsiDivergence"
+      | "flowPersistence";
+    overlay: SimpleStrategyOverlay | undefined;
+  }> = [
+    { key: "darvasRetest", overlay: strategyOverlays.darvasRetest },
+    { key: "nr7InsideBar", overlay: strategyOverlays.nr7InsideBar },
+    { key: "trendTemplate", overlay: strategyOverlays.trendTemplate },
+    { key: "rsiDivergence", overlay: strategyOverlays.rsiDivergence },
+    { key: "flowPersistence", overlay: strategyOverlays.flowPersistence },
+  ];
+
+  for (const entry of entries) {
+    const overlay = entry.overlay;
+    if (!overlay) continue;
+    for (const line of overlay.lines) {
+      if (line.price == null) continue;
+      overlays.priceLines.push({
+        id: `${entry.key}:${line.label}:${line.price}`,
+        group: "level",
+        price: line.price,
+        label: line.label,
+        color: line.color,
+      });
+    }
+    for (const marker of overlay.markers) {
+      if (!marker.time || marker.price == null) continue;
+      overlays.markers.push({
+        id: `${entry.key}:${marker.label}:${marker.time}`,
+        t: marker.time,
+        type: toStrategyMarkerType(marker.label),
+        label: marker.label,
+        desc: marker.label,
+        position: marker.shape === "arrowUp" ? "belowBar" : "aboveBar",
+        shape: marker.shape,
+        text: marker.label.replace(/\s+/g, ""),
+        color: marker.color,
+      });
+    }
+  }
+};
+
 const detectCupHandlePattern = (
   candles: Candle[],
   volMa20Series: Array<number | null>,
@@ -964,6 +1041,7 @@ const analyzeWithConfig = (
   candles: Candle[],
   config: TimeframeConfig,
   profile: InvestmentProfile,
+  flowSignalInput: FlowSignal | null = null,
 ): TimeframeAnalysis => {
   const closes = candles.map((c) => c.close);
   const volumes = candles.map((c) => c.volume);
@@ -1109,6 +1187,12 @@ const analyzeWithConfig = (
           };
         })()
       : emptyWashoutStrategy("거래대금 설거지 + 눌림목 전략은 일봉 기준으로만 계산합니다.");
+  const extraArtifacts =
+    config.tf === "day"
+      ? detectExtraStrategies(candles, flowSignalInput)
+      : emptyExtraStrategies("해당 전략은 일봉 기준으로만 계산합니다.");
+  const extraCards = extraArtifacts.cards;
+  const extraOverlays = extraArtifacts.overlays;
 
   const overall = overallFromScores(trend, momentum, risk);
   const profileScore = buildProfileScore(profile, trend, momentum, risk);
@@ -1265,6 +1349,10 @@ const analyzeWithConfig = (
     },
   };
 
+  const flowSignal =
+    flowSignalInput ??
+    defaultFlowSignal("수급 데이터가 아직 제공되지 않았습니다.");
+
   const signals: Signals = {
     trend: {
       closeAboveMid,
@@ -1314,17 +1402,28 @@ const analyzeWithConfig = (
       label: "N/A",
       reasons: ["펀더멘털 데이터가 아직 제공되지 않았습니다."],
     },
-    flow: {
-      foreignNet: null,
-      institutionNet: null,
-      individualNet: null,
-      programNet: null,
-      foreignHoldRate: null,
-      label: "N/A",
-      reasons: ["수급 데이터가 아직 제공되지 않았습니다."],
-    },
+    flow: flowSignal,
   };
   const multiView = buildMultiViewArtifacts(config.tf, candles, levels, signals);
+  const strategyCards: StrategyCards = {
+    washoutPullback: washoutArtifacts.strategyCards.washoutPullback,
+    darvasRetest: extraCards.darvasRetest,
+    nr7InsideBar: extraCards.nr7InsideBar,
+    trendTemplate: extraCards.trendTemplate,
+    rsiDivergence: extraCards.rsiDivergence,
+    flowPersistence: extraCards.flowPersistence,
+  };
+  const strategyOverlays: StrategyOverlays = {
+    washoutPullback: washoutArtifacts.strategyOverlays.washoutPullback,
+    darvasRetest: extraOverlays.darvasRetest,
+    nr7InsideBar: extraOverlays.nr7InsideBar,
+    trendTemplate: extraOverlays.trendTemplate,
+    rsiDivergence: extraOverlays.rsiDivergence,
+    flowPersistence: extraOverlays.flowPersistence,
+  };
+  if (config.tf === "day") {
+    appendStrategyOverlays(multiView.overlays, strategyOverlays);
+  }
 
   return {
     tf: config.tf,
@@ -1337,8 +1436,8 @@ const analyzeWithConfig = (
     levels,
     tradePlan,
     indicators,
-    strategyCards: washoutArtifacts.strategyCards,
-    strategyOverlays: washoutArtifacts.strategyOverlays,
+    strategyCards,
+    strategyOverlays,
     overlays: multiView.overlays,
     confluence: multiView.confluence,
     explanations: multiView.explanations,
@@ -1350,9 +1449,10 @@ export const analyzeTimeframe = (
   tf: Timeframe,
   candles: Candle[],
   profile: InvestmentProfile = "short",
+  flowSignalInput: FlowSignal | null = null,
 ): TimeframeAnalysis => {
   const config = TF_CONFIG[tf];
-  return analyzeWithConfig(candles, config, profile);
+  return analyzeWithConfig(candles, config, profile, flowSignalInput);
 };
 
 export const computeMultiFinal = (

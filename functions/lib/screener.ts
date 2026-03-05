@@ -6,7 +6,11 @@ import { runWalkForwardTuning, type StrategyThresholds } from "./walkforward";
 import type {
   Candle,
   CupHandleHit,
+  DarvasRetestHit,
+  FlowPersistenceHit,
+  Nr7InsideBarHit,
   PatternHit,
+  RsiDivergenceHit,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
   ScreenerItem,
@@ -14,6 +18,7 @@ import type {
   ScreenerStrategyFilter,
   StrategyBacktestSummary,
   TimeframeAnalysis,
+  TrendTemplateHit,
   VcpHit,
   VolumeHit,
   VolumePatternType,
@@ -65,6 +70,11 @@ export interface ScreenerStoredCandidate {
     vcp: VcpHit;
     cupHandle: CupHandleHit;
     washoutPullback: WashoutPullbackHit;
+    darvasRetest: DarvasRetestHit;
+    nr7InsideBar: Nr7InsideBarHit;
+    trendTemplate: TrendTemplateHit;
+    rsiDivergence: RsiDivergenceHit;
+    flowPersistence: FlowPersistenceHit;
   };
   scoring: {
     all: { score: number; confidence: number };
@@ -73,6 +83,11 @@ export interface ScreenerStoredCandidate {
     ihs: { score: number; confidence: number };
     vcp: { score: number; confidence: number };
     washoutPullback: { score: number; confidence: number };
+    darvasRetest: { score: number; confidence: number };
+    nr7InsideBar: { score: number; confidence: number };
+    trendTemplate: { score: number; confidence: number };
+    rsiDivergence: { score: number; confidence: number };
+    flowPersistence: { score: number; confidence: number };
   };
   reasons: {
     all: string[];
@@ -81,6 +96,11 @@ export interface ScreenerStoredCandidate {
     ihs: string[];
     vcp: string[];
     washoutPullback: string[];
+    darvasRetest: string[];
+    nr7InsideBar: string[];
+    trendTemplate: string[];
+    rsiDivergence: string[];
+    flowPersistence: string[];
   };
   backtestSummary: {
     all: StrategyBacktestSummary | null;
@@ -89,6 +109,11 @@ export interface ScreenerStoredCandidate {
     ihs: StrategyBacktestSummary | null;
     vcp: StrategyBacktestSummary | null;
     washoutPullback: StrategyBacktestSummary | null;
+    darvasRetest: StrategyBacktestSummary | null;
+    nr7InsideBar: StrategyBacktestSummary | null;
+    trendTemplate: StrategyBacktestSummary | null;
+    rsiDivergence: StrategyBacktestSummary | null;
+    flowPersistence: StrategyBacktestSummary | null;
   };
   rs: {
     benchmark: "KOSPI" | "KOSDAQ";
@@ -239,6 +264,60 @@ const defaultWashoutPullbackHit = (reason: string): WashoutPullbackHit => ({
   position: "N/A",
   reasons: [reason],
   warnings: [],
+});
+
+const defaultDarvasRetestHit = (reason: string): DarvasRetestHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  boxHigh: null,
+  boxLow: null,
+  breakoutDate: null,
+  retestDate: null,
+  reasons: [reason],
+});
+
+const defaultNr7InsideBarHit = (reason: string): Nr7InsideBarHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  setupDate: null,
+  triggerHigh: null,
+  triggerLow: null,
+  breakoutDate: null,
+  breakoutDirection: "NONE",
+  reasons: [reason],
+});
+
+const defaultTrendTemplateHit = (reason: string): TrendTemplateHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  nearHigh52wPct: null,
+  reasons: [reason],
+});
+
+const defaultRsiDivergenceHit = (reason: string): RsiDivergenceHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  neckline: null,
+  breakoutDate: null,
+  reasons: [reason],
+});
+
+const defaultFlowPersistenceHit = (reason: string): FlowPersistenceHit => ({
+  detected: false,
+  state: "NONE",
+  score: 0,
+  confidence: 0,
+  upVolumeRatio20: null,
+  obvSlope20: null,
+  reasons: [reason],
 });
 
 const defaultBacktestSummary = (): StrategyBacktestSummary | null => null;
@@ -935,7 +1014,17 @@ export const analyzeScreenerRawCandidate = (
   const vcp = detectVcpPattern(day.candles, marketBenchmark);
   const cupHandle = day.signals.cupHandle ?? defaultCupHandleHit("컵앤핸들 패턴 데이터가 없습니다.");
   const washoutBase = day.strategyCards?.washoutPullback;
+  const darvasBase = day.strategyCards?.darvasRetest;
+  const nr7Base = day.strategyCards?.nr7InsideBar;
+  const trendTemplateBase = day.strategyCards?.trendTemplate;
+  const rsiDivergenceBase = day.strategyCards?.rsiDivergence;
+  const flowPersistenceBase = day.strategyCards?.flowPersistence;
   const washoutFallback = defaultWashoutPullbackHit("거래대금 설거지 + 눌림목 전략 데이터가 없습니다.");
+  const darvasFallback = defaultDarvasRetestHit("다르바스 전략 데이터가 없습니다.");
+  const nr7Fallback = defaultNr7InsideBarHit("NR7+인사이드바 전략 데이터가 없습니다.");
+  const trendTemplateFallback = defaultTrendTemplateHit("추세 템플릿 전략 데이터가 없습니다.");
+  const rsiDivergenceFallback = defaultRsiDivergenceHit("RSI 다이버전스 전략 데이터가 없습니다.");
+  const flowPersistenceFallback = defaultFlowPersistenceHit("수급 지속성 전략 데이터가 없습니다.");
   const entryRef =
     washoutBase?.pullbackZone.high ??
     washoutBase?.entryPlan.entries?.[0]?.price ??
@@ -965,6 +1054,65 @@ export const analyzeScreenerRawCandidate = (
         warnings: washoutBase.warnings.slice(0, 3),
       }
     : washoutFallback;
+  const darvasRetest: DarvasRetestHit = darvasBase
+    ? {
+        detected: darvasBase.detected,
+        state: darvasBase.state,
+        score: clampScore(darvasBase.score),
+        confidence: clampScore(darvasBase.confidence),
+        boxHigh: toNullableRounded(darvasBase.boxHigh),
+        boxLow: toNullableRounded(darvasBase.boxLow),
+        breakoutDate: darvasBase.breakoutDate,
+        retestDate: darvasBase.retestDate,
+        reasons: darvasBase.reasons.slice(0, 6),
+      }
+    : darvasFallback;
+  const nr7InsideBar: Nr7InsideBarHit = nr7Base
+    ? {
+        detected: nr7Base.detected,
+        state: nr7Base.state,
+        score: clampScore(nr7Base.score),
+        confidence: clampScore(nr7Base.confidence),
+        setupDate: nr7Base.setupDate,
+        triggerHigh: toNullableRounded(nr7Base.triggerHigh),
+        triggerLow: toNullableRounded(nr7Base.triggerLow),
+        breakoutDate: nr7Base.breakoutDate,
+        breakoutDirection: nr7Base.breakoutDirection,
+        reasons: nr7Base.reasons.slice(0, 6),
+      }
+    : nr7Fallback;
+  const trendTemplate: TrendTemplateHit = trendTemplateBase
+    ? {
+        detected: trendTemplateBase.detected,
+        state: trendTemplateBase.state,
+        score: clampScore(trendTemplateBase.score),
+        confidence: clampScore(trendTemplateBase.confidence),
+        nearHigh52wPct: toNullableRounded(trendTemplateBase.nearHigh52wPct),
+        reasons: trendTemplateBase.reasons.slice(0, 6),
+      }
+    : trendTemplateFallback;
+  const rsiDivergence: RsiDivergenceHit = rsiDivergenceBase
+    ? {
+        detected: rsiDivergenceBase.detected,
+        state: rsiDivergenceBase.state,
+        score: clampScore(rsiDivergenceBase.score),
+        confidence: clampScore(rsiDivergenceBase.confidence),
+        neckline: toNullableRounded(rsiDivergenceBase.neckline),
+        breakoutDate: rsiDivergenceBase.breakoutDate,
+        reasons: rsiDivergenceBase.reasons.slice(0, 6),
+      }
+    : rsiDivergenceFallback;
+  const flowPersistence: FlowPersistenceHit = flowPersistenceBase
+    ? {
+        detected: flowPersistenceBase.detected,
+        state: flowPersistenceBase.state,
+        score: clampScore(flowPersistenceBase.score),
+        confidence: clampScore(flowPersistenceBase.confidence),
+        upVolumeRatio20: toNullableRounded(flowPersistenceBase.upVolumeRatio20),
+        obvSlope20: toNullableRounded(flowPersistenceBase.obvSlope20),
+        reasons: flowPersistenceBase.reasons.slice(0, 6),
+      }
+    : flowPersistenceFallback;
   const rsInfo = computeRsLabel(day.candles, marketBenchmark);
   const rsScoreAdj = scoreAdjustmentFromRs(rsInfo.label);
   const rsConfidenceAdj = confidenceAdjustmentFromRs(rsInfo.label);
@@ -1005,6 +1153,11 @@ export const analyzeScreenerRawCandidate = (
   const ihsScore = clampScore(ihs.score);
   const vcpScore = clampScore(vcp.score);
   const washoutScore = clampScore(washout.score);
+  const darvasScore = clampScore(darvasRetest.score);
+  const nr7Score = clampScore(nr7InsideBar.score);
+  const trendTemplateScore = clampScore(trendTemplate.score);
+  const rsiDivergenceScore = clampScore(rsiDivergence.score);
+  const flowPersistenceScore = clampScore(flowPersistence.score);
 
   const volumeConfidence = clampScore(
     volume.confidence +
@@ -1047,6 +1200,11 @@ export const analyzeScreenerRawCandidate = (
     washout.riskPct,
     avgTurnover20,
   );
+  const darvasConfidence = clampScore(darvasRetest.confidence + adjustment);
+  const nr7Confidence = clampScore(nr7InsideBar.confidence + adjustment);
+  const trendTemplateConfidence = clampScore(trendTemplate.confidence + adjustment);
+  const rsiDivergenceConfidence = clampScore(rsiDivergence.confidence + adjustment);
+  const flowPersistenceConfidence = clampScore(flowPersistence.confidence + adjustment);
   const allConfidence = clampScore(
     0.3 * volumeConfidence + 0.25 * ihsConfidence + 0.2 * hsConfidence + 0.25 * vcpConfidence,
   );
@@ -1070,6 +1228,31 @@ export const analyzeScreenerRawCandidate = (
   if (washout.detected) {
     sharedReasons.push(
       `거래대금 설거지+눌림목 상태 ${washout.state} (${washout.score}점, 신뢰도 ${washoutConfidence}점)입니다.`,
+    );
+  }
+  if (darvasRetest.detected) {
+    sharedReasons.push(
+      `다르바스 상태 ${darvasRetest.state} (${darvasRetest.score}점)로 박스 재돌파 흐름을 점검 중입니다.`,
+    );
+  }
+  if (nr7InsideBar.detected) {
+    sharedReasons.push(
+      `NR7+인사이드바 상태 ${nr7InsideBar.state} (${nr7InsideBar.score}점)로 수축 후 방향 신호가 나타났습니다.`,
+    );
+  }
+  if (trendTemplate.detected) {
+    sharedReasons.push(
+      `추세 템플릿 상태 ${trendTemplate.state} (${trendTemplate.score}점)로 장기 정배열 조건을 확인했습니다.`,
+    );
+  }
+  if (rsiDivergence.detected) {
+    sharedReasons.push(
+      `RSI 다이버전스 상태 ${rsiDivergence.state} (${rsiDivergence.score}점)로 반등 구조를 점검 중입니다.`,
+    );
+  }
+  if (flowPersistence.detected) {
+    sharedReasons.push(
+      `수급 지속성 상태 ${flowPersistence.state} (${flowPersistence.score}점)로 거래량/OBV 흐름이 유지됩니다.`,
     );
   }
   if (washout.position === "IN_ZONE") {
@@ -1127,6 +1310,11 @@ export const analyzeScreenerRawCandidate = (
   const ihsReasons = [...ihs.reasons, ...sharedReasons].slice(0, 6);
   const vcpReasons = [...vcp.reasons, ...sharedReasons].slice(0, 6);
   const washoutReasons = [...washout.reasons, ...washout.warnings, ...sharedReasons].slice(0, 6);
+  const darvasReasons = [...darvasRetest.reasons, ...sharedReasons].slice(0, 6);
+  const nr7Reasons = [...nr7InsideBar.reasons, ...sharedReasons].slice(0, 6);
+  const trendTemplateReasons = [...trendTemplate.reasons, ...sharedReasons].slice(0, 6);
+  const rsiDivergenceReasons = [...rsiDivergence.reasons, ...sharedReasons].slice(0, 6);
+  const flowPersistenceReasons = [...flowPersistence.reasons, ...sharedReasons].slice(0, 6);
 
   const backtestAll = includeBacktest
     ? buildBacktestSummary(day.candles, buildBullishSignalIndexes(day.candles, day, ihs, vcp, "ALL"))
@@ -1142,6 +1330,11 @@ export const analyzeScreenerRawCandidate = (
     : defaultBacktestSummary();
   const backtestWashout = defaultBacktestSummary();
   const backtestHs = defaultBacktestSummary();
+  const backtestDarvas = defaultBacktestSummary();
+  const backtestNr7 = defaultBacktestSummary();
+  const backtestTrendTemplate = defaultBacktestSummary();
+  const backtestRsiDivergence = defaultBacktestSummary();
+  const backtestFlowPersistence = defaultBacktestSummary();
 
   return {
     code: stock.code,
@@ -1161,6 +1354,11 @@ export const analyzeScreenerRawCandidate = (
       vcp,
       cupHandle,
       washoutPullback: washout,
+      darvasRetest,
+      nr7InsideBar,
+      trendTemplate,
+      rsiDivergence,
+      flowPersistence,
     },
     scoring: {
       all: { score: allScore, confidence: allConfidence },
@@ -1169,6 +1367,11 @@ export const analyzeScreenerRawCandidate = (
       ihs: { score: ihsScore, confidence: ihsConfidence },
       vcp: { score: vcpScore, confidence: vcpConfidence },
       washoutPullback: { score: washoutScore, confidence: washoutConfidence },
+      darvasRetest: { score: darvasScore, confidence: darvasConfidence },
+      nr7InsideBar: { score: nr7Score, confidence: nr7Confidence },
+      trendTemplate: { score: trendTemplateScore, confidence: trendTemplateConfidence },
+      rsiDivergence: { score: rsiDivergenceScore, confidence: rsiDivergenceConfidence },
+      flowPersistence: { score: flowPersistenceScore, confidence: flowPersistenceConfidence },
     },
     reasons: {
       all: allReasons,
@@ -1177,6 +1380,11 @@ export const analyzeScreenerRawCandidate = (
       ihs: ihsReasons,
       vcp: vcpReasons,
       washoutPullback: washoutReasons,
+      darvasRetest: darvasReasons,
+      nr7InsideBar: nr7Reasons,
+      trendTemplate: trendTemplateReasons,
+      rsiDivergence: rsiDivergenceReasons,
+      flowPersistence: flowPersistenceReasons,
     },
     backtestSummary: {
       all: backtestAll,
@@ -1185,6 +1393,11 @@ export const analyzeScreenerRawCandidate = (
       ihs: backtestIhs,
       vcp: backtestVcp,
       washoutPullback: backtestWashout,
+      darvasRetest: backtestDarvas,
+      nr7InsideBar: backtestNr7,
+      trendTemplate: backtestTrendTemplate,
+      rsiDivergence: backtestRsiDivergence,
+      flowPersistence: backtestFlowPersistence,
     },
     rs: rsInfo,
     tuning: {
@@ -1202,6 +1415,11 @@ const strategyKey = (
   if (strategy === "IHS") return "ihs";
   if (strategy === "VCP") return "vcp";
   if (strategy === "WASHOUT_PULLBACK") return "washoutPullback";
+  if (strategy === "DARVAS") return "darvasRetest";
+  if (strategy === "NR7") return "nr7InsideBar";
+  if (strategy === "TREND_TEMPLATE") return "trendTemplate";
+  if (strategy === "RSI_DIVERGENCE") return "rsiDivergence";
+  if (strategy === "FLOW_PERSISTENCE") return "flowPersistence";
   return "all";
 };
 
@@ -1218,6 +1436,21 @@ export const materializeScreenerItem = (
   const washoutPullback =
     (raw.hits as { washoutPullback?: WashoutPullbackHit }).washoutPullback ??
     defaultWashoutPullbackHit("구버전 스냅샷에는 거래대금 설거지+눌림목 데이터가 없습니다.");
+  const darvasRetest =
+    (raw.hits as { darvasRetest?: DarvasRetestHit }).darvasRetest ??
+    defaultDarvasRetestHit("구버전 스냅샷에는 다르바스 전략 데이터가 없습니다.");
+  const nr7InsideBar =
+    (raw.hits as { nr7InsideBar?: Nr7InsideBarHit }).nr7InsideBar ??
+    defaultNr7InsideBarHit("구버전 스냅샷에는 NR7 전략 데이터가 없습니다.");
+  const trendTemplate =
+    (raw.hits as { trendTemplate?: TrendTemplateHit }).trendTemplate ??
+    defaultTrendTemplateHit("구버전 스냅샷에는 추세 템플릿 데이터가 없습니다.");
+  const rsiDivergence =
+    (raw.hits as { rsiDivergence?: RsiDivergenceHit }).rsiDivergence ??
+    defaultRsiDivergenceHit("구버전 스냅샷에는 RSI 다이버전스 데이터가 없습니다.");
+  const flowPersistence =
+    (raw.hits as { flowPersistence?: FlowPersistenceHit }).flowPersistence ??
+    defaultFlowPersistenceHit("구버전 스냅샷에는 수급 지속성 데이터가 없습니다.");
   const hits: ScreenerItem["hits"] = {
     volume: raw.hits.volume,
     hs: raw.hits.hs,
@@ -1225,6 +1458,11 @@ export const materializeScreenerItem = (
     vcp: raw.hits.vcp,
     cupHandle,
     washoutPullback,
+    darvasRetest,
+    nr7InsideBar,
+    trendTemplate,
+    rsiDivergence,
+    flowPersistence,
   };
   const overallLabel = getOverallLabel(scoreTotal, confidence, hits.hs);
   const rs =
@@ -1441,6 +1679,41 @@ export const buildScreenerView = (
     if (strategy === "VCP") {
       return item.hits.vcp.detected && item.hits.vcp.score >= adaptiveCutoffs.vcp;
     }
+    if (strategy === "DARVAS") {
+      return (
+        !!item.hits.darvasRetest?.detected &&
+        item.hits.darvasRetest.state !== "NONE" &&
+        item.scoreTotal >= 55
+      );
+    }
+    if (strategy === "NR7") {
+      return (
+        !!item.hits.nr7InsideBar?.detected &&
+        item.hits.nr7InsideBar.state !== "NONE" &&
+        item.scoreTotal >= 55
+      );
+    }
+    if (strategy === "TREND_TEMPLATE") {
+      return (
+        !!item.hits.trendTemplate?.detected &&
+        item.hits.trendTemplate.state !== "NONE" &&
+        item.scoreTotal >= 60
+      );
+    }
+    if (strategy === "RSI_DIVERGENCE") {
+      return (
+        !!item.hits.rsiDivergence?.detected &&
+        item.hits.rsiDivergence.state !== "NONE" &&
+        item.scoreTotal >= 55
+      );
+    }
+    if (strategy === "FLOW_PERSISTENCE") {
+      return (
+        !!item.hits.flowPersistence?.detected &&
+        item.hits.flowPersistence.state !== "NONE" &&
+        item.scoreTotal >= 55
+      );
+    }
     if (strategy === "WASHOUT_PULLBACK") {
       const washout = item.hits.washoutPullback;
       if (!washout.detected || washout.state === "NONE") return false;
@@ -1472,6 +1745,12 @@ export const buildScreenerView = (
   if (strategy === "WASHOUT_PULLBACK") {
     return {
       items: sortByWashoutPriority(items).slice(0, count),
+      warningItems,
+    };
+  }
+  if (strategy !== "ALL") {
+    return {
+      items: sortByScore(items).slice(0, count),
       warningItems,
     };
   }

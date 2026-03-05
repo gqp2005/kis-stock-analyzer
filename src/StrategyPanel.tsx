@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PatternState, ScreenerItem, ScreenerResponse, WashoutPullbackState } from "./types";
+import type {
+  PatternState,
+  ScreenerItem,
+  ScreenerResponse,
+  StrategySignalState,
+  WashoutPullbackState,
+} from "./types";
 
 interface StrategyPanelProps {
   apiBase: string;
@@ -63,11 +69,30 @@ const cupHandleStateClass = (state: PatternState): string => {
   return "badge caution";
 };
 
+const strategySignalStateLabel = (state: StrategySignalState | undefined): string => {
+  if (state === "CONFIRMED") return "확정";
+  if (state === "POTENTIAL") return "후보";
+  return "미감지";
+};
+
+const strategySignalStateClass = (state: StrategySignalState | undefined): string => {
+  if (state === "CONFIRMED") return "badge good";
+  if (state === "POTENTIAL") return "badge neutral";
+  return "badge caution";
+};
+
 const isCupHandleCandidate = (item: ScreenerItem): boolean =>
   item.hits.cupHandle.detected || item.hits.cupHandle.state !== "NONE";
 
 const isWashoutCandidate = (item: ScreenerItem): boolean =>
   item.hits.washoutPullback.detected && item.hits.washoutPullback.state !== "NONE";
+
+const isExtraStrategyCandidate = (item: ScreenerItem): boolean =>
+  !!item.hits.darvasRetest?.detected ||
+  !!item.hits.nr7InsideBar?.detected ||
+  !!item.hits.trendTemplate?.detected ||
+  !!item.hits.rsiDivergence?.detected ||
+  !!item.hits.flowPersistence?.detected;
 
 const verdictClass = (verdict: StrategyVerdict): "positive" | "neutral" | "negative" => {
   if (verdict === "긍정") return "positive";
@@ -179,6 +204,31 @@ export default function StrategyPanel(props: StrategyPanelProps) {
           const stateDiff = cupHandleStatePriority(b.hits.cupHandle.state) - cupHandleStatePriority(a.hits.cupHandle.state);
           if (stateDiff !== 0) return stateDiff;
           if (b.hits.cupHandle.score !== a.hits.cupHandle.score) return b.hits.cupHandle.score - a.hits.cupHandle.score;
+          return b.confidence - a.confidence;
+        })
+        .slice(0, 30),
+    [sourceItems],
+  );
+  const extraStrategyItems = useMemo(
+    () =>
+      sourceItems
+        .filter(isExtraStrategyCandidate)
+        .sort((a, b) => {
+          const aTop = Math.max(
+            a.hits.darvasRetest?.score ?? 0,
+            a.hits.nr7InsideBar?.score ?? 0,
+            a.hits.trendTemplate?.score ?? 0,
+            a.hits.rsiDivergence?.score ?? 0,
+            a.hits.flowPersistence?.score ?? 0,
+          );
+          const bTop = Math.max(
+            b.hits.darvasRetest?.score ?? 0,
+            b.hits.nr7InsideBar?.score ?? 0,
+            b.hits.trendTemplate?.score ?? 0,
+            b.hits.rsiDivergence?.score ?? 0,
+            b.hits.flowPersistence?.score ?? 0,
+          );
+          if (bTop !== aTop) return bTop - aTop;
           return b.confidence - a.confidence;
         })
         .slice(0, 30),
@@ -347,6 +397,59 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                 </div>
                 );
               })}
+            </div>
+          )}
+        </article>
+
+        <article className="card strategy-section">
+          <h3>신규 전략 종목 (다르바스/NR7/템플릿/RSI/수급)</h3>
+          {extraStrategyItems.length === 0 ? (
+            <p className="meta">현재 조건에서 감지된 종목이 없습니다.</p>
+          ) : (
+            <div className="screener-grid">
+              {extraStrategyItems.map((item) => (
+                <div key={`extra-${item.code}`} className="screener-card">
+                  <div className="screener-card-head">
+                    <div>
+                      <h3>
+                        {item.name} ({item.code})
+                      </h3>
+                      <p className="meta">
+                        {item.market} · {item.lastDate} · 종가 {formatPrice(item.lastClose)}
+                      </p>
+                    </div>
+                    <div className="final-badges">
+                      <span className="confidence neutral">점수 {item.scoreTotal}</span>
+                      <span className="confidence good">신뢰도 {item.confidence}</span>
+                    </div>
+                  </div>
+                  <div className="screener-hit-row">
+                    <small className={strategySignalStateClass(item.hits.darvasRetest?.state)}>
+                      다르바스 {strategySignalStateLabel(item.hits.darvasRetest?.state)}
+                    </small>
+                    <small className={strategySignalStateClass(item.hits.nr7InsideBar?.state)}>
+                      NR7 {strategySignalStateLabel(item.hits.nr7InsideBar?.state)}
+                    </small>
+                    <small className={strategySignalStateClass(item.hits.trendTemplate?.state)}>
+                      템플릿 {strategySignalStateLabel(item.hits.trendTemplate?.state)}
+                    </small>
+                    <small className={strategySignalStateClass(item.hits.rsiDivergence?.state)}>
+                      RSI {strategySignalStateLabel(item.hits.rsiDivergence?.state)}
+                    </small>
+                    <small className={strategySignalStateClass(item.hits.flowPersistence?.state)}>
+                      수급 {strategySignalStateLabel(item.hits.flowPersistence?.state)}
+                    </small>
+                  </div>
+                  <ul className="strategy-reasons">
+                    {item.reasons.slice(0, 2).map((reason) => (
+                      <li key={`${item.code}-${reason}`}>{reason}</li>
+                    ))}
+                  </ul>
+                  <button type="button" onClick={() => onSelectSymbol(item.code)}>
+                    상세 분석으로 이동
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </article>
