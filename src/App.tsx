@@ -1980,9 +1980,6 @@ export default function App() {
                     </small>
                   )}
                 </p>
-                <p className="meta">
-                  {result.meta.market} · {result.meta.asOf} · 성향 단기/중기 동시 표시 · 출처 {result.meta.source}
-                </p>
               </div>
               <div className="summary-right">
                 <div className="final-badges">
@@ -1996,6 +1993,9 @@ export default function App() {
                 <p className="summary-text">{result.final.summary}</p>
               </div>
             </div>
+            <p className="meta summary-meta-bottom">
+              {result.meta.market} · {result.meta.asOf} · 성향 단기/중기 동시 표시 · 출처 {result.meta.source}
+            </p>
 
             {result.warnings.length > 0 && (
               <div className="warning-box">
