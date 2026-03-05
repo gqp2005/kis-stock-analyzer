@@ -262,6 +262,68 @@ const backtestEntriesLabel = (
     .join(" / ");
 };
 
+type LevelGuideItem = {
+  id: string;
+  label: string;
+  price: number;
+  meaning: string;
+};
+
+const levelMeaningText = (label: string): string => {
+  if (label.includes("52주 고점")) {
+    return "최근 52주 최고가 기준선입니다. 돌파 시 신고가 추세 강화, 미돌파 시 장기 저항으로 해석합니다.";
+  }
+  if (label.includes("다르바스 상단")) {
+    return "다르바스 박스 상단 트리거입니다. 상단 안착 여부로 추세 지속 가능성을 확인합니다.";
+  }
+  if (label.includes("다르바스 하단")) {
+    return "다르바스 박스 하단 지지선입니다. 하향 이탈 시 박스 전략 무효 가능성이 커집니다.";
+  }
+  if (label.includes("NR7 상단")) {
+    return "NR7(변동성 축소) 패턴의 상방 트리거입니다. 상향 돌파 시 단기 확장 신호로 봅니다.";
+  }
+  if (label.includes("NR7 하단")) {
+    return "NR7 패턴의 하방 기준선입니다. 하향 이탈 시 약세 전개 가능성을 경계합니다.";
+  }
+  if (label.includes("다이버전스 넥라인")) {
+    return "RSI 다이버전스 확인용 넥라인입니다. 상향 돌파 시 반등 확증 신호로 해석합니다.";
+  }
+  if (label.includes("추세 MA50")) {
+    return "추세 템플릿의 50일 이동평균선입니다. 가격이 위에 있으면 중기 추세가 상대적으로 우호적입니다.";
+  }
+  if (label.includes("수급 MA20")) {
+    return "수급 지속성 관찰용 20일 평균선입니다. 평균선 위 유지 여부로 수급 우위를 확인합니다.";
+  }
+  if (label.includes("핵심 지지") || label.includes("지지 레벨")) {
+    return "최근 스윙/클러스터에서 계산한 핵심 지지 가격대입니다. 눌림 시 방어 여부를 봅니다.";
+  }
+  if (label.includes("핵심 저항") || label.includes("저항 레벨")) {
+    return "최근 스윙/클러스터에서 계산한 핵심 저항 가격대입니다. 돌파/반락 분기점으로 봅니다.";
+  }
+  if (label.includes("지지존")) {
+    return "지지 구간 경계선입니다. 하단 이탈 여부보다 구간 재진입/유지 여부를 함께 확인합니다.";
+  }
+  if (label.includes("저항존")) {
+    return "저항 구간 경계선입니다. 상단 돌파 후 안착 여부가 중요합니다.";
+  }
+  if (label.includes("VCP 저항R") || label.includes("VCP R-zone")) {
+    return "VCP 패턴의 저항 기준 구간입니다. 거래량 동반 돌파 시 패턴 완성 확률이 높아집니다.";
+  }
+  if (label.includes("VCP 무효화") || label.includes("무효화")) {
+    return "전략 무효화 기준선입니다. 이탈 시 보수적으로 리스크 관리(손절/비중 축소)합니다.";
+  }
+  if (label.includes("눌림목 존")) {
+    return "설거지+눌림목 전략의 관찰 구간입니다. 구간 내에서 분할 접근과 거래대금 감소 여부를 확인합니다.";
+  }
+  const maMatch = label.match(/^MA(\d+)/);
+  if (maMatch) {
+    return `${maMatch[1]}일 이동평균선입니다. 가격이 위에 있으면 추세 우위, 아래면 단기 약세 가능성을 시사합니다.`;
+  }
+  if (label.includes("지지")) return "가격이 반등하기 쉬운 지지 후보선입니다. 이탈 여부를 리스크 기준으로 사용합니다.";
+  if (label.includes("저항")) return "가격이 막히기 쉬운 저항 후보선입니다. 돌파 후 안착 여부를 함께 확인합니다.";
+  return "차트 해석을 위한 참고 레벨입니다. 단일 선보다 거래량/추세와 함께 판단하는 것이 안전합니다.";
+};
+
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
   if (rsiBand === "HIGH") return "과열 구간";
   if (rsiBand === "MID") return "중립 구간";
@@ -1080,6 +1142,72 @@ export default function App() {
   const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
   const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
+  const levelGuideRows = useMemo(() => {
+    if (!activeAnalysis) return [] as LevelGuideItem[];
+    const rows: LevelGuideItem[] = [];
+    const seen = new Set<string>();
+    const addRow = (id: string, label: string, price: number | null | undefined, enabled = true) => {
+      if (!enabled || price == null || !Number.isFinite(price)) return;
+      const rounded = Math.round(price * 100) / 100;
+      const dedupeKey = `${label}:${rounded}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      rows.push({
+        id,
+        label,
+        price: rounded,
+        meaning: levelMeaningText(label),
+      });
+    };
+
+    const overlayLines = activeAnalysis.overlays?.priceLines ?? [];
+    for (const line of overlayLines) {
+      if (line.group === "level") addRow(line.id, line.label, line.price, showLevels);
+      if (line.group === "zone") addRow(line.id, line.label, line.price, showZones);
+    }
+
+    const ma = activeAnalysis.indicators.ma;
+    const maRows: Array<{ enabled: boolean; period: number | null; series: IndicatorPoint[] }> = [
+      { enabled: showMa1, period: ma.ma1Period, series: ma.ma1 },
+      { enabled: showMa2, period: ma.ma2Period, series: ma.ma2 },
+      { enabled: showMa3, period: ma.ma3Period, series: ma.ma3 },
+    ];
+    for (const item of maRows) {
+      if (!item.enabled || item.period == null) continue;
+      const last = findLastIndicatorPoint(item.series);
+      addRow(`ma-${item.period}`, `MA${item.period}`, last?.value ?? null, true);
+    }
+
+    if (activeTf === "day") {
+      const washoutOverlay = activeAnalysis.strategyOverlays?.washoutPullback;
+      if (washoutOverlay?.pullbackZone.low != null) {
+        addRow(
+          "washout-zone-low",
+          `${washoutOverlay.pullbackZone.label} 하단`,
+          washoutOverlay.pullbackZone.low,
+          true,
+        );
+      }
+      if (washoutOverlay?.pullbackZone.high != null) {
+        addRow(
+          "washout-zone-high",
+          `${washoutOverlay.pullbackZone.label} 상단`,
+          washoutOverlay.pullbackZone.high,
+          true,
+        );
+      }
+      if (washoutOverlay?.invalidLow.price != null) {
+        addRow("washout-invalid", washoutOverlay.invalidLow.label, washoutOverlay.invalidLow.price, true);
+      }
+      if (showWashoutEntries && washoutOverlay?.entryPlan.entries?.length) {
+        for (const entry of washoutOverlay.entryPlan.entries) {
+          addRow(`washout-entry-${entry.label}`, `${entry.label} 분할 진입`, entry.price, true);
+        }
+      }
+    }
+
+    return rows.sort((a, b) => b.price - a.price);
+  }, [activeAnalysis, activeTf, showLevels, showZones, showMa1, showMa2, showMa3, showWashoutEntries]);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
   const cupHandleSignal = activeAnalysis?.signals.cupHandle ?? null;
@@ -3295,6 +3423,29 @@ export default function App() {
                   )}
                   {activeTf === "day" && (
                     <p className="plan-note">CONFIRMED 조건: close&gt;R &amp;&amp; volRatio&gt;=1.5</p>
+                  )}
+                  {showLevels && (
+                    <div className="level-guide">
+                      <div className="level-guide-head">
+                        <h4>레벨 설명</h4>
+                        <small>표시 중 {levelGuideRows.length}개</small>
+                      </div>
+                      {levelGuideRows.length > 0 ? (
+                        <ul className="level-guide-list">
+                          {levelGuideRows.map((item) => (
+                            <li key={`${item.id}-${item.price}`}>
+                              <div>
+                                <strong>{item.label}</strong>
+                                <p>{item.meaning}</p>
+                              </div>
+                              <span>{formatPrice(item.price)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="plan-note">현재 표시 가능한 레벨이 없습니다.</p>
+                      )}
+                    </div>
                   )}
                   <p className="insight-opinion">
                     <small className={verdictToneClass(chartOneLiner.verdict)}>
