@@ -1,6 +1,7 @@
 import { normalizeAutotradeCapitalMode, normalizeFixedCapitalWon } from "../../lib/autotradeCapital";
 import { attachMetrics, createRequestMetrics } from "../../lib/observability";
 import { badRequest, errorJson, json, serverError } from "../../lib/response";
+import { hasAdminOrSessionAccess } from "../../lib/siteAuth";
 import { runTradeOrder } from "../../lib/tradeMachine";
 import type { AutotradeMarketFilter, Env } from "../../lib/types";
 
@@ -61,6 +62,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const adminToken =
       (typeof payload.adminToken === "string" ? payload.adminToken : null) ??
       context.request.headers.get("x-admin-token");
+    const adminAuthorized = await hasAdminOrSessionAccess(context.request, context.env, adminToken);
 
     const cache = await caches.open("kis-analyzer-cache-v3");
     const result = await runTradeOrder(
@@ -77,6 +79,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         useHashKey,
         retryOnce,
         clientOrderId,
+        adminAuthorized,
         adminToken,
       },
       metrics,

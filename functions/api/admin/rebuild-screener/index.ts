@@ -3,6 +3,7 @@ import { fetchMarketIndexCandles, fetchTimeframeCandles } from "../../../lib/kis
 import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
 import { errorJson, json, serverError } from "../../../lib/response";
+import { hasAdminOrSessionAccess } from "../../../lib/siteAuth";
 import {
   analyzeScreenerRawCandidate,
   deriveAdaptiveCutoffs,
@@ -878,8 +879,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const forceRun = parseForce(url);
   const mode = parseMode(url);
   const validationMode = parseValidationMode(url);
-  const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
-  if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
+  if (!(await hasAdminOrSessionAccess(context.request, context.env))) {
     return finalize(buildUnauthorized(context.request));
   }
 

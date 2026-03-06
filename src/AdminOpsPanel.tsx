@@ -60,16 +60,22 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
 
   const loadDashboard = async () => {
     const trimmed = token.trim();
-    if (!trimmed) {
-      setError("admin token을 입력하세요.");
-      return;
-    }
     setLoading(true);
     setError("");
     try {
-      const statusUrl = `${apiBase}/api/admin/rebuild-screener/status?token=${encodeURIComponent(trimmed)}`;
-      const historyUrl = `${apiBase}/api/admin/rebuild-screener/history?token=${encodeURIComponent(trimmed)}&limit=${historyLimit}`;
-      const [statusResp, historyResp] = await Promise.all([fetch(statusUrl), fetch(historyUrl)]);
+      const statusQuery = new URLSearchParams();
+      const historyQuery = new URLSearchParams();
+      historyQuery.set("limit", String(historyLimit));
+      if (trimmed) {
+        statusQuery.set("token", trimmed);
+        historyQuery.set("token", trimmed);
+      }
+      const statusUrl = `${apiBase}/api/admin/rebuild-screener/status${statusQuery.toString() ? `?${statusQuery.toString()}` : ""}`;
+      const historyUrl = `${apiBase}/api/admin/rebuild-screener/history?${historyQuery.toString()}`;
+      const [statusResp, historyResp] = await Promise.all([
+        fetch(statusUrl),
+        fetch(historyUrl),
+      ]);
       const statusJson = await readJsonBody<AdminRebuildStatusResponse | { error?: string; message?: string }>(
         statusResp,
         "/api/admin/rebuild-screener/status",
@@ -104,14 +110,13 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
 
   const triggerRebuild = async () => {
     const trimmed = token.trim();
-    if (!trimmed) {
-      setError("admin token을 입력하세요.");
-      return;
-    }
     setRebuildLoading(true);
     setError("");
     try {
-      const rebuildUrl = `${apiBase}/api/admin/rebuild-screener?batch=${batchSize}&token=${encodeURIComponent(trimmed)}`;
+      const rebuildQuery = new URLSearchParams();
+      rebuildQuery.set("batch", String(batchSize));
+      if (trimmed) rebuildQuery.set("token", trimmed);
+      const rebuildUrl = `${apiBase}/api/admin/rebuild-screener?${rebuildQuery.toString()}`;
       for (let attempt = 1; attempt <= REBUILD_MAX_ATTEMPTS; attempt += 1) {
         const response = await fetch(rebuildUrl, { method: "POST" });
         const body = await readJsonBody<{
@@ -167,12 +172,12 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
     <section className="admin-ops">
       <form className="admin-controls" onSubmit={onSubmit}>
         <label>
-          Admin Token
+          Admin Token (선택)
           <input
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="x-admin-token"
+            placeholder="브라우저 로그인 상태면 비워둘 수 있음"
             autoComplete="off"
           />
         </label>
@@ -211,7 +216,7 @@ export default function AdminOpsPanel(props: AdminOpsPanelProps) {
       </form>
 
       <p className="screener-note">
-        운영 화면은 관리자 전용입니다. 토큰은 브라우저 메모리에만 유지되며 저장하지 않습니다.
+        운영 화면은 관리자 전용입니다. 사이트 로그인 세션이 있으면 토큰 없이도 사용 가능하며, 외부 호출이나 배치 실행 시에는 admin token을 사용합니다.
       </p>
 
       {error && <p className="error">{error}</p>}

@@ -118,7 +118,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
 - `AUTOTRADE_KV` (선택, `/api/autotrade` 포지션/손익/쿨다운 상태 저장 KV 바인딩명)
 - `RATE_LIMIT_MAX_REQUESTS` (선택, 기본 `120`)
 - `RATE_LIMIT_WINDOW_SEC` (선택, 기본 `60`)
-- `ADMIN_TOKEN` (선택, `/api/admin/rebuild-screener` 보호용)
+- `ADMIN_TOKEN` (선택, 외부 스크립트/GitHub Actions용 관리자 토큰)
 - `SITE_AUTH_PASSWORD` (선택, 설정 시 사이트 전체 로그인 보호 활성화)
 - `SITE_AUTH_USERNAME` (선택, 기본 `owner`)
 - `SITE_AUTH_COOKIE_SECRET` (선택, 세션 서명 키 / 미설정 시 `ADMIN_TOKEN` 또는 비밀번호 사용)
@@ -144,7 +144,9 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
   - `/api/screener`가 오늘 스냅샷 미존재를 감지하면 백그라운드로 자동 rebuild를 시작합니다.
   - 일일 갱신은 기본적으로 GitHub Actions `05:00 KST` 스케줄이 담당합니다.
 - 앱 내 접근 보호(선택):
-  - `SITE_AUTH_PASSWORD`를 설정하면 전체 사이트/`/api/*`가 로그인 세션 쿠키로 보호됩니다.
+- `SITE_AUTH_PASSWORD`를 설정하면 전체 사이트/`/api/*`가 로그인 세션 쿠키로 보호됩니다.
+- 브라우저에서 로그인 세션이 유효하면 `운영(관리자)`/`자동매매 주문` API는 별도 `ADMIN_TOKEN` 없이도 사용할 수 있습니다.
+- 외부 스크립트, GitHub Actions, PowerShell, curl 호출은 기존처럼 `ADMIN_TOKEN`을 사용합니다.
   - 로그인 페이지: `/__auth`
   - 로그아웃: `/__auth/logout`
   - GitHub Actions 리빌드는 기존처럼 `x-admin-token` 또는 `?token=`이 맞으면 인증 우회 허용됩니다.
@@ -164,7 +166,7 @@ npm run cf:dev
 1. Pages 프로젝트 생성 (Git 연동)
 2. Build command: `npm run build`
 3. Build output: `dist`
-4. Environment variables: `KIS_APP_KEY`, `KIS_APP_SECRET` (필수), `ADMIN_TOKEN`(관리자 API 사용 시) 설정
+4. Environment variables: `KIS_APP_KEY`, `KIS_APP_SECRET` (필수), `ADMIN_TOKEN`(외부 관리자 호출/배치 사용 시) 설정
 5. (선택) Bindings:
    - KV Namespace 바인딩명: `KIS_KV` (KIS 토큰 재사용/갱신용)
    - KV Namespace 바인딩명: `SCREENER_KV`
@@ -209,7 +211,9 @@ npm run cf:dev
   - `POST`: 실행 가능(`execute=true`)
   - `dryRun=true`면 주문 전송 없이 모의 실행
 - 인증:
-  - `execute=true` 실행 시 `ADMIN_TOKEN` 필요 (`x-admin-token` 헤더 또는 body/adminToken)
+- `execute=true` 실행 시 권한 필요
+  - 브라우저 로그인 세션이 유효하면 추가 토큰 없이 실행 가능
+  - 외부 호출은 `ADMIN_TOKEN` 필요 (`x-admin-token` 헤더 또는 body/adminToken)
 - 응답:
   - `summary`: 실행설정/일일손실/차단여부/오픈포지션/실행건수
   - `candidates[]`: `entry/stop/target1/target2/qty/riskPct/reasons`
@@ -317,7 +321,7 @@ VCP 응답 핵심 필드:
   - `alertCooldownDays` (기본 2)
 - 인증:
   - `token` 쿼리 또는 `x-admin-token` 헤더
-  - env `ADMIN_TOKEN`과 일치해야 실행
+  - 브라우저 로그인 세션 또는 env `ADMIN_TOKEN`과 일치하는 토큰이 필요
 - rebuild 순서:
   1. 유니버스 로드: `거래대금 상위 500`
      - key: `universe:turnoverTop500:YYYY-MM-DD`
@@ -366,7 +370,7 @@ curl -X POST "https://<your-pages-domain>/api/admin/rebuild-screener?token=<ADMI
 - 현재 rebuild 락/진행률/마지막 스냅샷 상태 조회 (관리자용)
 - 인증:
   - `token` 쿼리 또는 `x-admin-token` 헤더
-  - env `ADMIN_TOKEN`과 일치해야 조회 가능
+  - 브라우저 로그인 세션 또는 env `ADMIN_TOKEN`과 일치하는 토큰이 필요
 - 응답:
   - `storage`: `{backend,enabled,snapshotSource}` (`cache|kv|d1|none`)
   - `inProgress`: 현재 재빌드 진행 여부

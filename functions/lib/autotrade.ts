@@ -705,6 +705,7 @@ export const runAutoTrade = async (
     universe: normalizeUniverseSize(optionsInput?.universe),
     capitalMode: normalizeAutotradeCapitalMode(optionsInput?.capitalMode),
     fixedCapitalWon: normalizeFixedCapitalWon(optionsInput?.fixedCapitalWon),
+    adminAuthorized: optionsInput?.adminAuthorized === true,
     adminToken: optionsInput?.adminToken ?? null,
   };
 
@@ -712,7 +713,9 @@ export const runAutoTrade = async (
   const warnings: string[] = [];
 
   const adminTokenExpected = (env.ADMIN_TOKEN ?? "").trim();
-  if (options.execute && adminTokenExpected) {
+  if (options.execute && options.adminAuthorized) {
+    // site auth session already validated at request layer
+  } else if (options.execute && adminTokenExpected) {
     const provided = (options.adminToken ?? "").trim();
     if (!provided || provided !== adminTokenExpected) {
       throw new Error("주문 실행에는 유효한 admin token이 필요합니다.");

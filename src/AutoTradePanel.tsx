@@ -295,7 +295,7 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
             관리자 토큰
             <input
               type="password"
-              placeholder="주문 실행 시 필요"
+              placeholder="브라우저 로그인 상태면 선택 입력"
               value={adminToken}
               onChange={(e) => setAdminToken(e.target.value)}
             />

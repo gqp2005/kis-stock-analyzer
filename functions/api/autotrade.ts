@@ -2,6 +2,7 @@ import { runAutoTrade } from "../lib/autotrade";
 import { normalizeAutotradeCapitalMode, normalizeFixedCapitalWon } from "../lib/autotradeCapital";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
+import { hasAdminOrSessionAccess } from "../lib/siteAuth";
 import type { AutotradeCapitalMode, AutotradeMarketFilter, Env } from "../lib/types";
 
 const parseMarket = (raw: unknown): AutotradeMarketFilter => {
@@ -95,6 +96,9 @@ const handleRun = async (
 
   try {
     const cache = await caches.open("kis-analyzer-cache-v3");
+    const adminAuthorized = options.execute
+      ? await hasAdminOrSessionAccess(context.request, context.env, options.adminToken ?? null)
+      : false;
     const result = await runAutoTrade(
       context.env,
       cache,
@@ -105,6 +109,7 @@ const handleRun = async (
         universe: options.universe,
         capitalMode: options.capitalMode,
         fixedCapitalWon: options.fixedCapitalWon,
+        adminAuthorized,
         adminToken: options.adminToken ?? null,
       },
       metrics,

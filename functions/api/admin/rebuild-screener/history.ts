@@ -5,6 +5,7 @@ import {
   persistenceBackend,
 } from "../../../lib/screenerPersistence";
 import { errorJson, json, serverError } from "../../../lib/response";
+import { hasAdminOrSessionAccess } from "../../../lib/siteAuth";
 import {
   type AlertStateSnapshot,
   persistAlertStateKey,
@@ -29,8 +30,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const finalize = (response: Response): Response => attachMetrics(response, metrics);
 
   const url = new URL(context.request.url);
-  const token = context.request.headers.get("x-admin-token") ?? url.searchParams.get("token");
-  if (!context.env.ADMIN_TOKEN || token !== context.env.ADMIN_TOKEN) {
+  if (!(await hasAdminOrSessionAccess(context.request, context.env))) {
     return finalize(buildUnauthorized(context.request));
   }
 

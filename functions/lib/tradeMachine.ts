@@ -65,6 +65,7 @@ export interface TradeOrderRunOptions extends TradeCandidateQueryOptions {
   useHashKey: boolean;
   retryOnce: boolean;
   clientOrderId: string | null;
+  adminAuthorized?: boolean;
   adminToken: string | null;
 }
 
@@ -495,7 +496,9 @@ export const runTradeOrder = async (
 
   pushState("IDLE", "주문 상태 머신 시작");
 
-  if (env.ADMIN_TOKEN?.trim()) {
+  if (options.adminAuthorized === true) {
+    // browser session already validated at request layer
+  } else if (env.ADMIN_TOKEN?.trim()) {
     const provided = options.adminToken?.trim() ?? "";
     if (!provided || provided !== env.ADMIN_TOKEN.trim()) {
       pushState("ORDER_REJECTED", "관리자 토큰 검증 실패");

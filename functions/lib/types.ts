@@ -1201,6 +1201,7 @@ export interface AutotradeRunOptions {
   universe: number;
   capitalMode: AutotradeCapitalMode;
   fixedCapitalWon: number;
+  adminAuthorized?: boolean;
   adminToken: string | null;
 }
 
