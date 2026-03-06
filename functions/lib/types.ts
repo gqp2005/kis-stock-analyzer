@@ -996,6 +996,87 @@ export interface ScreenerPayload {
   warnings: string[];
 }
 
+export interface DashboardFavoriteAlert {
+  code: string;
+  name: string;
+  market: string;
+  lastDate: string;
+  lastClose: number;
+  severity: "positive" | "neutral" | "warning";
+  title: string;
+  summary: string;
+  reasons: string[];
+}
+
+export interface StrategyRankingItem {
+  key: string;
+  label: string;
+  candidateCount: number;
+  avgScore: number | null;
+  avgConfidence: number | null;
+  avgWinRate: number | null;
+  avgPf: number | null;
+  avgMdd: number | null;
+  qualityScore: number | null;
+  topSymbols: string[];
+}
+
+export interface StrategyTimelineEvent {
+  date: string;
+  code: string;
+  name: string;
+  market: string;
+  strategyKey: string;
+  strategyLabel: string;
+  stateLabel: string;
+  score: number;
+  confidence: number | null;
+  summary: string;
+}
+
+export interface MarketTemperatureSummary {
+  totalCandidates: number;
+  avgScore: number | null;
+  avgConfidence: number | null;
+  strongCount: number;
+  neutralCount: number;
+  cautionCount: number;
+  rsStrongCount: number;
+  rsWeakCount: number;
+  cupHandleCount: number;
+  washoutCount: number;
+  vcpCount: number;
+  darvasCount: number;
+  nr7Count: number;
+  trendTemplateCount: number;
+  rsiDivergenceCount: number;
+  flowPersistenceCount: number;
+  heatScore: number;
+  heatLabel: "강세" | "중립" | "혼조" | "위축";
+  summary: string;
+}
+
+export interface DashboardOverviewPayload {
+  meta: {
+    asOf: string;
+    lastUpdatedAt: string | null;
+    snapshotDate: string | null;
+    universeLabel: string;
+    source: "KIS";
+    candidateCount: number;
+  };
+  marketTemperature: MarketTemperatureSummary;
+  strategyRanking: StrategyRankingItem[];
+  timeline: StrategyTimelineEvent[];
+  favorites: {
+    trackedCount: number;
+    activeCount: number;
+    missingCodes: string[];
+    alerts: DashboardFavoriteAlert[];
+  };
+  warnings: string[];
+}
+
 export type ScreenerWashoutStateFilter =
   | "ALL"
   | "ANCHOR_DETECTED"

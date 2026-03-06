@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AccountResponse } from "./types";
+import FavoriteButton from "./FavoriteButton";
+import { useFavorites } from "./favorites";
+import type { AccountDiagnosticsResponse, AccountResponse } from "./types";
 
 interface AccountPanelProps {
   apiBase: string;
@@ -49,23 +51,41 @@ export default function AccountPanel(props: AccountPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [account, setAccount] = useState<AccountResponse | null>(null);
+  const [diagnostics, setDiagnostics] = useState<AccountDiagnosticsResponse | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState("");
+  const { isFavorite, toggleFavorite } = useFavorites();
 
   const loadAccount = async () => {
     setLoading(true);
     setError("");
+    setDiagnosticError("");
+    setDiagnostics(null);
     try {
-      const response = await fetch(`${apiBase}/api/account`);
-      const body = await readJsonBody<AccountResponse | { error?: string; message?: string }>(
-        response,
+      const [accountResponse, diagnosticResponse] = await Promise.all([
+        fetch(`${apiBase}/api/account`),
+        fetch(`${apiBase}/api/account-diagnostics`),
+      ]);
+      const accountBody = await readJsonBody<AccountResponse | { error?: string; message?: string }>(
+        accountResponse,
         "/api/account",
       );
-      if (!response.ok) {
-        throw new Error(pickApiError(body, `계좌 조회 실패 (HTTP ${response.status})`));
+      if (!accountResponse.ok) {
+        throw new Error(pickApiError(accountBody, `계좌 조회 실패 (HTTP ${accountResponse.status})`));
       }
-      setAccount(body as AccountResponse);
+      setAccount(accountBody as AccountResponse);
+      const diagnosticBody = await readJsonBody<AccountDiagnosticsResponse | { error?: string; message?: string }>(
+        diagnosticResponse,
+        "/api/account-diagnostics",
+      );
+      if (!diagnosticResponse.ok) {
+        setDiagnosticError(pickApiError(diagnosticBody, `계좌 진단 실패 (HTTP ${diagnosticResponse.status})`));
+      } else {
+        setDiagnostics(diagnosticBody as AccountDiagnosticsResponse);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "계좌 조회 실패");
       setAccount(null);
+      setDiagnostics(null);
     } finally {
       setLoading(false);
     }
@@ -142,6 +162,75 @@ export default function AccountPanel(props: AccountPanelProps) {
       </div>
 
       <div className="card">
+        <h3>보유종목 진단</h3>
+        {diagnosticError && <p className="error">{diagnosticError}</p>}
+        {!loading && diagnostics && (
+          <>
+            <div className="account-summary-grid">
+              <div className="plan-item">
+                <span>보유 종목</span>
+                <strong>{diagnostics.summary.holdingCount}개</strong>
+              </div>
+              <div className="plan-item">
+                <span>보유 유지</span>
+                <strong>{diagnostics.summary.keepCount}개</strong>
+              </div>
+              <div className="plan-item">
+                <span>손절 점검</span>
+                <strong>{diagnostics.summary.riskCount}개</strong>
+              </div>
+              <div className="plan-item">
+                <span>스냅샷 미포함</span>
+                <strong>{diagnostics.summary.uncoveredCount}개</strong>
+              </div>
+            </div>
+            {diagnostics.warnings.length > 0 && (
+              <div className="warning-box">
+                {diagnostics.warnings.map((warning) => (
+                  <span key={warning}>{warning}</span>
+                ))}
+              </div>
+            )}
+            <div className="strategy-mini-grid" style={{ marginTop: "12px" }}>
+              {diagnostics.items.map((item) => (
+                <article key={`diag-${item.code}`} className="strategy-mini-item">
+                  <div className="strategy-mini-head">
+                    <div>
+                      <strong>
+                        {item.name} ({item.code})
+                      </strong>
+                      <p className="meta">
+                        현재가 {formatPrice(item.currentPrice)} · 수익률 {formatPercent(item.profitRate)} · 비중 {formatPercent(item.weightPercent)}
+                      </p>
+                    </div>
+                    <div className="final-badges">
+                      <FavoriteButton
+                        small
+                        active={isFavorite(item.code)}
+                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                      />
+                      <small className={`reason-tag ${item.tone === "positive" ? "positive" : item.tone === "negative" ? "negative" : "neutral"}`}>
+                        {item.action}
+                      </small>
+                    </div>
+                  </div>
+                  <p>{item.riskNote}</p>
+                  <p>지지 {formatPrice(item.support)} · 저항 {formatPrice(item.resistance)} · 신뢰도 {item.confidence ?? "-"}</p>
+                  <p>전략: {item.strategies.length > 0 ? item.strategies.join(", ") : "현재 강한 전략 감지 없음"}</p>
+                  <ul>
+                    {item.reasons.map((reason) => (
+                      <li key={`${item.code}-${reason}`}>{reason}</li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+        {!loading && !diagnostics && !diagnosticError && <p className="meta">진단 데이터가 없습니다.</p>}
+      </div>
+
+      <div className="card">
         <h3>보유 종목</h3>
         {loading && <p className="meta">계좌 정보를 불러오는 중입니다.</p>}
         {!loading && !account && !error && <p className="meta">계좌 데이터가 없습니다.</p>}
@@ -168,7 +257,14 @@ export default function AccountPanel(props: AccountPanelProps) {
                 {account.holdings.map((item) => (
                   <tr key={`holding-${item.code}`}>
                     <td>
-                      {item.name} ({item.code})
+                      <span className="holding-name-cell">
+                        {item.name} ({item.code})
+                        <FavoriteButton
+                          small
+                          active={isFavorite(item.code)}
+                          onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                        />
+                      </span>
                     </td>
                     <td>{formatQty(item.quantity)}</td>
                     <td>{formatQty(item.orderableQuantity)}</td>
@@ -188,4 +284,3 @@ export default function AccountPanel(props: AccountPanelProps) {
     </section>
   );
 }
-

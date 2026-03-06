@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import FavoriteButton from "./FavoriteButton";
+import { useFavorites } from "./favorites";
 import type {
   PatternState,
   ScreenerItem,
@@ -151,6 +153,7 @@ export default function StrategyPanel(props: StrategyPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [response, setResponse] = useState<ScreenerResponse | null>(null);
+  const { isFavorite, toggleFavorite } = useFavorites();
 
   const fetchStrategyCards = async () => {
     setLoading(true);
@@ -293,6 +296,11 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                       </p>
                     </div>
                     <div className="final-badges">
+                      <FavoriteButton
+                        small
+                        active={isFavorite(item.code)}
+                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                      />
                       <span className={washoutStateClass(item.hits.washoutPullback.state)}>
                         {washoutStateLabel(item.hits.washoutPullback.state)}
                       </span>
@@ -363,6 +371,11 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                       </p>
                     </div>
                     <div className="final-badges">
+                      <FavoriteButton
+                        small
+                        active={isFavorite(item.code)}
+                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                      />
                       <span className={cupHandleStateClass(item.hits.cupHandle.state)}>
                         {cupHandleStateLabel(item.hits.cupHandle.state)}
                       </span>
@@ -419,6 +432,11 @@ export default function StrategyPanel(props: StrategyPanelProps) {
                       </p>
                     </div>
                     <div className="final-badges">
+                      <FavoriteButton
+                        small
+                        active={isFavorite(item.code)}
+                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                      />
                       <span className="confidence neutral">점수 {item.scoreTotal}</span>
                       <span className="confidence good">신뢰도 {item.confidence}</span>
                     </div>

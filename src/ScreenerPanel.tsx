@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
+  DashboardOverviewResponse,
   Overall,
   PatternState,
   StrategySignalState,
@@ -15,11 +16,19 @@ import type {
   ScreenerStrategyFilter,
   VolumePatternType,
 } from "./types";
+import FavoriteButton from "./FavoriteButton";
+import {
+  readFavoriteNotificationState,
+  useFavorites,
+  writeFavoriteNotificationState,
+} from "./favorites";
 
 interface ScreenerPanelProps {
   apiBase: string;
   onSelectSymbol: (code: string) => void;
 }
+
+const FAVORITE_NOTIFY_KEY = "kis-favorite-notify-enabled";
 
 type SortKey = "SCORE" | "CONFIDENCE" | "BACKTEST";
 type ScreenerVerdict = "매수 검토" | "관망" | "비중 축소";
@@ -107,6 +116,9 @@ const formatDistancePercent = (value: number | null): string =>
 
 const formatRatioPercent = (value: number | null): string =>
   value == null ? "-" : `${(value * 100).toFixed(2)}%`;
+
+const formatNullable = (value: number | null): string =>
+  value == null ? "-" : `${value.toFixed(1)}`;
 
 const dryUpStrengthLabel = (value: "NONE" | "WEAK" | "STRONG"): string => {
   if (value === "STRONG") return "강함";
@@ -498,7 +510,32 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [response, setResponse] = useState<ScreenerResponse | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardOverviewResponse | null>(null);
+  const [dashboardError, setDashboardError] = useState("");
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [favoriteNotificationsEnabled, setFavoriteNotificationsEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(FAVORITE_NOTIFY_KEY) === "true";
+  });
+  const { favorites, favoriteCodes, isFavorite, toggleFavorite } = useFavorites();
+
+  const fetchDashboard = async (codes: string[] = favoriteCodes) => {
+    try {
+      setDashboardError("");
+      const query = new URLSearchParams();
+      if (codes.length > 0) {
+        query.set("favorites", codes.join(","));
+      }
+      const url = `${apiBase}/api/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
+      const result = await fetch(url);
+      const data = (await result.json()) as DashboardOverviewResponse | { error?: string };
+      if (!result.ok) throw new Error("error" in data && data.error ? data.error : "대시보드 조회 실패");
+      setDashboard(data as DashboardOverviewResponse);
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : "대시보드 조회 실패");
+      setDashboard(null);
+    }
+  };
 
   const fetchScreener = async (override?: Partial<ScreenerQueryState>) => {
     const nextMarket = override?.market ?? market;
@@ -531,6 +568,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       setResponse(data as ScreenerResponse);
       setExpandedCards({});
       setLastLoadedAt(new Date().toISOString());
+      void fetchDashboard();
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
       setResponse(null);
@@ -543,6 +581,38 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     void fetchScreener();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    void fetchDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favoriteCodes.join(",")]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(FAVORITE_NOTIFY_KEY, favoriteNotificationsEnabled ? "true" : "false");
+  }, [favoriteNotificationsEnabled]);
+
+  useEffect(() => {
+    if (!dashboard || !favoriteNotificationsEnabled) return;
+    if (typeof window === "undefined" || typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    const snapshotKey = dashboard.meta.lastUpdatedAt ?? dashboard.meta.asOf;
+    const seen = readFavoriteNotificationState();
+    const nextSeen = { ...seen };
+    let changed = false;
+    for (const alert of dashboard.favorites.alerts.slice(0, 3)) {
+      const dedupeKey = `${snapshotKey}:${alert.code}:${alert.title}`;
+      if (seen[dedupeKey]) continue;
+      new Notification(`${alert.name}(${alert.code}) · ${alert.title}`, {
+        body: alert.summary,
+      });
+      nextSeen[dedupeKey] = snapshotKey;
+      changed = true;
+    }
+    if (changed) {
+      writeFavoriteNotificationState(nextSeen);
+    }
+  }, [dashboard, favoriteNotificationsEnabled]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -635,6 +705,25 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
         ),
       )
     : null;
+  const timelineGroups = useMemo(() => {
+    const groups = new Map<string, DashboardOverviewResponse["timeline"]>();
+    for (const item of dashboard?.timeline ?? []) {
+      const bucket = groups.get(item.date) ?? [];
+      bucket.push(item);
+      groups.set(item.date, bucket);
+    }
+    return [...groups.entries()].slice(0, 6);
+  }, [dashboard?.timeline]);
+
+  const favoriteAlertCount = dashboard?.favorites.alerts.length ?? 0;
+
+  const requestFavoriteNotificationPermission = async () => {
+    if (typeof Notification === "undefined") return;
+    const result = await Notification.requestPermission();
+    if (result === "granted") {
+      setFavoriteNotificationsEnabled(true);
+    }
+  };
 
   return (
     <section className="screener">
@@ -758,6 +847,131 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
           </small>
         )}
       </div>
+
+      {(dashboard || dashboardError || favorites.length > 0) && (
+        <div className="strategy-mini-grid screener-dashboard-grid">
+          <article className="strategy-mini-item">
+            <div className="strategy-mini-head">
+              <strong>관심종목 알림</strong>
+              <small className="signal-tag neutral">{favoriteAlertCount}건</small>
+            </div>
+            <p className="plan-note">등록 {favorites.length}개 · 활성 {dashboard?.favorites.activeCount ?? 0}개</p>
+            <div className="screener-hit-row">
+              <small className="reason-tag neutral">
+                브라우저 알림 {favoriteNotificationsEnabled ? "ON" : "OFF"}
+              </small>
+              <button
+                type="button"
+                className="collapse-toggle"
+                onClick={() => {
+                  if (favoriteNotificationsEnabled) {
+                    setFavoriteNotificationsEnabled(false);
+                    return;
+                  }
+                  void requestFavoriteNotificationPermission();
+                }}
+              >
+                {favoriteNotificationsEnabled ? "알림 끄기" : "알림 켜기"}
+              </button>
+            </div>
+            {dashboard?.favorites.alerts.length ? (
+              <ul className="insight-list">
+                {dashboard.favorites.alerts.slice(0, 4).map((item) => (
+                  <li key={`favorite-alert-${item.code}`}>
+                    <span>
+                      {item.name}({item.code}) · {item.title}
+                    </span>
+                    <small className={`reason-tag ${item.severity === "warning" ? "negative" : item.severity === "positive" ? "positive" : "neutral"}`}>
+                      {item.summary}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            ) : favorites.length > 0 ? (
+              <p className="plan-note">오늘 스냅샷 기준으로 활성 후보 알림이 없습니다.</p>
+            ) : (
+              <p className="plan-note">별표 버튼으로 종목을 관심종목에 추가하면 여기서 알림을 모아봅니다.</p>
+            )}
+            {dashboard?.favorites.missingCodes.length ? (
+              <p className="plan-note">오늘 후보 아님: {dashboard.favorites.missingCodes.join(", ")}</p>
+            ) : null}
+            {dashboardError && <p className="plan-note">{dashboardError}</p>}
+          </article>
+
+          {dashboard && (
+            <>
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>시장 전체 온도계</strong>
+                  <small className="signal-tag neutral">
+                    {dashboard.marketTemperature.heatLabel} · {dashboard.marketTemperature.heatScore}점
+                  </small>
+                </div>
+                <p>
+                  평균 점수 {formatNullable(dashboard.marketTemperature.avgScore)} · 평균 신뢰도{" "}
+                  {formatNullable(dashboard.marketTemperature.avgConfidence)}
+                </p>
+                <p>
+                  강세 {dashboard.marketTemperature.strongCount} · 혼조 {dashboard.marketTemperature.neutralCount} ·
+                  주의 {dashboard.marketTemperature.cautionCount}
+                </p>
+                <p>
+                  RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들 {dashboard.marketTemperature.cupHandleCount} ·
+                  설거지 {dashboard.marketTemperature.washoutCount}
+                </p>
+                <p>{dashboard.marketTemperature.summary}</p>
+              </article>
+
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>전략별 성과 랭킹</strong>
+                  <small className="signal-tag neutral">상위 5개</small>
+                </div>
+                <ul className="insight-list">
+                  {dashboard.strategyRanking.slice(0, 5).map((item) => (
+                    <li key={`rank-${item.key}`}>
+                      <span>
+                        {item.label} · 후보 {item.candidateCount}개 · 품질 {item.qualityScore ?? "-"}
+                      </span>
+                      <small className="signal-tag neutral">
+                        승률 {formatNullable(item.avgWinRate)} / PF {formatNullable(item.avgPf)}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>전략 후보 타임라인</strong>
+                  <small className="signal-tag neutral">{dashboard.timeline.length}건</small>
+                </div>
+                {timelineGroups.length > 0 ? (
+                  <div className="timeline-groups">
+                    {timelineGroups.map(([date, items]) => (
+                      <div key={`timeline-${date}`} className="timeline-group">
+                        <strong>{date}</strong>
+                        <ul className="insight-list">
+                          {items.slice(0, 3).map((item) => (
+                            <li key={`${date}-${item.code}-${item.strategyKey}`}>
+                              <span>
+                                {item.name}({item.code}) · {item.strategyLabel}
+                              </span>
+                              <small className="signal-tag neutral">{item.stateLabel}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="plan-note">타임라인 이벤트가 아직 없습니다.</p>
+                )}
+              </article>
+            </>
+          )}
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
       {loading && !response && (
@@ -965,6 +1179,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       </p>
                     </div>
                     <div className="final-badges">
+                      <FavoriteButton
+                        small
+                        active={isFavorite(item.code)}
+                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                      />
                       {strategy === "WASHOUT_PULLBACK" ? (
                         <>
                           <span className={washoutStateBadgeClass(item.hits.washoutPullback.state)}>

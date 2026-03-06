@@ -30,8 +30,10 @@ import type {
 import AdminOpsPanel from "./AdminOpsPanel";
 import AccountPanel from "./AccountPanel";
 import AutoTradePanel from "./AutoTradePanel";
+import FavoriteButton from "./FavoriteButton";
 import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
+import { useFavorites } from "./favorites";
 
 interface StockLookup {
   code: string;
@@ -277,6 +279,15 @@ type LevelGuideItem = {
   meaning: string;
 };
 
+type PriceClusterItem = {
+  id: string;
+  label: string;
+  price: number;
+  meaning?: string;
+  color?: string;
+  group?: string;
+};
+
 const levelMeaningText = (label: string): string => {
   if (label.includes("52주 고점")) {
     return "최근 52주 최고가 기준선입니다. 돌파 시 신고가 추세 강화, 미돌파 시 장기 저항으로 해석합니다.";
@@ -347,6 +358,61 @@ const pickNearestPriceItems = <T extends { price: number; label: string }>(
     .sort((a, b) => Math.abs(a.price - referencePrice) - Math.abs(b.price - referencePrice))
     .slice(0, limit)
     .sort((a, b) => b.price - a.price);
+};
+
+const clusterPriceItems = <T extends PriceClusterItem>(
+  items: T[],
+  toleranceRatio: number,
+): T[] => {
+  if (items.length <= 1 || toleranceRatio <= 0) return items;
+  const sorted = [...items].sort((a, b) => b.price - a.price);
+  const result: T[] = [];
+  let bucket: T[] = [];
+
+  const flush = () => {
+    if (bucket.length === 0) return;
+    if (bucket.length === 1) {
+      result.push(bucket[0]);
+      bucket = [];
+      return;
+    }
+    const avgPrice = bucket.reduce((sum, item) => sum + item.price, 0) / bucket.length;
+    const first = bucket[0];
+    const mergedMeaning = bucket
+      .map((item) => item.meaning)
+      .filter((item): item is string => Boolean(item))
+      .slice(0, 2)
+      .join(" · ");
+    result.push({
+      ...first,
+      price: avgPrice,
+      label: `${first.label} 외 ${bucket.length - 1}`,
+      meaning:
+        mergedMeaning ||
+        bucket
+          .map((item) => item.label)
+          .slice(0, 2)
+          .join(" · "),
+    });
+    bucket = [];
+  };
+
+  for (const item of sorted) {
+    if (bucket.length === 0) {
+      bucket.push(item);
+      continue;
+    }
+    const anchor = bucket[0].price;
+    const diffRatio = Math.abs(item.price - anchor) / Math.max(Math.abs(anchor), 1);
+    if (diffRatio <= toleranceRatio) {
+      bucket.push(item);
+    } else {
+      flush();
+      bucket.push(item);
+    }
+  }
+  flush();
+  return result;
 };
 
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
@@ -512,6 +578,7 @@ export default function App() {
   const [priceChartHeight, setPriceChartHeight] = useState(DEFAULT_PRICE_CHART_HEIGHT);
   const [mobileChartFullWidth, setMobileChartFullWidth] = useState(false);
   const [drawingPresetMode, setDrawingPresetMode] = useState<"basic" | "detail" | "custom">("basic");
+  const [labelDensityMode, setLabelDensityMode] = useState<"AUTO" | "COMPACT" | "FULL">("AUTO");
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
@@ -519,6 +586,7 @@ export default function App() {
   const queryInputRef = useRef<HTMLInputElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE ?? "", []);
+  const { isFavorite, toggleFavorite } = useFavorites();
 
   const fetchAnalysis = async (value: string, lookback: number) => {
     setLoading(true);
@@ -754,6 +822,8 @@ export default function App() {
     };
   }, [activeAnalysis, activeTf]);
   const shouldCondenseOverlays = drawingPresetMode === "basic" && rawOverlayDensity.total >= 18;
+  const compactLabelMode =
+    labelDensityMode === "COMPACT" || (labelDensityMode === "AUTO" && shouldCondenseOverlays);
   const effectiveShowTrendlines = showTrendlines && !shouldCondenseOverlays;
   const effectiveShowChannels = showChannels && !shouldCondenseOverlays;
   const effectiveShowFanLines = showFanLines && !shouldCondenseOverlays;
@@ -890,15 +960,29 @@ export default function App() {
     }
 
     const latestChartClose = active.candles.length > 0 ? active.candles[active.candles.length - 1].close : null;
-    const levelLines = pickNearestPriceItems(
+    const baseLevelLines = pickNearestPriceItems(
       (active.overlays?.priceLines ?? []).filter((line) => line.group === "level"),
-      shouldCondenseOverlays ? latestChartClose : null,
-      8,
+      compactLabelMode ? latestChartClose : null,
+      compactLabelMode ? 8 : 12,
     );
-    const zoneLines = pickNearestPriceItems(
+    const levelLines = clusterPriceItems(
+      baseLevelLines.map((line) => ({
+        ...line,
+        meaning: levelMeaningText(line.label),
+      })),
+      compactLabelMode ? 0.006 : 0,
+    );
+    const baseZoneLines = pickNearestPriceItems(
       (active.overlays?.priceLines ?? []).filter((line) => line.group === "zone"),
-      shouldCondenseOverlays ? latestChartClose : null,
-      4,
+      compactLabelMode ? latestChartClose : null,
+      compactLabelMode ? 4 : 8,
+    );
+    const zoneLines = clusterPriceItems(
+      baseZoneLines.map((line) => ({
+        ...line,
+        meaning: levelMeaningText(line.label),
+      })),
+      compactLabelMode ? 0.006 : 0,
     );
     if (showLevels) {
       for (const line of levelLines) {
@@ -1208,6 +1292,7 @@ export default function App() {
     showPatternReferenceLevel,
     highlightSelectedCandle,
     shouldCondenseOverlays,
+    compactLabelMode,
     showWashoutEntries,
     priceChartHeight,
     selectedPattern,
@@ -1283,13 +1368,18 @@ export default function App() {
     }
 
     const sortedRows = rows.sort((a, b) => b.price - a.price);
-    return shouldCondenseOverlays ? pickNearestPriceItems(sortedRows, latestClose, 10) : sortedRows;
+    const clusteredRows = clusterPriceItems(sortedRows, compactLabelMode ? 0.006 : 0);
+    return pickNearestPriceItems(
+      clusteredRows,
+      compactLabelMode ? latestClose : null,
+      compactLabelMode ? 10 : 18,
+    );
   }, [
     activeAnalysis,
     activeTf,
+    compactLabelMode,
     effectiveShowZones,
     latestClose,
-    shouldCondenseOverlays,
     showLevels,
     showMa1,
     showMa2,
@@ -2214,6 +2304,10 @@ export default function App() {
                   </strong>
                   <p>{result.final.summary}</p>
                 </div>
+                <FavoriteButton
+                  active={isFavorite(result.meta.symbol)}
+                  onClick={() => toggleFavorite({ code: result.meta.symbol, name: result.meta.name })}
+                />
                 <div className="sticky-summary-price">
                   <span>{formatPrice(headerQuote?.close ?? null)}</span>
                   {headerQuote?.change != null && headerQuote?.changePct != null && (
@@ -3357,6 +3451,32 @@ export default function App() {
                           {mobileChartFullWidth ? "전체폭 해제" : "전체폭 켜기"}
                         </button>
                       </div>
+                      <div className="chart-width-controls">
+                        <span>우측 라벨 정리</span>
+                        <div className="chart-height-buttons">
+                          <button
+                            type="button"
+                            className={labelDensityMode === "AUTO" ? "preset-btn active" : "preset-btn"}
+                            onClick={() => setLabelDensityMode("AUTO")}
+                          >
+                            자동
+                          </button>
+                          <button
+                            type="button"
+                            className={labelDensityMode === "COMPACT" ? "preset-btn active" : "preset-btn"}
+                            onClick={() => setLabelDensityMode("COMPACT")}
+                          >
+                            정리
+                          </button>
+                          <button
+                            type="button"
+                            className={labelDensityMode === "FULL" ? "preset-btn active" : "preset-btn"}
+                            onClick={() => setLabelDensityMode("FULL")}
+                          >
+                            전체
+                          </button>
+                        </div>
+                      </div>
                       <>
                         <label>
                           <input
@@ -3519,6 +3639,11 @@ export default function App() {
                       기본형 프리셋에서 차트 과밀을 줄이기 위해 추세선·채널·팬 라인·존·고급 마커를 자동 숨겼습니다.
                     </p>
                   )}
+                  {compactLabelMode && (
+                    <p className="chart-density-note">
+                      우측 가격 라벨은 비슷한 가격대를 묶어 핵심 레벨 위주로 정리해 표시합니다.
+                    </p>
+                  )}
                   <div ref={priceChartRef} className="chart" style={{ height: `${priceChartHeight}px` }} />
                   {activeTf === "day" && showMarkers && selectedPattern && (
                     <div className="marker-detail-panel">
@@ -3655,6 +3780,23 @@ export default function App() {
           <AdminOpsPanel apiBase={apiBase} />
         )}
       </main>
+      <nav className="mobile-bottom-nav" aria-label="모바일 빠른 메뉴">
+        <button type="button" className={pageMode === "analysis" ? "active" : ""} onClick={() => setPageMode("analysis")}>
+          분석
+        </button>
+        <button type="button" className={pageMode === "screener" ? "active" : ""} onClick={() => setPageMode("screener")}>
+          추천
+        </button>
+        <button type="button" className={pageMode === "strategy" ? "active" : ""} onClick={() => setPageMode("strategy")}>
+          전략
+        </button>
+        <button type="button" className={pageMode === "autotrade" ? "active" : ""} onClick={() => setPageMode("autotrade")}>
+          자동
+        </button>
+        <button type="button" className={pageMode === "account" ? "active" : ""} onClick={() => setPageMode("account")}>
+          계좌
+        </button>
+      </nav>
     </div>
   );
 }
