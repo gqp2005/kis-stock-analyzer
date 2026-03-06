@@ -607,6 +607,18 @@ h2 {
   font-size: 12px;
 }
 
+.chart-width-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 6px;
+}
+
+.chart-width-controls > span {
+  color: #9fb5cc;
+  font-size: 12px;
+}
+
 .chart-height-buttons {
   display: inline-flex;
   align-items: center;
@@ -649,6 +661,10 @@ h2 {
   line-height: 1.45;
 }
 
+.chart-card {
+  position: relative;
+}
+
 .preset-btn:hover {
   background: rgba(87, 163, 255, 0.28);
 }
@@ -657,6 +673,21 @@ h2 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.screener-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.screener-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #b9cde3;
+  font-size: 12px;
 }
 
 .indicator-controls input[type="checkbox"] {
@@ -677,6 +708,15 @@ h2 {
 .card li {
   color: #c6d8eb;
   margin-bottom: 6px;
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.warning-list li {
+  margin-bottom: 4px;
 }
 
 .reason-item {
@@ -1980,7 +2020,15 @@ h2 {
 
 @media (max-width: 860px) {
   .mode-tabs {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .mode-tabs .tab {
+    flex: 0 0 auto;
+    min-width: max-content;
   }
 
   .search {
@@ -2047,8 +2095,23 @@ h2 {
     align-items: flex-start;
   }
 
+  .sticky-summary-bar {
+    position: static;
+    padding: 10px;
+  }
+
   .sticky-summary-price {
     justify-content: flex-start;
+  }
+
+  .summary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .summary-text,
+  .summary-meta-bottom {
+    width: 100%;
   }
 
   .summary-right {
@@ -2108,6 +2171,36 @@ h2 {
     flex-wrap: wrap;
   }
 
+  .chart-width-controls {
+    width: 100%;
+    margin-right: 0;
+    flex-wrap: wrap;
+  }
+
+  .chart-height-buttons {
+    flex-wrap: wrap;
+  }
+
+  .indicator-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .indicator-controls label {
+    min-height: 38px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(87, 163, 255, 0.18);
+    background: rgba(12, 24, 36, 0.48);
+  }
+
+  .drawing-presets,
+  .chart-height-controls,
+  .chart-width-controls {
+    grid-column: 1 / -1;
+  }
+
   .pattern-row {
     grid-template-columns: 1fr;
     gap: 2px;
@@ -2151,6 +2244,56 @@ h2 {
     align-items: flex-start;
   }
 
+  .warning-box {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .warning-box span {
+    width: 100%;
+  }
+
+  .tf-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .tf-tabs .tab {
+    flex: 0 0 auto;
+  }
+
+  .level-guide,
+  .marker-detail-panel,
+  .card {
+    padding: 12px;
+  }
+
+  .trade-confirm-actions button {
+    min-width: 140px;
+  }
+
+  .chart-card.mobile-full-width {
+    width: calc(100% + 32px);
+    margin-left: -16px;
+    margin-right: -16px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  .screener-filter-chips {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .screener-filter-chips small {
+    flex: 0 0 auto;
+  }
+
   .admin-controls {
     grid-template-columns: 1fr;
   }
@@ -2161,6 +2304,104 @@ h2 {
 }
 
 @media (max-width: 620px) {
+  .page {
+    padding: 14px 10px 28px;
+  }
+
+  .panel {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .hero {
+    margin-bottom: 14px;
+  }
+
+  h1 {
+    font-size: 26px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .meta.current-quote {
+    font-size: 17px;
+  }
+
+  .sticky-summary-price span {
+    font-size: 16px;
+  }
+
+  .tab {
+    height: 38px;
+    padding: 0 11px;
+    font-size: 12px;
+  }
+
+  .search,
+  .backtest-controls,
+  .screener-filters,
+  .screener-controls {
+    gap: 8px;
+  }
+
+  .search button,
+  .screener-controls button,
+  .trade-confirm-actions button {
+    width: 100%;
+  }
+
+  .indicator-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .indicator-controls label {
+    min-height: 40px;
+  }
+
+  .chart-height-buttons strong {
+    min-width: 56px;
+  }
+
+  .chart-card.mobile-full-width {
+    width: calc(100% + 28px);
+    margin-left: -14px;
+    margin-right: -14px;
+  }
+
+  .collapsible-head,
+  .trade-option-guide-head,
+  .marker-detail-head,
+  .level-guide-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .collapse-toggle,
+  .trade-option-toggle,
+  .marker-detail-close {
+    width: 100%;
+  }
+
+  .trade-confirm-actions {
+    flex-direction: column;
+  }
+
+  .auto-candidate-head,
+  .screener-card-head,
+  .strategy-head {
+    gap: 10px;
+  }
+
+  .screener-note,
+  .plan-note,
+  .summary-text,
+  .sticky-summary-main p {
+    font-size: 12px;
+  }
+
   .screener-filter-chips {
     gap: 4px;
   }

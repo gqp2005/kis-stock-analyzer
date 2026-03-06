@@ -504,6 +504,7 @@ export default function App() {
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
   const [showWashoutEntries, setShowWashoutEntries] = useState(false);
   const [priceChartHeight, setPriceChartHeight] = useState(DEFAULT_PRICE_CHART_HEIGHT);
+  const [mobileChartFullWidth, setMobileChartFullWidth] = useState(false);
   const [drawingPresetMode, setDrawingPresetMode] = useState<"basic" | "detail" | "custom">("basic");
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
@@ -3320,7 +3321,7 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="card">
+                <div className={mobileChartFullWidth ? "card chart-card mobile-full-width" : "card chart-card"}>
                   <h3>OHLCV 차트 ({TF_LABEL[activeTf]})</h3>
                   {maInfo && (
                     <div className="indicator-controls">
@@ -3366,6 +3367,16 @@ export default function App() {
                             기본
                           </button>
                         </div>
+                      </div>
+                      <div className="chart-width-controls">
+                        <span>모바일 폭</span>
+                        <button
+                          type="button"
+                          className={mobileChartFullWidth ? "preset-btn active" : "preset-btn"}
+                          onClick={() => setMobileChartFullWidth((prev) => !prev)}
+                        >
+                          {mobileChartFullWidth ? "전체폭 해제" : "전체폭 켜기"}
+                        </button>
                       </div>
                       <>
                         <label>
