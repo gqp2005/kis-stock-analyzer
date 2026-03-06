@@ -1,3 +1,4 @@
+import { normalizeAutotradeCapitalMode, normalizeFixedCapitalWon } from "../../lib/autotradeCapital";
 import { attachMetrics, createRequestMetrics } from "../../lib/observability";
 import { badRequest, errorJson, json, serverError } from "../../lib/response";
 import { runTradeOrder } from "../../lib/tradeMachine";
@@ -47,6 +48,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const market = parseMarket(payload.market);
     const universe = parseUniverse(payload.universe);
+    const capitalMode = normalizeAutotradeCapitalMode(payload.capitalMode);
+    const fixedCapitalWon = normalizeFixedCapitalWon(payload.fixedCapitalWon);
     const dryRun = parseBoolean(payload.dryRun, false);
     const autoExecute = parseBoolean(payload.autoExecute, false);
     const useHashKey = parseBoolean(payload.useHashKey, false);
@@ -67,6 +70,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         code,
         market,
         universe,
+        capitalMode,
+        fixedCapitalWon,
         dryRun,
         autoExecute,
         useHashKey,

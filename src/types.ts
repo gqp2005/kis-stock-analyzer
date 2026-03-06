@@ -635,6 +635,17 @@ export interface AccountDiagnosticsResponse {
 }
 
 export type AutotradeMarketFilter = "ALL" | "KOSPI" | "KOSDAQ";
+export type AutotradeCapitalMode = "FIXED" | "ACCOUNT_CASH";
+
+export interface AutotradeCapitalConfig {
+  mode: AutotradeCapitalMode;
+  configuredCapitalWon: number | null;
+  effectiveCapitalWon: number;
+  availableCashWon: number | null;
+  maxRiskPerTradeWon: number;
+  maxDailyLossWon: number;
+  maxPositionWon: number;
+}
 
 export interface AutotradeCandidate {
   code: string;
@@ -699,7 +710,10 @@ export interface AutotradeOpenPosition {
 
 export interface AutotradeRunSummary {
   strategyId: string;
+  capitalMode: AutotradeCapitalMode;
   capitalWon: number;
+  configuredCapitalWon: number | null;
+  availableCashWon: number | null;
   maxRiskPerTradeWon: number;
   maxDailyLossWon: number;
   maxPositionWon: number;
@@ -730,6 +744,7 @@ export interface AutotradeResponse {
     storage: {
       kvEnabled: boolean;
     };
+    capital: AutotradeCapitalConfig;
   };
   summary: AutotradeRunSummary;
   candidates: AutotradeCandidate[];
@@ -777,8 +792,16 @@ export interface TradeCandidatesResponse {
     source: "KIS";
     market: AutotradeMarketFilter;
     universeSize: number;
+    capital: AutotradeCapitalConfig;
   };
   summary: {
+    capitalMode: AutotradeCapitalMode;
+    capitalWon: number;
+    configuredCapitalWon: number | null;
+    availableCashWon: number | null;
+    maxRiskPerTradeWon: number;
+    maxDailyLossWon: number;
+    maxPositionWon: number;
     dailyLossWon: number;
     blockedByDailyLoss: boolean;
     openPositionCount: number;
@@ -820,6 +843,7 @@ export interface TradeOrderResponse {
     source: "KIS";
     market: AutotradeMarketFilter;
     universeSize: number;
+    capital: AutotradeCapitalConfig;
     dryRun: boolean;
     autoExecute: boolean;
     useHashKey: boolean;

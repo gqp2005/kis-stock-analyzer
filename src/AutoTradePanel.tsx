@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
+  AutotradeCapitalMode,
   AutotradeMarketFilter,
   TradeCandidateCard,
   TradeCandidatesResponse,
@@ -37,6 +38,9 @@ const ORDER_OPTION_GUIDE = [
   },
 ] as const;
 
+const CAPITAL_MODE_KEY = "kis-autotrade-capital-mode";
+const FIXED_CAPITAL_KEY = "kis-autotrade-fixed-capital";
+
 const compactText = (raw: string, max = 240): string => raw.replace(/\s+/g, " ").trim().slice(0, max);
 
 const readJsonBody = async <T,>(response: Response, endpoint: string): Promise<T> => {
@@ -68,6 +72,9 @@ const stateLabel = (state: string): string => {
   if (state === "ANCHOR_DETECTED") return "앵커 탐지";
   return "조건 부족";
 };
+
+const capitalModeLabel = (mode: AutotradeCapitalMode): string =>
+  mode === "ACCOUNT_CASH" ? "계좌 예수금 연동" : "고정 금액";
 
 const orderStateLabel = (state: string): string => {
   const labelMap: Record<string, string> = {
@@ -110,6 +117,8 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
   const [market, setMarket] = useState<AutotradeMarketFilter>("ALL");
   const [universe, setUniverse] = useState<number>(200);
   const [adminToken, setAdminToken] = useState("");
+  const [capitalMode, setCapitalMode] = useState<AutotradeCapitalMode>("FIXED");
+  const [fixedCapitalInput, setFixedCapitalInput] = useState("500000");
   const [autoExecute, setAutoExecute] = useState(false);
   const [useHashKey, setUseHashKey] = useState(false);
   const [retryOnce, setRetryOnce] = useState(false);
@@ -123,6 +132,35 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
   const [payload, setPayload] = useState<TradeCandidatesResponse | null>(null);
   const [orderResult, setOrderResult] = useState<TradeOrderResponse | null>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedMode = window.localStorage.getItem(CAPITAL_MODE_KEY);
+    const storedFixed = window.localStorage.getItem(FIXED_CAPITAL_KEY);
+    if (storedMode === "ACCOUNT_CASH" || storedMode === "FIXED") {
+      setCapitalMode(storedMode);
+    }
+    if (storedFixed && /^\d+$/.test(storedFixed)) {
+      setFixedCapitalInput(storedFixed);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CAPITAL_MODE_KEY, capitalMode);
+  }, [capitalMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const digits = fixedCapitalInput.replace(/\D+/g, "") || "500000";
+    window.localStorage.setItem(FIXED_CAPITAL_KEY, digits);
+  }, [fixedCapitalInput]);
+
+  const fixedCapitalWon = useMemo(() => {
+    const digits = fixedCapitalInput.replace(/\D+/g, "");
+    const parsed = Number(digits);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 500000;
+  }, [fixedCapitalInput]);
+
   const fetchCandidates = async () => {
     setLoadingCandidates(true);
     setError("");
@@ -130,6 +168,8 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
       const params = new URLSearchParams();
       params.set("market", market);
       params.set("universe", String(universe));
+      params.set("capitalMode", capitalMode);
+      params.set("fixedCapitalWon", String(fixedCapitalWon));
       const response = await fetch(`${apiBase}/api/trade/candidates?${params.toString()}`);
       const body = await readJsonBody<TradeCandidatesResponse | { error?: string; message?: string }>(
         response,
@@ -161,6 +201,8 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
           code: candidate.code,
           market,
           universe,
+          capitalMode,
+          fixedCapitalWon,
           autoExecute,
           useHashKey,
           retryOnce,
@@ -193,8 +235,8 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
   const candidateCount = payload?.candidates.length ?? 0;
   const blocked = payload?.summary.blockedByDailyLoss ?? false;
   const orderModeLabel = autoExecute ? "자동 주문 실행" : "반자동 주문 승인";
-
   const orderedCandidate = useMemo(() => payload?.candidates ?? [], [payload?.candidates]);
+  const capitalConfig = payload?.meta.capital ?? null;
 
   const openConfirmDrawer = (candidate: TradeCandidateCard) => {
     setPendingCandidate(candidate);
@@ -219,7 +261,9 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
         <div className="strategy-head">
           <div>
             <h3>오늘의 자동매매 후보 카드</h3>
-            <p className="meta">거래대금 눌림 반등 전략 · 50만원 계좌 리스크 규칙 적용</p>
+            <p className="meta">
+              거래대금 눌림 반등 전략 · {capitalMode === "ACCOUNT_CASH" ? "계좌 예수금 기준" : "고정 금액 기준"} 리스크 규칙 적용
+            </p>
           </div>
         </div>
 
@@ -241,6 +285,13 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
             </select>
           </label>
           <label>
+            자금 기준
+            <select value={capitalMode} onChange={(e) => setCapitalMode(e.target.value as AutotradeCapitalMode)}>
+              <option value="FIXED">고정 금액</option>
+              <option value="ACCOUNT_CASH">계좌 예수금 연동</option>
+            </select>
+          </label>
+          <label>
             관리자 토큰
             <input
               type="password"
@@ -249,6 +300,25 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
               onChange={(e) => setAdminToken(e.target.value)}
             />
           </label>
+        </div>
+
+        <div className="screener-filters" style={{ marginTop: "10px" }}>
+          <label>
+            고정 금액 설정
+            <input
+              type="text"
+              inputMode="numeric"
+              value={fixedCapitalInput}
+              disabled={capitalMode !== "FIXED"}
+              onChange={(e) => setFixedCapitalInput(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="예: 500000"
+            />
+          </label>
+          <div className="plan-item compact-plan-item">
+            <span>현재 선택</span>
+            <strong>{capitalModeLabel(capitalMode)}</strong>
+            <small>{capitalMode === "FIXED" ? formatPrice(fixedCapitalWon) : "실제 계좌 예수금을 주문 한도 기준으로 사용"}</small>
+          </div>
         </div>
 
         <div className="screener-filters" style={{ marginTop: "10px" }}>
@@ -305,7 +375,27 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
                 <strong>{candidateCount}개</strong>
               </div>
               <div className="plan-item">
+                <span>자금 기준</span>
+                <strong>{capitalModeLabel(payload.summary.capitalMode)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>적용 자금</span>
+                <strong>{formatPrice(payload.summary.capitalWon)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>1회 손실</span>
+                <strong>{formatPrice(payload.summary.maxRiskPerTradeWon)}</strong>
+              </div>
+              <div className="plan-item">
                 <span>일일 손실</span>
+                <strong>{formatPrice(payload.summary.maxDailyLossWon)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>종목당 최대투입</span>
+                <strong>{formatPrice(payload.summary.maxPositionWon)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>누적 손실</span>
                 <strong>{formatPrice(payload.summary.dailyLossWon)}</strong>
               </div>
               <div className="plan-item">
@@ -315,6 +405,10 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
               <div className="plan-item">
                 <span>상태</span>
                 <strong>{blocked ? "신규 진입 차단" : "진입 가능"}</strong>
+              </div>
+              <div className="plan-item">
+                <span>계좌 예수금</span>
+                <strong>{formatPrice(payload.summary.availableCashWon)}</strong>
               </div>
               <div className="plan-item">
                 <span>스냅샷 기준일</span>
@@ -438,6 +532,14 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
               <strong>{orderModeLabel}</strong>
             </div>
             <div className="plan-item">
+              <span>자금 기준</span>
+              <strong>{capitalConfig ? capitalModeLabel(capitalConfig.mode) : capitalModeLabel(capitalMode)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>적용 자금</span>
+              <strong>{formatPrice(capitalConfig?.effectiveCapitalWon ?? fixedCapitalWon)}</strong>
+            </div>
+            <div className="plan-item">
               <span>현재 상태</span>
               <strong>{stateLabel(pendingCandidate.state)}</strong>
             </div>
@@ -458,6 +560,10 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
               <strong>
                 {pendingCandidate.qty}주 / {formatPrice(pendingCandidate.maxLossWon)}
               </strong>
+            </div>
+            <div className="plan-item">
+              <span>종목당 최대투입</span>
+              <strong>{formatPrice(capitalConfig?.maxPositionWon ?? null)}</strong>
             </div>
             <div className="plan-item">
               <span>리스크%</span>
@@ -485,10 +591,7 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
             <div>
               <p className="meta">주의 사항</p>
               <ul className="warning-list">
-                {(pendingCandidate.warnings.length > 0
-                  ? pendingCandidate.warnings
-                  : ["특이 경고 없음"]
-                )
+                {(pendingCandidate.warnings.length > 0 ? pendingCandidate.warnings : ["특이 경고 없음"])
                   .slice(0, 2)
                   .map((warning) => (
                     <li key={`confirm-warning-${pendingCandidate.code}-${warning}`}>{warning}</li>
@@ -532,6 +635,14 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
               <span className={orderBadgeClass(orderResult.result.state)}>{orderStateLabel(orderResult.result.state)}</span>
             </div>
             <div className="account-summary-grid" style={{ marginTop: "10px" }}>
+              <div className="plan-item">
+                <span>자금 기준</span>
+                <strong>{capitalModeLabel(orderResult.meta.capital.mode)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>적용 자금</span>
+                <strong>{formatPrice(orderResult.meta.capital.effectiveCapitalWon)}</strong>
+              </div>
               <div className="plan-item">
                 <span>주문번호</span>
                 <strong>{orderResult.result.orderNo ?? "-"}</strong>

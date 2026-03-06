@@ -1087,6 +1087,17 @@ export type ScreenerWashoutStateFilter =
 export type ScreenerWashoutPositionFilter = "ALL" | "IN_ZONE" | "ABOVE_ZONE" | "BELOW_ZONE";
 
 export type AutotradeMarketFilter = "ALL" | "KOSPI" | "KOSDAQ";
+export type AutotradeCapitalMode = "FIXED" | "ACCOUNT_CASH";
+
+export interface AutotradeCapitalConfig {
+  mode: AutotradeCapitalMode;
+  configuredCapitalWon: number | null;
+  effectiveCapitalWon: number;
+  availableCashWon: number | null;
+  maxRiskPerTradeWon: number;
+  maxDailyLossWon: number;
+  maxPositionWon: number;
+}
 
 export interface AutotradeCandidate {
   code: string;
@@ -1163,7 +1174,10 @@ export interface AutotradeDailyState {
 
 export interface AutotradeRunSummary {
   strategyId: string;
+  capitalMode: AutotradeCapitalMode;
   capitalWon: number;
+  configuredCapitalWon: number | null;
+  availableCashWon: number | null;
   maxRiskPerTradeWon: number;
   maxDailyLossWon: number;
   maxPositionWon: number;
@@ -1185,6 +1199,8 @@ export interface AutotradeRunOptions {
   dryRun: boolean;
   market: AutotradeMarketFilter;
   universe: number;
+  capitalMode: AutotradeCapitalMode;
+  fixedCapitalWon: number;
   adminToken: string | null;
 }
 
@@ -1202,6 +1218,7 @@ export interface AutotradePayload {
     storage: {
       kvEnabled: boolean;
     };
+    capital: AutotradeCapitalConfig;
   };
   summary: AutotradeRunSummary;
   candidates: AutotradeCandidate[];
@@ -1249,8 +1266,16 @@ export interface TradeCandidatesPayload {
     source: "KIS";
     market: AutotradeMarketFilter;
     universeSize: number;
+    capital: AutotradeCapitalConfig;
   };
   summary: {
+    capitalMode: AutotradeCapitalMode;
+    capitalWon: number;
+    configuredCapitalWon: number | null;
+    availableCashWon: number | null;
+    maxRiskPerTradeWon: number;
+    maxDailyLossWon: number;
+    maxPositionWon: number;
     dailyLossWon: number;
     blockedByDailyLoss: boolean;
     openPositionCount: number;
@@ -1292,6 +1317,7 @@ export interface TradeOrderPayload {
     source: "KIS";
     market: AutotradeMarketFilter;
     universeSize: number;
+    capital: AutotradeCapitalConfig;
     dryRun: boolean;
     autoExecute: boolean;
     useHashKey: boolean;

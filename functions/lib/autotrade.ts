@@ -1,5 +1,10 @@
 ﻿
 import { getCachedJson } from "./cache";
+import {
+  normalizeAutotradeCapitalMode,
+  normalizeFixedCapitalWon,
+  resolveAutotradeCapitalConfig,
+} from "./autotradeCapital";
 import { atr, sma } from "./indicators";
 import { fetchTimeframeCandles, kisFetch, type KisResponseBase } from "./kis";
 import { nowIsoKst } from "./market";
@@ -16,6 +21,7 @@ import type {
   AutotradeCandidate,
   AutotradeDailyState,
   AutotradeExecutionResult,
+  AutotradeCapitalConfig,
   AutotradeMarketFilter,
   AutotradeOpenPosition,
   AutotradePayload,
@@ -29,10 +35,6 @@ import { detectWashoutPullback } from "./washoutPullback";
 import type { ScreenerStoredCandidate } from "./screener";
 
 const AUTOTRADE_VERSION = "autotrade-washout-v1";
-const DAILY_CAPITAL_WON = 500_000;
-const MAX_RISK_PER_TRADE_WON = 5_000;
-const MAX_DAILY_LOSS_WON = 10_000;
-const MAX_POSITION_WON = 150_000;
 const MAX_CONCURRENT_POSITIONS = 2;
 const MAX_STOP_PCT = 0.05;
 const MAX_HOLD_DAYS = 10;
@@ -400,6 +402,8 @@ class SignalEngine {
 }
 
 class RiskEngine {
+  constructor(private readonly capital: AutotradeCapitalConfig) {}
+
   plan(entryPrice: number, stopPrice: number): RiskPlan {
     if (!Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || entryPrice <= 0 || stopPrice <= 0) {
       return {
@@ -422,8 +426,8 @@ class RiskEngine {
       };
     }
 
-    const qtyByRisk = Math.floor(MAX_RISK_PER_TRADE_WON / riskPerShare);
-    const qtyByCapital = Math.floor(MAX_POSITION_WON / entryPrice);
+    const qtyByRisk = Math.floor(this.capital.maxRiskPerTradeWon / riskPerShare);
+    const qtyByCapital = Math.floor(this.capital.maxPositionWon / entryPrice);
     const qty = Math.max(0, Math.min(qtyByRisk, qtyByCapital));
 
     if (qty < 1) {
@@ -577,6 +581,7 @@ class PositionManager {
 
 const toRunSummary = (
   options: AutotradeRunOptions,
+  capital: AutotradeCapitalConfig,
   sourceDate: string | null,
   dailyState: AutotradeDailyState,
   openPositions: AutotradeOpenPosition[],
@@ -584,10 +589,13 @@ const toRunSummary = (
   blockedReasons: string[],
 ): AutotradeRunSummary => ({
   strategyId: AUTOTRADE_VERSION,
-  capitalWon: DAILY_CAPITAL_WON,
-  maxRiskPerTradeWon: MAX_RISK_PER_TRADE_WON,
-  maxDailyLossWon: MAX_DAILY_LOSS_WON,
-  maxPositionWon: MAX_POSITION_WON,
+  capitalMode: capital.mode,
+  capitalWon: capital.effectiveCapitalWon,
+  configuredCapitalWon: capital.configuredCapitalWon,
+  availableCashWon: capital.availableCashWon,
+  maxRiskPerTradeWon: capital.maxRiskPerTradeWon,
+  maxDailyLossWon: capital.maxDailyLossWon,
+  maxPositionWon: capital.maxPositionWon,
   maxConcurrentPositions: MAX_CONCURRENT_POSITIONS,
   execute: options.execute,
   dryRun: options.dryRun,
@@ -687,7 +695,6 @@ export const runAutoTrade = async (
 ): Promise<AutotradePayload> => {
   const logger = new StrategyLogger();
   const signalEngine = new SignalEngine();
-  const riskEngine = new RiskEngine();
   const orderExecutor = new OrderExecutor(env, metrics);
   const positionManager = new PositionManager(env);
 
@@ -696,6 +703,8 @@ export const runAutoTrade = async (
     dryRun: optionsInput?.dryRun !== false,
     market: optionsInput?.market ?? "ALL",
     universe: normalizeUniverseSize(optionsInput?.universe),
+    capitalMode: normalizeAutotradeCapitalMode(optionsInput?.capitalMode),
+    fixedCapitalWon: normalizeFixedCapitalWon(optionsInput?.fixedCapitalWon),
     adminToken: optionsInput?.adminToken ?? null,
   };
 
@@ -718,6 +727,15 @@ export const runAutoTrade = async (
     warnings.push("AUTOTRADE_KV가 연결되지 않아 재진입 제한/일일상태/포지션 로그 영속 저장이 비활성화됩니다.");
   }
 
+  const { config: capitalConfig, warnings: capitalWarnings } = await resolveAutotradeCapitalConfig(
+    env,
+    options.capitalMode,
+    options.fixedCapitalWon,
+    metrics,
+  );
+  warnings.push(...capitalWarnings);
+  const riskEngine = new RiskEngine(capitalConfig);
+
   const { candidates: universeCandidates, warnings: universeWarnings, sourceDate } = await loadCandidatesFromSnapshot(
     env,
     cache,
@@ -731,9 +749,9 @@ export const runAutoTrade = async (
   const dailyState = await positionManager.loadDailyState(today);
 
   const blockedReasons: string[] = [];
-  if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) {
+  if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) {
     dailyState.blockedByDailyLoss = true;
-    blockedReasons.push(`일일 손실 한도(${MAX_DAILY_LOSS_WON.toLocaleString("ko-KR")}원)에 도달해 신규 매수를 중지했습니다.`);
+    blockedReasons.push(`일일 손실 한도(${capitalConfig.maxDailyLossWon.toLocaleString("ko-KR")}원)에 도달해 신규 매수를 중지했습니다.`);
   }
 
   const executionResults: AutotradeExecutionResult[] = [];
@@ -896,7 +914,7 @@ export const runAutoTrade = async (
         updatedPositions.push(position);
       }
 
-      if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) {
+      if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) {
         dailyState.blockedByDailyLoss = true;
       }
 
@@ -960,7 +978,7 @@ export const runAutoTrade = async (
 
   scannedCandidates.sort((a, b) => b.score - a.score || b.confidence - a.confidence || a.riskPct - b.riskPct);
 
-  if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) {
+  if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) {
     dailyState.blockedByDailyLoss = true;
   }
 
@@ -973,7 +991,7 @@ export const runAutoTrade = async (
   if (!shouldBlockNewBuy && availableSlots > 0 && options.execute) {
     for (const candidate of scannedCandidates) {
       if (availableSlots <= 0) break;
-      if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) break;
+      if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) break;
 
       const exists = updatedPositions.some((item) => item.code === candidate.code && item.status === "OPEN");
       if (exists) continue;
@@ -1030,7 +1048,7 @@ export const runAutoTrade = async (
   }
 
   dailyState.updatedAt = nowIsoKst();
-  if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) {
+  if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) {
     dailyState.blockedByDailyLoss = true;
   }
 
@@ -1043,6 +1061,7 @@ export const runAutoTrade = async (
 
   const summary = toRunSummary(
     options,
+    capitalConfig,
     sourceDate,
     dailyState,
     normalizedPositions,
@@ -1064,6 +1083,7 @@ export const runAutoTrade = async (
       storage: {
         kvEnabled: autoTradeKvEnabled,
       },
+      capital: capitalConfig,
     },
     summary,
     candidates: scannedCandidates,

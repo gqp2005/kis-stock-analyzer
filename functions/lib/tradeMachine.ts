@@ -2,6 +2,12 @@ import { kisFetch, type KisResponseBase } from "./kis";
 import { nowIsoKst } from "./market";
 import type { RequestMetrics } from "./observability";
 import {
+  normalizeAutotradeCapitalMode,
+  normalizeFixedCapitalWon,
+  resolveAutotradeCapitalConfig,
+} from "./autotradeCapital";
+import {
+  type AutotradeCapitalConfig,
   type AutotradeMarketFilter,
   type AutotradeOpenPosition,
   type Env,
@@ -15,9 +21,6 @@ import {
 import { round2 } from "./utils";
 import { runAutoTrade } from "./autotrade";
 
-const MAX_RISK_PER_TRADE_WON = 5_000;
-const MAX_DAILY_LOSS_WON = 10_000;
-const MAX_POSITION_WON = 150_000;
 const MAX_CONCURRENT_POSITIONS = 2;
 const WORKING_MAX_WAIT_MS = 45_000;
 const WORKING_POLL_INTERVAL_MS = 5_000;
@@ -51,6 +54,8 @@ interface DailyStateRow {
 export interface TradeCandidateQueryOptions {
   market: AutotradeMarketFilter;
   universe: number;
+  capitalMode: "FIXED" | "ACCOUNT_CASH";
+  fixedCapitalWon: number;
 }
 
 export interface TradeOrderRunOptions extends TradeCandidateQueryOptions {
@@ -95,6 +100,13 @@ const normalizeUniverse = (raw: number): number => {
   if (!Number.isFinite(raw)) return 200;
   return Math.max(200, Math.min(500, Math.floor(raw)));
 };
+
+const normalizeCapitalOptions = (options: TradeCandidateQueryOptions): TradeCandidateQueryOptions => ({
+  market: options.market,
+  universe: normalizeUniverse(options.universe),
+  capitalMode: normalizeAutotradeCapitalMode(options.capitalMode),
+  fixedCapitalWon: normalizeFixedCapitalWon(options.fixedCapitalWon),
+});
 
 const parseAccountConfig = (env: Env): { cano: string; acntPrdtCd: string } => {
   const cano = (env.KIS_ACCOUNT_NO ?? "").trim();
@@ -372,6 +384,7 @@ const cancelOrder = async (
 
 const toCandidateCards = (
   candidates: Awaited<ReturnType<typeof runAutoTrade>>["candidates"],
+  capital: AutotradeCapitalConfig,
 ): TradeCandidateCard[] =>
   candidates.map((candidate) => ({
     code: candidate.code,
@@ -383,7 +396,7 @@ const toCandidateCards = (
     tp1: candidate.target1Price,
     tp2: candidate.target2Price,
     qty: candidate.qty,
-    maxLossWon: round2(Math.min(MAX_RISK_PER_TRADE_WON, candidate.riskWon)) ?? 0,
+    maxLossWon: round2(Math.min(capital.maxRiskPerTradeWon, candidate.riskWon)) ?? 0,
     riskPct: candidate.riskPct,
     reasons: candidate.reasons.slice(0, 3),
     warnings: candidate.warnings.slice(0, 2),
@@ -403,14 +416,17 @@ export const getTradeCandidates = async (
   options: TradeCandidateQueryOptions,
   metrics?: RequestMetrics,
 ): Promise<TradeCandidatesPayload> => {
+  const normalizedOptions = normalizeCapitalOptions(options);
   const autoPayload = await runAutoTrade(
     env,
     cache,
     {
       execute: false,
       dryRun: true,
-      market: options.market,
-      universe: normalizeUniverse(options.universe),
+      market: normalizedOptions.market,
+      universe: normalizedOptions.universe,
+      capitalMode: normalizedOptions.capitalMode,
+      fixedCapitalWon: normalizedOptions.fixedCapitalWon,
       adminToken: null,
     },
     metrics,
@@ -421,17 +437,25 @@ export const getTradeCandidates = async (
     meta: {
       asOf: nowIsoKst(),
       source: "KIS",
-      market: options.market,
-      universeSize: normalizeUniverse(options.universe),
+      market: normalizedOptions.market,
+      universeSize: normalizedOptions.universe,
+      capital: autoPayload.meta.capital,
     },
     summary: {
+      capitalMode: autoPayload.summary.capitalMode,
+      capitalWon: autoPayload.summary.capitalWon,
+      configuredCapitalWon: autoPayload.summary.configuredCapitalWon,
+      availableCashWon: autoPayload.summary.availableCashWon,
+      maxRiskPerTradeWon: autoPayload.summary.maxRiskPerTradeWon,
+      maxDailyLossWon: autoPayload.summary.maxDailyLossWon,
+      maxPositionWon: autoPayload.summary.maxPositionWon,
       dailyLossWon: autoPayload.summary.dailyLossWon,
       blockedByDailyLoss: autoPayload.summary.blockedByDailyLoss,
       openPositionCount: autoPayload.summary.openPositionCount,
       strategyId: autoPayload.summary.strategyId,
       sourceDate: autoPayload.summary.sourceDate,
     },
-    candidates: toCandidateCards(autoPayload.candidates),
+    candidates: toCandidateCards(autoPayload.candidates, autoPayload.meta.capital),
     warnings: autoPayload.warnings,
   };
 };
@@ -448,6 +472,12 @@ export const runTradeOrder = async (
   const clientOrderId = options.clientOrderId?.trim() || crypto.randomUUID();
   const today = todayKstDate();
 
+  const normalizedOptions = {
+    ...options,
+    universe: normalizeUniverse(options.universe),
+    capitalMode: normalizeAutotradeCapitalMode(options.capitalMode),
+    fixedCapitalWon: normalizeFixedCapitalWon(options.fixedCapitalWon),
+  };
   const pushState = (
     state: TradeOrderState,
     reason: string,
@@ -474,8 +504,17 @@ export const runTradeOrder = async (
         meta: {
           asOf: nowIsoKst(),
           source: "KIS",
-          market: options.market,
-          universeSize: normalizeUniverse(options.universe),
+          market: normalizedOptions.market,
+          universeSize: normalizedOptions.universe,
+          capital: {
+            mode: normalizedOptions.capitalMode,
+            configuredCapitalWon: normalizedOptions.capitalMode === "FIXED" ? normalizedOptions.fixedCapitalWon : null,
+            effectiveCapitalWon: normalizedOptions.fixedCapitalWon,
+            availableCashWon: null,
+            maxRiskPerTradeWon: 0,
+            maxDailyLossWon: 0,
+            maxPositionWon: 0,
+          },
           dryRun: options.dryRun,
           autoExecute: options.autoExecute,
           useHashKey: options.useHashKey,
@@ -518,23 +557,27 @@ export const runTradeOrder = async (
     env,
     cache,
     {
-      market: options.market,
-      universe: options.universe,
+      market: normalizedOptions.market,
+      universe: normalizedOptions.universe,
+      capitalMode: normalizedOptions.capitalMode,
+      fixedCapitalWon: normalizedOptions.fixedCapitalWon,
     },
     metrics,
   );
   warnings.push(...candidatesPayload.warnings);
+  const capitalConfig = candidatesPayload.meta.capital;
   const candidate = candidatesPayload.candidates.find((item) => item.code === options.code.trim());
   if (!candidate) {
     pushState("ORDER_REJECTED", "후보 목록에서 종목을 찾지 못함");
     const payload: TradeOrderPayload = {
       ok: false,
-      meta: {
-        asOf: nowIsoKst(),
-        source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
-        dryRun: options.dryRun,
+        meta: {
+          asOf: nowIsoKst(),
+          source: "KIS",
+          market: normalizedOptions.market,
+          universeSize: normalizedOptions.universe,
+          capital: capitalConfig,
+          dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
         retryOnce: options.retryOnce,
@@ -572,15 +615,16 @@ export const runTradeOrder = async (
   if (!env.AUTOTRADE_KV) {
     warnings.push("AUTOTRADE_KV 미연결: idempotency/포지션/손실 상태 영속 저장이 제한됩니다.");
   }
-  if (dailyState.dailyLossWon >= MAX_DAILY_LOSS_WON) {
+  if (dailyState.dailyLossWon >= capitalConfig.maxDailyLossWon) {
     pushState("ORDER_REJECTED", "일일 손실 제한 초과");
     const payload: TradeOrderPayload = {
       ok: false,
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+          market: normalizedOptions.market,
+          universeSize: normalizedOptions.universe,
+          capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -600,7 +644,7 @@ export const runTradeOrder = async (
           positionOpened: false,
           canceled: false,
           rejected: true,
-          message: "일일 손실 10,000원 제한에 도달하여 신규 매수를 금지합니다.",
+          message: `일일 손실 ${capitalConfig.maxDailyLossWon.toLocaleString("ko-KR")}원 제한에 도달하여 신규 매수를 금지합니다.`,
         },
         transitions,
       ),
@@ -617,8 +661,9 @@ export const runTradeOrder = async (
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+          market: normalizedOptions.market,
+          universeSize: normalizedOptions.universe,
+          capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -655,8 +700,9 @@ export const runTradeOrder = async (
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+          market: normalizedOptions.market,
+          universeSize: normalizedOptions.universe,
+          capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -693,8 +739,9 @@ export const runTradeOrder = async (
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+        market: normalizedOptions.market,
+        universeSize: normalizedOptions.universe,
+        capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -724,15 +771,16 @@ export const runTradeOrder = async (
     await writeIdempotency(env, clientOrderId, payload);
     return payload;
   }
-  if (candidate.maxLossWon > MAX_RISK_PER_TRADE_WON) {
+  if (candidate.maxLossWon > capitalConfig.maxRiskPerTradeWon) {
     pushState("ORDER_REJECTED", "1회 손실 한도 초과");
     const payload: TradeOrderPayload = {
       ok: false,
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+        market: normalizedOptions.market,
+        universeSize: normalizedOptions.universe,
+        capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -752,7 +800,7 @@ export const runTradeOrder = async (
           positionOpened: false,
           canceled: false,
           rejected: true,
-          message: "1회 손실 5,000원 제한을 초과해 주문을 차단했습니다.",
+          message: `1회 손실 ${capitalConfig.maxRiskPerTradeWon.toLocaleString("ko-KR")}원 제한을 초과해 주문을 차단했습니다.`,
         },
         transitions,
       ),
@@ -763,15 +811,16 @@ export const runTradeOrder = async (
     return payload;
   }
   const estimatedInvestWon = candidate.entry * candidate.qty;
-  if (estimatedInvestWon > MAX_POSITION_WON) {
+  if (estimatedInvestWon > capitalConfig.maxPositionWon) {
     pushState("ORDER_REJECTED", "1종목 최대투입 초과");
     const payload: TradeOrderPayload = {
       ok: false,
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+        market: normalizedOptions.market,
+        universeSize: normalizedOptions.universe,
+        capital: capitalConfig,
         dryRun: options.dryRun,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -791,7 +840,7 @@ export const runTradeOrder = async (
           positionOpened: false,
           canceled: false,
           rejected: true,
-          message: "1종목 최대 투입금 150,000원 제한을 초과해 주문을 차단했습니다.",
+          message: `1종목 최대 투입금 ${capitalConfig.maxPositionWon.toLocaleString("ko-KR")}원 제한을 초과해 주문을 차단했습니다.`,
         },
         transitions,
       ),
@@ -813,8 +862,9 @@ export const runTradeOrder = async (
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+        market: normalizedOptions.market,
+        universeSize: normalizedOptions.universe,
+        capital: capitalConfig,
         dryRun: true,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -870,8 +920,9 @@ export const runTradeOrder = async (
       meta: {
         asOf: nowIsoKst(),
         source: "KIS",
-        market: options.market,
-        universeSize: normalizeUniverse(options.universe),
+        market: normalizedOptions.market,
+        universeSize: normalizedOptions.universe,
+        capital: capitalConfig,
         dryRun: false,
         autoExecute: options.autoExecute,
         useHashKey: options.useHashKey,
@@ -1068,8 +1119,9 @@ export const runTradeOrder = async (
     meta: {
       asOf: nowIsoKst(),
       source: "KIS",
-      market: options.market,
-      universeSize: normalizeUniverse(options.universe),
+      market: normalizedOptions.market,
+      universeSize: normalizedOptions.universe,
+      capital: capitalConfig,
       dryRun: false,
       autoExecute: options.autoExecute,
       useHashKey: options.useHashKey,

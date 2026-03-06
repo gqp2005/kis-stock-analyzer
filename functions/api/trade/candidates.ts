@@ -1,3 +1,4 @@
+import { normalizeAutotradeCapitalMode, normalizeFixedCapitalWon } from "../../lib/autotradeCapital";
 import { getTradeCandidates } from "../../lib/tradeMachine";
 import { attachMetrics, createRequestMetrics } from "../../lib/observability";
 import { badRequest, json, serverError } from "../../lib/response";
@@ -27,6 +28,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const market = parseMarket(url.searchParams.get("market"));
     const universe = parseUniverse(url.searchParams.get("universe"));
+    const capitalMode = normalizeAutotradeCapitalMode(url.searchParams.get("capitalMode"));
+    const fixedCapitalWon = normalizeFixedCapitalWon(url.searchParams.get("fixedCapitalWon"));
     const cache = await caches.open("kis-analyzer-cache-v3");
     const payload = await getTradeCandidates(
       context.env,
@@ -34,6 +37,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       {
         market,
         universe,
+        capitalMode,
+        fixedCapitalWon,
       },
       metrics,
     );

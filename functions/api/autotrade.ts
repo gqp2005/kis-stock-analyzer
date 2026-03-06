@@ -1,7 +1,8 @@
-﻿import { runAutoTrade } from "../lib/autotrade";
+import { runAutoTrade } from "../lib/autotrade";
+import { normalizeAutotradeCapitalMode, normalizeFixedCapitalWon } from "../lib/autotradeCapital";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import { badRequest, json, serverError } from "../lib/response";
-import type { AutotradeMarketFilter, Env } from "../lib/types";
+import type { AutotradeCapitalMode, AutotradeMarketFilter, Env } from "../lib/types";
 
 const parseMarket = (raw: unknown): AutotradeMarketFilter => {
   if (typeof raw !== "string") return "ALL";
@@ -36,12 +37,16 @@ const parseGetOptions = (request: Request) => {
   const dryRun = parseBoolean(url.searchParams.get("dryRun"), true);
   const market = parseMarket(url.searchParams.get("market"));
   const universe = parseUniverse(url.searchParams.get("universe"));
+  const capitalMode = normalizeAutotradeCapitalMode(url.searchParams.get("capitalMode"));
+  const fixedCapitalWon = normalizeFixedCapitalWon(url.searchParams.get("fixedCapitalWon"));
   const token = url.searchParams.get("token") ?? request.headers.get("x-admin-token");
   return {
     execute,
     dryRun,
     market,
     universe,
+    capitalMode,
+    fixedCapitalWon,
     adminToken: token,
   };
 };
@@ -56,6 +61,8 @@ const parsePostBody = async (request: Request) => {
   const dryRun = parseBoolean(row.dryRun, true);
   const market = parseMarket(row.market);
   const universe = parseUniverse(row.universe);
+  const capitalMode = normalizeAutotradeCapitalMode(row.capitalMode);
+  const fixedCapitalWon = normalizeFixedCapitalWon(row.fixedCapitalWon);
   const token =
     (typeof row.adminToken === "string" ? row.adminToken : null) ??
     request.headers.get("x-admin-token") ??
@@ -65,6 +72,8 @@ const parsePostBody = async (request: Request) => {
     dryRun,
     market,
     universe,
+    capitalMode,
+    fixedCapitalWon,
     adminToken: token,
   };
 };
@@ -76,6 +85,8 @@ const handleRun = async (
     dryRun: boolean;
     market: AutotradeMarketFilter;
     universe?: number;
+    capitalMode: AutotradeCapitalMode;
+    fixedCapitalWon: number;
     adminToken?: string | null;
   },
 ): Promise<Response> => {
@@ -92,6 +103,8 @@ const handleRun = async (
         dryRun: options.dryRun,
         market: options.market,
         universe: options.universe,
+        capitalMode: options.capitalMode,
+        fixedCapitalWon: options.fixedCapitalWon,
         adminToken: options.adminToken ?? null,
       },
       metrics,
