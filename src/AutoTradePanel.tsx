@@ -117,6 +117,7 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
 
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [runningCode, setRunningCode] = useState<string | null>(null);
+  const [pendingCandidate, setPendingCandidate] = useState<TradeCandidateCard | null>(null);
   const [error, setError] = useState("");
 
   const [payload, setPayload] = useState<TradeCandidatesResponse | null>(null);
@@ -191,8 +192,26 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
 
   const candidateCount = payload?.candidates.length ?? 0;
   const blocked = payload?.summary.blockedByDailyLoss ?? false;
+  const orderModeLabel = autoExecute ? "자동 주문 실행" : "반자동 주문 승인";
 
   const orderedCandidate = useMemo(() => payload?.candidates ?? [], [payload?.candidates]);
+
+  const openConfirmDrawer = (candidate: TradeCandidateCard) => {
+    setPendingCandidate(candidate);
+    setError("");
+  };
+
+  const closeConfirmDrawer = () => {
+    if (runningCode) return;
+    setPendingCandidate(null);
+  };
+
+  const confirmOrder = async () => {
+    if (!pendingCandidate) return;
+    const candidate = pendingCandidate;
+    setPendingCandidate(null);
+    await runOrder(candidate);
+  };
 
   return (
     <section className="account-panel">
@@ -388,9 +407,9 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
                   <button
                     type="button"
                     disabled={runningCode === candidate.code || blocked}
-                    onClick={() => void runOrder(candidate)}
+                    onClick={() => openConfirmDrawer(candidate)}
                   >
-                    {runningCode === candidate.code ? "주문 처리 중..." : autoExecute ? "자동 주문 실행" : "반자동 주문 승인"}
+                    {runningCode === candidate.code ? "주문 처리 중..." : orderModeLabel}
                   </button>
                 </div>
               </article>
@@ -398,6 +417,106 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
           </div>
         )}
       </div>
+
+      {pendingCandidate && (
+        <div className="card trade-confirm-drawer">
+          <div className="collapsible-head">
+            <div>
+              <h3>주문 확인</h3>
+              <p className="meta">
+                {pendingCandidate.name} ({pendingCandidate.code}) · 버튼을 누르기 전 진입/손절/수량을 다시 확인하세요.
+              </p>
+            </div>
+            <button type="button" className="collapse-toggle" onClick={closeConfirmDrawer} disabled={Boolean(runningCode)}>
+              닫기
+            </button>
+          </div>
+
+          <div className="account-summary-grid trade-confirm-grid">
+            <div className="plan-item">
+              <span>주문 방식</span>
+              <strong>{orderModeLabel}</strong>
+            </div>
+            <div className="plan-item">
+              <span>현재 상태</span>
+              <strong>{stateLabel(pendingCandidate.state)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>진입 / 손절</span>
+              <strong>
+                {formatPrice(pendingCandidate.entry)} / {formatPrice(pendingCandidate.stop)}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>목표가</span>
+              <strong>
+                {formatPrice(pendingCandidate.tp1)} / {formatPrice(pendingCandidate.tp2)}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>수량 / 최대손실</span>
+              <strong>
+                {pendingCandidate.qty}주 / {formatPrice(pendingCandidate.maxLossWon)}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>리스크%</span>
+              <strong>{formatPct(pendingCandidate.riskPct)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>hashkey</span>
+              <strong>{useHashKey ? "사용" : "미사용"}</strong>
+            </div>
+            <div className="plan-item">
+              <span>취소 후 재주문</span>
+              <strong>{retryOnce ? "1회 허용" : "사용 안 함"}</strong>
+            </div>
+          </div>
+
+          <div className="auto-candidate-body trade-confirm-body">
+            <div>
+              <p className="meta">진입 근거</p>
+              <ul className="warning-list">
+                {pendingCandidate.reasons.slice(0, 3).map((reason) => (
+                  <li key={`confirm-reason-${pendingCandidate.code}-${reason}`}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="meta">주의 사항</p>
+              <ul className="warning-list">
+                {(pendingCandidate.warnings.length > 0
+                  ? pendingCandidate.warnings
+                  : ["특이 경고 없음"]
+                )
+                  .slice(0, 2)
+                  .map((warning) => (
+                    <li key={`confirm-warning-${pendingCandidate.code}-${warning}`}>{warning}</li>
+                  ))}
+              </ul>
+            </div>
+          </div>
+
+          <p className="plan-note trade-confirm-note">
+            {autoExecute
+              ? "자동 주문 실행 모드입니다. 확인 버튼을 누르면 KIS 주문 상태 머신이 즉시 시작됩니다."
+              : "반자동 승인 모드입니다. 주문 조건을 최종 확인한 뒤 상태 머신을 실행합니다."}
+          </p>
+
+          <div className="trade-confirm-actions">
+            <button type="button" className="ghost-btn" onClick={closeConfirmDrawer} disabled={Boolean(runningCode)}>
+              취소
+            </button>
+            <button
+              type="button"
+              disabled={runningCode === pendingCandidate.code || blocked}
+              onClick={() => void confirmOrder()}
+            >
+              {runningCode === pendingCandidate.code ? "주문 처리 중..." : orderModeLabel}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3>KIS 주문 상태 머신</h3>

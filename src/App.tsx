@@ -326,6 +326,23 @@ const levelMeaningText = (label: string): string => {
   return "차트 해석을 위한 참고 레벨입니다. 단일 선보다 거래량/추세와 함께 판단하는 것이 안전합니다.";
 };
 
+const pickNearestPriceItems = <T extends { price: number; label: string }>(
+  items: T[],
+  referencePrice: number | null,
+  limit: number,
+): T[] => {
+  if (referencePrice == null || items.length <= limit) return items;
+  const unique = new Map<string, T>();
+  for (const item of items) {
+    const key = `${item.label}:${Math.round(item.price * 100) / 100}`;
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  return [...unique.values()]
+    .sort((a, b) => Math.abs(a.price - referencePrice) - Math.abs(b.price - referencePrice))
+    .slice(0, limit)
+    .sort((a, b) => b.price - a.price);
+};
+
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
   if (rsiBand === "HIGH") return "과열 구간";
   if (rsiBand === "MID") return "중립 구간";
@@ -487,6 +504,7 @@ export default function App() {
   const [highlightSelectedCandle, setHighlightSelectedCandle] = useState(true);
   const [showWashoutEntries, setShowWashoutEntries] = useState(false);
   const [priceChartHeight, setPriceChartHeight] = useState(DEFAULT_PRICE_CHART_HEIGHT);
+  const [drawingPresetMode, setDrawingPresetMode] = useState<"basic" | "detail" | "custom">("basic");
   const [selectedPattern, setSelectedPattern] = useState<VolumePatternSignal | null>(null);
 
   const priceChartRef = useRef<HTMLDivElement | null>(null);
@@ -565,6 +583,7 @@ export default function App() {
   };
 
   const applyDrawingPreset = (preset: "basic" | "detail") => {
+    setDrawingPresetMode(preset);
     if (preset === "basic") {
       setShowMa1(true);
       setShowMa2(true);
@@ -783,14 +802,14 @@ export default function App() {
     const markerPatterns =
       activeTf === "day"
         ? (active.signals.volumePatterns ?? []).filter(
-            (pattern) => showAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
+            (pattern) => effectiveShowAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
           )
         : [];
     const strategyWashout = activeTf === "day" ? active.strategyOverlays?.washoutPullback : null;
     const overlayMarkers =
       activeTf === "day"
         ? (active.overlays?.markers ?? []).filter(
-            (marker) => canShowMarkerByType(marker.type, showAdvancedPatternMarkers),
+            (marker) => canShowMarkerByType(marker.type, effectiveShowAdvancedPatternMarkers),
           )
         : [];
     const washoutMarkers: SeriesMarker<Time>[] = [];
@@ -819,8 +838,17 @@ export default function App() {
       candleSeries.setMarkers([]);
     }
 
-    const levelLines = (active.overlays?.priceLines ?? []).filter((line) => line.group === "level");
-    const zoneLines = (active.overlays?.priceLines ?? []).filter((line) => line.group === "zone");
+    const latestChartClose = active.candles.length > 0 ? active.candles[active.candles.length - 1].close : null;
+    const levelLines = pickNearestPriceItems(
+      (active.overlays?.priceLines ?? []).filter((line) => line.group === "level"),
+      shouldCondenseOverlays ? latestChartClose : null,
+      8,
+    );
+    const zoneLines = pickNearestPriceItems(
+      (active.overlays?.priceLines ?? []).filter((line) => line.group === "zone"),
+      shouldCondenseOverlays ? latestChartClose : null,
+      4,
+    );
     if (showLevels) {
       for (const line of levelLines) {
         candleSeries.createPriceLine({
@@ -833,7 +861,7 @@ export default function App() {
         });
       }
     }
-    if (showZones) {
+    if (effectiveShowZones) {
       for (const line of zoneLines) {
         candleSeries.createPriceLine({
           price: line.price,
@@ -888,9 +916,9 @@ export default function App() {
 
     const overlaySegments = active.overlays?.segments ?? [];
     const segmentVisible = overlaySegments.filter((segment) => {
-      if (segment.kind === "trendlineUp" || segment.kind === "trendlineDown") return showTrendlines;
-      if (segment.kind === "channelLow" || segment.kind === "channelHigh") return showChannels;
-      if (segment.kind === "fanlineUp" || segment.kind === "fanlineDown") return showFanLines;
+      if (segment.kind === "trendlineUp" || segment.kind === "trendlineDown") return effectiveShowTrendlines;
+      if (segment.kind === "channelLow" || segment.kind === "channelHigh") return effectiveShowChannels;
+      if (segment.kind === "fanlineUp" || segment.kind === "fanlineDown") return effectiveShowFanLines;
       return false;
     });
     for (const segment of segmentVisible) {
@@ -1120,14 +1148,15 @@ export default function App() {
     showMa2,
     showMa3,
     showLevels,
-    showTrendlines,
-    showChannels,
-    showFanLines,
-    showZones,
+    effectiveShowTrendlines,
+    effectiveShowChannels,
+    effectiveShowFanLines,
+    effectiveShowZones,
     showMarkers,
-    showAdvancedPatternMarkers,
+    effectiveShowAdvancedPatternMarkers,
     showPatternReferenceLevel,
     highlightSelectedCandle,
+    shouldCondenseOverlays,
     showWashoutEntries,
     priceChartHeight,
     selectedPattern,
@@ -1144,6 +1173,44 @@ export default function App() {
   const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
   const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
   const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
+  const latestClose =
+    activeAnalysis && activeAnalysis.candles.length > 0
+      ? activeAnalysis.candles[activeAnalysis.candles.length - 1].close
+      : null;
+  const rawOverlayDensity = useMemo(() => {
+    if (!activeAnalysis) {
+      return {
+        total: 0,
+        levels: 0,
+        segments: 0,
+        markers: 0,
+        confluence: 0,
+      };
+    }
+    const levels = activeAnalysis.overlays?.priceLines?.length ?? 0;
+    const segments = activeAnalysis.overlays?.segments?.length ?? 0;
+    const markers =
+      activeTf === "day"
+        ? (activeAnalysis.overlays?.markers ?? []).filter((marker) => BASIC_PATTERN_TYPES.has(marker.type as OverlayMarkerType))
+            .length +
+          (activeAnalysis.strategyOverlays?.washoutPullback?.anchorSpike.time ? 1 : 0) +
+          (activeAnalysis.strategyOverlays?.washoutPullback?.washoutReentry.time ? 1 : 0)
+        : 0;
+    const confluence = activeAnalysis.confluence?.length ?? 0;
+    return {
+      total: levels + segments + markers + confluence,
+      levels,
+      segments,
+      markers,
+      confluence,
+    };
+  }, [activeAnalysis, activeTf]);
+  const shouldCondenseOverlays = drawingPresetMode === "basic" && rawOverlayDensity.total >= 18;
+  const effectiveShowTrendlines = showTrendlines && !shouldCondenseOverlays;
+  const effectiveShowChannels = showChannels && !shouldCondenseOverlays;
+  const effectiveShowFanLines = showFanLines && !shouldCondenseOverlays;
+  const effectiveShowZones = showZones && !shouldCondenseOverlays;
+  const effectiveShowAdvancedPatternMarkers = showAdvancedPatternMarkers && !shouldCondenseOverlays;
   const levelGuideRows = useMemo(() => {
     if (!activeAnalysis) return [] as LevelGuideItem[];
     const rows: LevelGuideItem[] = [];
@@ -1165,7 +1232,7 @@ export default function App() {
     const overlayLines = activeAnalysis.overlays?.priceLines ?? [];
     for (const line of overlayLines) {
       if (line.group === "level") addRow(line.id, line.label, line.price, showLevels);
-      if (line.group === "zone") addRow(line.id, line.label, line.price, showZones);
+      if (line.group === "zone") addRow(line.id, line.label, line.price, effectiveShowZones);
     }
 
     const ma = activeAnalysis.indicators.ma;
@@ -1208,8 +1275,20 @@ export default function App() {
       }
     }
 
-    return rows.sort((a, b) => b.price - a.price);
-  }, [activeAnalysis, activeTf, showLevels, showZones, showMa1, showMa2, showMa3, showWashoutEntries]);
+    const sortedRows = rows.sort((a, b) => b.price - a.price);
+    return shouldCondenseOverlays ? pickNearestPriceItems(sortedRows, latestClose, 10) : sortedRows;
+  }, [
+    activeAnalysis,
+    activeTf,
+    effectiveShowZones,
+    latestClose,
+    shouldCondenseOverlays,
+    showLevels,
+    showMa1,
+    showMa2,
+    showMa3,
+    showWashoutEntries,
+  ]);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
   const cupHandleSignal = activeAnalysis?.signals.cupHandle ?? null;
@@ -1238,10 +1317,6 @@ export default function App() {
   const overlaySummary = activeAnalysis?.overlays.summary ?? null;
   const reliabilitySummary = overlaySummary?.reliability ?? null;
   const regimeSummary = overlaySummary?.regime ?? null;
-  const latestClose =
-    activeAnalysis && activeAnalysis.candles.length > 0
-      ? activeAnalysis.candles[activeAnalysis.candles.length - 1].close
-      : null;
   const confluenceTop = confluenceBands.slice(0, 3).map((band) => {
     const center = (band.bandLow + band.bandHigh) / 2;
     const distancePct = latestClose != null && latestClose > 0 ? (Math.abs(center - latestClose) / latestClose) * 100 : null;
@@ -2124,6 +2199,30 @@ export default function App() {
 
         {result && (
           <section className="result">
+            <div className="sticky-summary-bar">
+              <div className="sticky-summary-main">
+                <div>
+                  <strong>
+                    {result.meta.name} ({result.meta.symbol})
+                  </strong>
+                  <p>{result.final.summary}</p>
+                </div>
+                <div className="sticky-summary-price">
+                  <span>{formatPrice(headerQuote?.close ?? null)}</span>
+                  {headerQuote?.changePct != null && (
+                    <small className={`reason-tag ${headerQuote.tone}`}>
+                      {`${formatSignedDecimal(headerQuote.changePct)}%`}
+                    </small>
+                  )}
+                </div>
+              </div>
+              <div className="sticky-summary-side">
+                <span className={overallClass(result.final.overall)}>{overallLabel(result.final.overall)}</span>
+                <span className={confidenceClass(result.final.confidence)}>신뢰도 {result.final.confidence}</span>
+                <span className="badge neutral">{TF_LABEL[activeTf]} 보기</span>
+              </div>
+            </div>
+
             <div className="summary">
               <div>
                 <h2>
@@ -3227,12 +3326,21 @@ export default function App() {
                     <div className="indicator-controls">
                       <div className="drawing-presets">
                         <span>자동 작도 프리셋</span>
-                        <button type="button" className="preset-btn" onClick={() => applyDrawingPreset("basic")}>
+                        <button
+                          type="button"
+                          className={drawingPresetMode === "basic" ? "preset-btn active" : "preset-btn"}
+                          onClick={() => applyDrawingPreset("basic")}
+                        >
                           기본형
                         </button>
-                        <button type="button" className="preset-btn" onClick={() => applyDrawingPreset("detail")}>
+                        <button
+                          type="button"
+                          className={drawingPresetMode === "detail" ? "preset-btn active" : "preset-btn"}
+                          onClick={() => applyDrawingPreset("detail")}
+                        >
                           상세형
                         </button>
+                        {drawingPresetMode === "custom" && <small className="preset-state">사용자 조정</small>}
                       </div>
                       <div className="chart-height-controls">
                         <span>차트 높이</span>
@@ -3264,7 +3372,10 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={showMa1}
-                            onChange={(e) => setShowMa1(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setShowMa1(e.target.checked);
+                            }}
                           />
                           MA{maInfo.ma1Period}
                         </label>
@@ -3272,7 +3383,10 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={showMa2}
-                            onChange={(e) => setShowMa2(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setShowMa2(e.target.checked);
+                            }}
                           />
                           MA{maInfo.ma2Period}
                         </label>
@@ -3281,7 +3395,10 @@ export default function App() {
                             <input
                               type="checkbox"
                               checked={showMa3}
-                              onChange={(e) => setShowMa3(e.target.checked)}
+                              onChange={(e) => {
+                                setDrawingPresetMode("custom");
+                                setShowMa3(e.target.checked);
+                              }}
                             />
                             MA{maInfo.ma3Period}
                           </label>
@@ -3291,7 +3408,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showLevels}
-                          onChange={(e) => setShowLevels(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowLevels(e.target.checked);
+                          }}
                         />
                         레벨
                       </label>
@@ -3299,7 +3419,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showTrendlines}
-                          onChange={(e) => setShowTrendlines(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowTrendlines(e.target.checked);
+                          }}
                         />
                         추세선
                       </label>
@@ -3307,7 +3430,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showChannels}
-                          onChange={(e) => setShowChannels(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowChannels(e.target.checked);
+                          }}
                         />
                         채널
                       </label>
@@ -3315,7 +3441,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showFanLines}
-                          onChange={(e) => setShowFanLines(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowFanLines(e.target.checked);
+                          }}
                         />
                         팬 라인
                       </label>
@@ -3323,7 +3452,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showZones}
-                          onChange={(e) => setShowZones(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowZones(e.target.checked);
+                          }}
                         />
                         존
                       </label>
@@ -3331,7 +3463,10 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={showMarkers}
-                          onChange={(e) => setShowMarkers(e.target.checked)}
+                          onChange={(e) => {
+                            setDrawingPresetMode("custom");
+                            setShowMarkers(e.target.checked);
+                          }}
                         />
                         마커
                       </label>
@@ -3340,7 +3475,10 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={showAdvancedPatternMarkers}
-                            onChange={(e) => setShowAdvancedPatternMarkers(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setShowAdvancedPatternMarkers(e.target.checked);
+                            }}
                           />
                           고급 마커(HOT/CAP/WB)
                         </label>
@@ -3350,7 +3488,10 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={showPatternReferenceLevel}
-                            onChange={(e) => setShowPatternReferenceLevel(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setShowPatternReferenceLevel(e.target.checked);
+                            }}
                           />
                           패턴 기준선 표시
                         </label>
@@ -3360,7 +3501,10 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={highlightSelectedCandle}
-                            onChange={(e) => setHighlightSelectedCandle(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setHighlightSelectedCandle(e.target.checked);
+                            }}
                           />
                           선택 캔들 강조
                         </label>
@@ -3370,12 +3514,20 @@ export default function App() {
                           <input
                             type="checkbox"
                             checked={showWashoutEntries}
-                            onChange={(e) => setShowWashoutEntries(e.target.checked)}
+                            onChange={(e) => {
+                              setDrawingPresetMode("custom");
+                              setShowWashoutEntries(e.target.checked);
+                            }}
                           />
                           눌림목 분할 진입선
                         </label>
                       )}
                     </div>
+                  )}
+                  {shouldCondenseOverlays && (
+                    <p className="chart-density-note">
+                      기본형 프리셋에서 차트 과밀을 줄이기 위해 추세선·채널·팬 라인·존·고급 마커를 자동 숨겼습니다.
+                    </p>
                   )}
                   <div ref={priceChartRef} className="chart" style={{ height: `${priceChartHeight}px` }} />
                   {activeTf === "day" && showMarkers && selectedPattern && (

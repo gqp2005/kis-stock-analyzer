@@ -190,6 +190,67 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.sticky-summary-bar {
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(87, 163, 255, 0.28);
+  border-radius: 14px;
+  background: rgba(8, 16, 25, 0.9);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.sticky-summary-main,
+.sticky-summary-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sticky-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sticky-summary-main {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+}
+
+.sticky-summary-main strong {
+  display: block;
+  color: #eef6ff;
+  font-size: 15px;
+}
+
+.sticky-summary-main p {
+  margin: 2px 0 0;
+  color: #a9bfd5;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sticky-summary-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sticky-summary-price span {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 18px;
+  color: #eef6ff;
+}
+
 .summary-right {
   display: flex;
   flex-direction: column;
@@ -569,6 +630,23 @@ h2 {
   color: #d6e8fb;
   font-size: 12px;
   font-weight: 600;
+}
+
+.preset-btn.active {
+  border-color: rgba(87, 163, 255, 0.9);
+  background: rgba(87, 163, 255, 0.3);
+}
+
+.preset-state {
+  color: #9bd7ff;
+  font-size: 11px;
+}
+
+.chart-density-note {
+  margin: 0 0 10px;
+  color: #9fd3ff;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .preset-btn:hover {
@@ -1174,6 +1252,10 @@ h2 {
   font-size: 16px;
 }
 
+.plan-item strong.badge {
+  align-self: flex-start;
+}
+
 .plan-note {
   margin: 8px 0 0;
   color: #9bb0c6;
@@ -1443,6 +1525,39 @@ h2 {
   gap: 8px;
 }
 
+.trade-confirm-drawer {
+  border-color: rgba(87, 163, 255, 0.32);
+}
+
+.trade-confirm-grid {
+  margin-bottom: 10px;
+}
+
+.trade-confirm-body {
+  margin-top: 6px;
+}
+
+.trade-confirm-note {
+  margin-bottom: 10px;
+}
+
+.trade-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ghost-btn {
+  background: rgba(12, 24, 36, 0.82);
+  border: 1px solid rgba(87, 163, 255, 0.42);
+  color: #d6e8fb;
+}
+
+.ghost-btn:hover {
+  background: rgba(17, 35, 52, 0.95);
+}
+
 .strategy-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1619,6 +1734,18 @@ h2 {
   margin-bottom: 8px;
 }
 
+.screener-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.screener-compact-item strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .screener-card-head {
   display: flex;
   justify-content: space-between;
@@ -1666,6 +1793,15 @@ h2 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.screener-detail-head {
+  margin: 10px 0 8px;
+}
+
+.screener-detail-head h4 {
+  margin: 0;
+  font-size: 14px;
 }
 
 .vcp-card {
@@ -1905,6 +2041,16 @@ h2 {
     padding: 16px;
   }
 
+  .sticky-summary-bar,
+  .sticky-summary-main {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sticky-summary-price {
+    justify-content: flex-start;
+  }
+
   .summary-right {
     align-items: flex-start;
   }
@@ -1991,7 +2137,8 @@ h2 {
   }
 
   .auto-candidate-kpis,
-  .auto-candidate-body {
+  .auto-candidate-body,
+  .screener-compact-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2028,6 +2175,7 @@ h2 {
 
   .screener-overview-grid,
   .screener-kpi-grid,
+  .screener-compact-grid,
   .strategy-summary-grid,
   .account-summary-grid,
   .fund-grid,

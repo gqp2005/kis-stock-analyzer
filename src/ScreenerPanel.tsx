@@ -34,6 +34,11 @@ interface ScreenerQueryState {
   universe: number;
 }
 
+interface ScreenerCompactItem {
+  label: string;
+  value: string;
+}
+
 const overallLabel = (overall: Overall): string => {
   if (overall === "GOOD") return "양호";
   if (overall === "NEUTRAL") return "중립";
@@ -384,6 +389,66 @@ const buildCardOneLiner = (item: ScreenerItem, strategy: ScreenerStrategyFilter)
   };
 };
 
+const buildCompactItems = (item: ScreenerItem, strategy: ScreenerStrategyFilter): ScreenerCompactItem[] => {
+  if (strategy === "WASHOUT_PULLBACK") {
+    return [
+      { label: "Anchor", value: formatMultiple(item.hits.washoutPullback.anchorTurnoverRatio) },
+      { label: "재유입", value: formatMultiple(item.hits.washoutPullback.reentryTurnoverRatio) },
+      {
+        label: "눌림 존",
+        value: `${formatPrice(item.hits.washoutPullback.pullbackZone.low)} ~ ${formatPrice(item.hits.washoutPullback.pullbackZone.high)}`,
+      },
+      {
+        label: "현재 위치",
+        value: `${washoutPositionLabel(item.hits.washoutPullback.position)} / ${formatRiskPercent(item.hits.washoutPullback.riskPct)}`,
+      },
+    ];
+  }
+
+  if (strategy === "VCP") {
+    return [
+      {
+        label: "R-zone",
+        value: `${formatPrice(item.hits.vcp.resistance.zoneLow)} ~ ${formatPrice(item.hits.vcp.resistance.zoneHigh)}`,
+      },
+      {
+        label: "컨트랙션",
+        value:
+          item.hits.vcp.contractions.length > 0
+            ? `${item.hits.vcp.contractions.length}회 / ${item.hits.vcp.contractions
+                .map((contraction) => formatDepth(contraction.depth))
+                .join(" → ")}`
+            : "없음",
+      },
+      {
+        label: "거래량 수축",
+        value: `${dryUpStrengthLabel(item.hits.vcp.volume.dryUpStrength)} / ${
+          item.hits.vcp.volume.volRatioAvg10 != null ? `${item.hits.vcp.volume.volRatioAvg10.toFixed(2)}배` : "-"
+        }`,
+      },
+      {
+        label: "리더십",
+        value: `${leadershipLabel(item.hits.vcp.leadership.label)} / ${formatSignedPercent(
+          item.hits.vcp.leadership.ret63 != null ? item.hits.vcp.leadership.ret63 * 100 : null,
+        )}`,
+      },
+    ];
+  }
+
+  return [
+    { label: "RS", value: `${rsStrengthLabel(item.rs.label)} / ${formatSignedRatioPercent(item.rs.ret63Diff)}` },
+    { label: "거래량", value: `${formatScore(item.hits.volume.score)} / ${item.hits.volume.confidence}` },
+    {
+      label: "컵앤핸들",
+      value: `${cupHandleStateLabel(item.hits.cupHandle.state)} / ${item.hits.cupHandle.score}`,
+    },
+    {
+      label: "설거지+눌림",
+      value: `${washoutStateLabel(item.hits.washoutPullback.state)} / ${item.hits.washoutPullback.score}`,
+    },
+  ];
+};
+
 const sortItems = (
   items: ScreenerItem[],
   sortKey: SortKey,
@@ -429,6 +494,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   const [sortKey, setSortKey] = useState<SortKey>("SCORE");
   const [showAdvancedSummary, setShowAdvancedSummary] = useState(false);
   const [showAdvancedCards, setShowAdvancedCards] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [response, setResponse] = useState<ScreenerResponse | null>(null);
@@ -463,6 +529,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       const data = (await result.json()) as ScreenerResponse | { error: string };
       if (!result.ok) throw new Error("error" in data ? data.error : "스크리너 조회 실패");
       setResponse(data as ScreenerResponse);
+      setExpandedCards({});
       setLastLoadedAt(new Date().toISOString());
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
@@ -501,6 +568,10 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     setUniverse(defaults.universe);
     setSortKey("SCORE");
     void fetchScreener(defaults);
+  };
+
+  const toggleCardDetails = (key: string) => {
+    setExpandedCards((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const rerunAsAllStrategy = () => {
@@ -848,9 +919,34 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
           <div className="screener-grid">
             {rankedItems.map((item) => {
               const cardOneLiner = buildCardOneLiner(item, strategy);
+              const itemKey = `${item.market}-${item.code}`;
+              const compactItems = buildCompactItems(item, strategy);
+              const detailOpen = showAdvancedCards || Boolean(expandedCards[itemKey]);
+              const primaryStatusLabel =
+                strategy === "WASHOUT_PULLBACK"
+                  ? washoutStateLabel(item.hits.washoutPullback.state)
+                  : strategy === "VCP"
+                    ? vcpStateLabel(item.hits.vcp.state)
+                    : overallLabel(item.overallLabel);
+              const primaryStatusClass =
+                strategy === "WASHOUT_PULLBACK"
+                  ? washoutStateBadgeClass(item.hits.washoutPullback.state)
+                  : strategy === "VCP"
+                    ? item.hits.vcp.state === "CONFIRMED"
+                      ? "badge good"
+                      : "badge neutral"
+                    : overallClass(item.overallLabel);
+              const primaryScore =
+                strategy === "WASHOUT_PULLBACK"
+                  ? item.hits.washoutPullback.score
+                  : strategy === "VCP"
+                    ? item.hits.vcp.score
+                    : item.scoreTotal;
+              const primaryConfidence =
+                strategy === "WASHOUT_PULLBACK" ? item.hits.washoutPullback.confidence : item.confidence;
               return (
                 <article
-                  key={`${item.market}-${item.code}`}
+                  key={itemKey}
                   className={
                     strategy === "VCP"
                       ? "screener-card vcp-card"
@@ -904,26 +1000,16 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
 
                   <div className="screener-kpi-grid">
                     <div className="plan-item">
+                      <span>판정</span>
+                      <strong className={primaryStatusClass}>{primaryStatusLabel}</strong>
+                    </div>
+                    <div className="plan-item">
                       <span>점수</span>
-                      <strong>
-                        {strategy === "WASHOUT_PULLBACK"
-                          ? item.hits.washoutPullback.score
-                          : strategy === "VCP"
-                            ? item.hits.vcp.score
-                            : item.scoreTotal}
-                      </strong>
+                      <strong>{primaryScore}</strong>
                     </div>
                     <div className="plan-item">
                       <span>신뢰도</span>
-                      <strong>
-                        {strategy === "WASHOUT_PULLBACK"
-                          ? item.hits.washoutPullback.confidence
-                          : item.confidence}
-                      </strong>
-                    </div>
-                    <div className="plan-item">
-                      <span>RS 강도</span>
-                      <strong>{rsStrengthLabel(item.rs.label)}</strong>
+                      <strong>{primaryConfidence}</strong>
                     </div>
                     <div className="plan-item">
                       <span>현재가</span>
@@ -931,7 +1017,30 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     </div>
                   </div>
 
-                  {strategy === "WASHOUT_PULLBACK" ? (
+                  <div className="screener-compact-grid">
+                    {compactItems.map((compact) => (
+                      <div key={`${itemKey}-${compact.label}`} className="plan-item screener-compact-item">
+                        <span>{compact.label}</span>
+                        <strong>{compact.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="screener-opinion">
+                    <small className={verdictClass(cardOneLiner.verdict)}>{cardOneLiner.verdict}</small>
+                    {cardOneLiner.text}
+                  </p>
+
+                  {!showAdvancedCards && (
+                    <div className="collapsible-head screener-detail-head">
+                      <h4>세부 신호</h4>
+                      <button type="button" className="collapse-toggle" onClick={() => toggleCardDetails(itemKey)}>
+                        {detailOpen ? "접기" : "펼치기"}
+                      </button>
+                    </div>
+                  )}
+
+                  {detailOpen && (strategy === "WASHOUT_PULLBACK" ? (
                     <>
                       <div className="screener-levels washout-kpi-row">
                         <small>Anchor {formatMultiple(item.hits.washoutPullback.anchorTurnoverRatio)}</small>
@@ -1179,12 +1288,8 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                         </div>
                       )}
                     </>
-                  )}
-                  <p className="screener-opinion">
-                    <small className={verdictClass(cardOneLiner.verdict)}>{cardOneLiner.verdict}</small>
-                    {cardOneLiner.text}
-                  </p>
-                  {showAdvancedCards && item.backtestSummary && (
+                  ))}
+                  {detailOpen && item.backtestSummary && (
                     <div className="screener-backtest">
                       <small>거래 {item.backtestSummary.trades}</small>
                       <small>승률 {formatPercent(item.backtestSummary.winRate)}</small>
