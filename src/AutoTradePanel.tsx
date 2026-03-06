@@ -10,6 +10,33 @@ interface AutoTradePanelProps {
   apiBase: string;
 }
 
+const ORDER_OPTION_GUIDE = [
+  {
+    key: "autoExecute",
+    title: "자동 주문 실행 모드",
+    description:
+      "후보 카드 버튼을 눌렀을 때 주문 상태 머신을 즉시 실주문 흐름으로 진행합니다. 끄면 반자동 승인 관점으로 확인하며 사용하기 좋습니다.",
+    caution:
+      "실계좌 사용 시 한 번 클릭으로 주문 API까지 호출되므로, 관리자 토큰과 진입가/손절가를 먼저 확인해야 합니다.",
+  },
+  {
+    key: "useHashKey",
+    title: "hashkey 헤더 사용",
+    description:
+      "KIS POST 주문/취소 요청에 hashkey 헤더를 함께 붙입니다. 보안 검증이 필요한 환경이나 계정 정책에 맞춰 사용할 때 켭니다.",
+    caution:
+      "기본 주문이 정상 동작하면 꼭 필요한 옵션은 아닙니다. KIS 정책상 요구되거나 주문 거절이 날 때 우선 점검하면 됩니다.",
+  },
+  {
+    key: "retryOnce",
+    title: "취소 후 1회 재주문",
+    description:
+      "첫 주문이 일정 시간 안에 체결되지 않으면 미체결을 취소하고 동일 수량으로 1회만 다시 주문합니다.",
+    caution:
+      "호가가 빠르게 변하는 구간에서는 평균 체결가가 불리해질 수 있으므로, 추격 매수 위험을 감수할 때만 켜는 편이 안전합니다.",
+  },
+] as const;
+
 const compactText = (raw: string, max = 240): string => raw.replace(/\s+/g, " ").trim().slice(0, max);
 
 const readJsonBody = async <T,>(response: Response, endpoint: string): Promise<T> => {
@@ -86,6 +113,7 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
   const [autoExecute, setAutoExecute] = useState(false);
   const [useHashKey, setUseHashKey] = useState(false);
   const [retryOnce, setRetryOnce] = useState(false);
+  const [showOptionGuide, setShowOptionGuide] = useState(false);
 
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [runningCode, setRunningCode] = useState<string | null>(null);
@@ -218,6 +246,29 @@ export default function AutoTradePanel(props: AutoTradePanelProps) {
             취소 후 1회 재주문
           </label>
         </div>
+
+        <div className="trade-option-guide-head">
+          <span className="meta">옵션 설명</span>
+          <button
+            type="button"
+            className="trade-option-toggle"
+            aria-expanded={showOptionGuide}
+            onClick={() => setShowOptionGuide((prev) => !prev)}
+          >
+            {showOptionGuide ? "접기" : "펼치기"}
+          </button>
+        </div>
+        {showOptionGuide && (
+          <div className="trade-option-guide">
+            {ORDER_OPTION_GUIDE.map((item) => (
+              <article key={item.key} className="trade-option-guide-card">
+                <strong>{item.title}</strong>
+                <p>{item.description}</p>
+                <small>{item.caution}</small>
+              </article>
+            ))}
+          </div>
+        )}
 
         <div className="strategy-head" style={{ marginTop: "10px" }}>
           <button type="button" onClick={() => void fetchCandidates()} disabled={loadingCandidates}>
