@@ -710,6 +710,50 @@ export default function App() {
     }
   }, [activeTf, showMarkers]);
 
+  const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
+  const maInfo = activeAnalysis?.indicators.ma ?? null;
+  const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
+  const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
+  const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
+  const latestClose =
+    activeAnalysis && activeAnalysis.candles.length > 0
+      ? activeAnalysis.candles[activeAnalysis.candles.length - 1].close
+      : null;
+  const rawOverlayDensity = useMemo(() => {
+    if (!activeAnalysis) {
+      return {
+        total: 0,
+        levels: 0,
+        segments: 0,
+        markers: 0,
+        confluence: 0,
+      };
+    }
+    const levels = activeAnalysis.overlays?.priceLines?.length ?? 0;
+    const segments = activeAnalysis.overlays?.segments?.length ?? 0;
+    const markers =
+      activeTf === "day"
+        ? (activeAnalysis.overlays?.markers ?? []).filter((marker) => BASIC_PATTERN_TYPES.has(marker.type as OverlayMarkerType))
+            .length +
+          (activeAnalysis.strategyOverlays?.washoutPullback?.anchorSpike.time ? 1 : 0) +
+          (activeAnalysis.strategyOverlays?.washoutPullback?.washoutReentry.time ? 1 : 0)
+        : 0;
+    const confluence = activeAnalysis.confluence?.length ?? 0;
+    return {
+      total: levels + segments + markers + confluence,
+      levels,
+      segments,
+      markers,
+      confluence,
+    };
+  }, [activeAnalysis, activeTf]);
+  const shouldCondenseOverlays = drawingPresetMode === "basic" && rawOverlayDensity.total >= 18;
+  const effectiveShowTrendlines = showTrendlines && !shouldCondenseOverlays;
+  const effectiveShowChannels = showChannels && !shouldCondenseOverlays;
+  const effectiveShowFanLines = showFanLines && !shouldCondenseOverlays;
+  const effectiveShowZones = showZones && !shouldCondenseOverlays;
+  const effectiveShowAdvancedPatternMarkers = showAdvancedPatternMarkers && !shouldCondenseOverlays;
+
   useEffect(() => {
     if (!priceChartRef.current || !result) return;
     const active = result.timeframes[activeTf];
@@ -1168,50 +1212,6 @@ export default function App() {
   const increasePriceChartHeight = () =>
     setPriceChartHeight((prev) => Math.min(MAX_PRICE_CHART_HEIGHT, prev + PRICE_CHART_HEIGHT_STEP));
   const resetPriceChartHeight = () => setPriceChartHeight(DEFAULT_PRICE_CHART_HEIGHT);
-
-  const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
-  const maInfo = activeAnalysis?.indicators.ma ?? null;
-  const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
-  const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
-  const hasRsiPanel = activeRsiPoints.some((point) => point.value != null);
-  const latestClose =
-    activeAnalysis && activeAnalysis.candles.length > 0
-      ? activeAnalysis.candles[activeAnalysis.candles.length - 1].close
-      : null;
-  const rawOverlayDensity = useMemo(() => {
-    if (!activeAnalysis) {
-      return {
-        total: 0,
-        levels: 0,
-        segments: 0,
-        markers: 0,
-        confluence: 0,
-      };
-    }
-    const levels = activeAnalysis.overlays?.priceLines?.length ?? 0;
-    const segments = activeAnalysis.overlays?.segments?.length ?? 0;
-    const markers =
-      activeTf === "day"
-        ? (activeAnalysis.overlays?.markers ?? []).filter((marker) => BASIC_PATTERN_TYPES.has(marker.type as OverlayMarkerType))
-            .length +
-          (activeAnalysis.strategyOverlays?.washoutPullback?.anchorSpike.time ? 1 : 0) +
-          (activeAnalysis.strategyOverlays?.washoutPullback?.washoutReentry.time ? 1 : 0)
-        : 0;
-    const confluence = activeAnalysis.confluence?.length ?? 0;
-    return {
-      total: levels + segments + markers + confluence,
-      levels,
-      segments,
-      markers,
-      confluence,
-    };
-  }, [activeAnalysis, activeTf]);
-  const shouldCondenseOverlays = drawingPresetMode === "basic" && rawOverlayDensity.total >= 18;
-  const effectiveShowTrendlines = showTrendlines && !shouldCondenseOverlays;
-  const effectiveShowChannels = showChannels && !shouldCondenseOverlays;
-  const effectiveShowFanLines = showFanLines && !shouldCondenseOverlays;
-  const effectiveShowZones = showZones && !shouldCondenseOverlays;
-  const effectiveShowAdvancedPatternMarkers = showAdvancedPatternMarkers && !shouldCondenseOverlays;
   const levelGuideRows = useMemo(() => {
     if (!activeAnalysis) return [] as LevelGuideItem[];
     const rows: LevelGuideItem[] = [];
