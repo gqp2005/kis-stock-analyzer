@@ -245,6 +245,12 @@ const formatRatio = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}배`;
 const formatSignedDecimal = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+const formatSignedPriceChange = (change: number | null, changePct: number | null): string => {
+  if (change == null || changePct == null) return "-";
+  const rounded = Math.round(change);
+  const priceText = `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("ko-KR")}원`;
+  return `${priceText} (${formatSignedDecimal(changePct)}%)`;
+};
 const formatSignedQty = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value).toLocaleString("ko-KR")}주`;
 const formatPctPoint = (value: number | null): string =>
@@ -2210,9 +2216,9 @@ export default function App() {
                 </div>
                 <div className="sticky-summary-price">
                   <span>{formatPrice(headerQuote?.close ?? null)}</span>
-                  {headerQuote?.changePct != null && (
+                  {headerQuote?.change != null && headerQuote?.changePct != null && (
                     <small className={`reason-tag ${headerQuote.tone}`}>
-                      {`${formatSignedDecimal(headerQuote.changePct)}%`}
+                      {formatSignedPriceChange(headerQuote.change, headerQuote.changePct)}
                     </small>
                   )}
                 </div>
@@ -2221,33 +2227,6 @@ export default function App() {
                 <span className={overallClass(result.final.overall)}>{overallLabel(result.final.overall)}</span>
                 <span className={confidenceClass(result.final.confidence)}>신뢰도 {result.final.confidence}</span>
                 <span className="badge neutral">{TF_LABEL[activeTf]} 보기</span>
-              </div>
-            </div>
-
-            <div className="summary">
-              <div>
-                <h2>
-                  {result.meta.name} ({result.meta.symbol})
-                </h2>
-                <p className="meta current-quote">
-                  <span>현재가 {formatPrice(headerQuote?.close ?? null)}</span>
-                  {headerQuote?.changePct != null && (
-                    <small className={`reason-tag ${headerQuote.tone}`}>
-                      {`${headerQuote.change != null && headerQuote.change > 0 ? "+" : ""}${headerQuote.change != null ? Math.round(headerQuote.change).toLocaleString("ko-KR") : "0"}원 (${formatSignedDecimal(headerQuote.changePct)}%)`}
-                    </small>
-                  )}
-                </p>
-              </div>
-              <div className="summary-right">
-                <div className="final-badges">
-                  <span className={overallClass(result.final.overall)}>
-                    {overallLabel(result.final.overall)}
-                  </span>
-                  <span className={confidenceClass(result.final.confidence)}>
-                    신뢰도 {result.final.confidence}
-                  </span>
-                </div>
-                <p className="summary-text">{result.final.summary}</p>
               </div>
             </div>
             <p className="meta summary-meta-bottom">
