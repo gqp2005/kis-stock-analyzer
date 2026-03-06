@@ -2347,7 +2347,7 @@ h2 {
     gap: 8px;
   }
 
-  .search button,
+  .search button:not(.search-clear-btn),
   .screener-controls button,
   .trade-confirm-actions button {
     width: 100%;
