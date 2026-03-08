@@ -138,6 +138,7 @@ Cloudflare Pages Functions env 또는 로컬 `.dev.vars`:
   - 둘 다 없으면 스크리너는 Cache API만 사용하며, 캐시 소실 시 히스토리/마지막 성공 복원이 제한됩니다.
   - 스크리너 snapshot/히스토리는 `KV` 또는 `D1`을 사용할 수 있습니다.
   - 단, `rebuild` 런타임 락/진행률은 KV eventual consistency 문제를 피하기 위해 `D1`이 있으면 `D1`, 없으면 `Cache API`만 사용합니다.
+  - `SCREENER_KV`만 있는 환경에서는 런타임 `progress`를 Cache API에 저장하면서 KV에 백업해 phase 재시작 시 복구를 시도합니다(락은 계속 Cache API 기준).
 - `AUTOTRADE_KV`가 없으면 자동매매 엔진은 실행되지만, 포지션/손실/재진입 제한 상태를 요청 간 유지하지 못합니다.
 - 자동 부트스트랩 동작:
   - `SCREENER_AUTO_BOOTSTRAP=true` + `ADMIN_TOKEN` 설정 시
@@ -615,7 +616,7 @@ curl "https://<your-pages-domain>/api/admin/rebuild-screener/status?token=<ADMIN
 - `.github/workflows/screener-rebuild.yml`
   - 매일 `KST 05:00`(UTC `20:00`) 자동 실행
   - `/api/admin/rebuild-screener?mode=trigger` 1회 호출 후
-  - `/api/admin/rebuild-screener?mode=step`를 batch(기본 20) 반복 호출하며 `inProgress=false`까지 진행
+  - 같은 workflow run 안에서 `/api/admin/rebuild-screener?mode=step`를 batch(기본 20) 반복 호출하며 `hasMore=false`까지 완주
   - 동시 실행 방지를 위해 workflow concurrency 적용
   - 완료 시 Top 변동 종목 요약을 Telegram/Slack으로 선택 전송
   - 기본 호출은 `validate=auto`로 동작해 주간/월간 검증 컷오프를 자동 갱신

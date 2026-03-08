@@ -2,6 +2,7 @@ import { getCachedJson, putCachedJson } from "./cache";
 import {
   deletePersistedJson,
   getPersistedJson,
+  type PersistBackend,
   putPersistedJson,
 } from "./screenerPersistence";
 import {
@@ -21,6 +22,13 @@ export type RebuildRuntimeBackend = "cache" | "d1";
 // 런타임 상태는 D1이 있으면 D1, 없으면 Cache API만 사용한다.
 export const rebuildRuntimeBackend = (env: Env): RebuildRuntimeBackend =>
   env.SCREENER_DB ? "d1" : "cache";
+
+const rebuildProgressRecoveryBackend = (
+  env: Env,
+): Exclude<PersistBackend, "none" | "d1"> | "none" => {
+  if (rebuildRuntimeBackend(env) === "d1") return "none";
+  return env.SCREENER_KV ? "kv" : "none";
+};
 
 export interface RebuildRuntimeLock {
   startedAt: string;
@@ -86,7 +94,17 @@ export const loadRebuildRuntimeProgress = async (
       "d1",
     );
   }
-  return await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date));
+  const cacheValue = await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date));
+  if (cacheValue) return cacheValue;
+
+  const recoveryBackend = rebuildProgressRecoveryBackend(env);
+  if (recoveryBackend === "none") return null;
+
+  return await getPersistedJson<RebuildProgressSnapshot>(
+    env,
+    persistRebuildProgressKey(date),
+    recoveryBackend,
+  );
 };
 
 export const saveRebuildRuntimeProgress = async (
@@ -107,6 +125,17 @@ export const saveRebuildRuntimeProgress = async (
     return;
   }
   await putCachedJson(cache, rebuildProgressKey(date), payload, SCREENER_CACHE_TTL_SEC);
+
+  const recoveryBackend = rebuildProgressRecoveryBackend(env);
+  if (recoveryBackend !== "none") {
+    await putPersistedJson(
+      env,
+      persistRebuildProgressKey(date),
+      payload,
+      SCREENER_CACHE_TTL_SEC,
+      recoveryBackend,
+    );
+  }
 };
 
 export const clearRebuildRuntimeProgress = async (
@@ -120,4 +149,9 @@ export const clearRebuildRuntimeProgress = async (
     return;
   }
   await cache.delete(new Request(rebuildProgressKey(date)));
+
+  const recoveryBackend = rebuildProgressRecoveryBackend(env);
+  if (recoveryBackend !== "none") {
+    await deletePersistedJson(env, persistRebuildProgressKey(date), recoveryBackend);
+  }
 };
