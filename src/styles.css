@@ -2479,8 +2479,9 @@ h2 {
 
 .strategy-mini-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .strategy-mini-item {
@@ -2488,6 +2489,7 @@ h2 {
   border-radius: 12px;
   padding: 12px;
   background: rgba(9, 27, 46, 0.55);
+  min-width: 0;
 }
 
 .strategy-mini-item p {
@@ -2570,6 +2572,32 @@ h2 {
 .timeline-group:first-child {
   padding-top: 0;
   border-top: 0;
+}
+
+.screener-dashboard-grid .insight-list li {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.screener-dashboard-grid .insight-list li > span {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.screener-dashboard-grid .insight-list li > small {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1399px) {
+  .screener-dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1400px) and (max-width: 1699px) {
+  .screener-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .holding-name-cell {
