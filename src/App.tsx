@@ -31,6 +31,7 @@ import AdminOpsPanel from "./AdminOpsPanel";
 import AccountPanel from "./AccountPanel";
 import AutoTradePanel from "./AutoTradePanel";
 import FavoriteButton from "./FavoriteButton";
+import GlossaryPanel from "./GlossaryPanel";
 import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
 import { useFavorites } from "./favorites";
@@ -544,7 +545,9 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<"analysis" | "screener" | "strategy" | "autotrade" | "account" | "admin">("analysis");
+  const [pageMode, setPageMode] = useState<
+    "analysis" | "screener" | "strategy" | "glossary" | "autotrade" | "account" | "admin"
+  >("analysis");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
@@ -1397,6 +1400,9 @@ export default function App() {
   const flowPersistenceCard = activeAnalysis?.strategyCards?.flowPersistence ?? null;
   const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
   const flowSignal = activeAnalysis?.signals.flow ?? null;
+  const flowDisplayReasons = (flowSignal?.reasons ?? []).filter((reason) =>
+    reason.startsWith("투자자 순매수는 최근 영업일"),
+  );
   const recentVolumePatterns = [...(activeAnalysis?.signals.volumePatterns ?? [])]
     .slice(-10)
     .reverse();
@@ -2134,6 +2140,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={pageMode === "glossary" ? "tab active" : "tab"}
+            onClick={() => setPageMode("glossary")}
+          >
+            용어 안내
+          </button>
+          <button
+            type="button"
             className={pageMode === "autotrade" ? "tab active" : "tab"}
             onClick={() => setPageMode("autotrade")}
           >
@@ -2743,11 +2756,6 @@ export default function App() {
                         </strong>
                       </div>
                     </div>
-                    <ul className="volume-reasons">
-                      {fundamentalSignal.reasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
                     <p className="insight-opinion">
                       <small className={verdictToneClass(fundamentalOneLiner.verdict)}>
                         {fundamentalOneLiner.verdict}
@@ -2790,11 +2798,13 @@ export default function App() {
                         </strong>
                       </div>
                     </div>
-                    <ul className="volume-reasons">
-                      {flowSignal.reasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
+                    {flowDisplayReasons.length > 0 && (
+                      <ul className="volume-reasons">
+                        {flowDisplayReasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
                     <p className="insight-opinion">
                       <small className={verdictToneClass(flowOneLiner.verdict)}>
                         {flowOneLiner.verdict}
@@ -3772,6 +3782,8 @@ export default function App() {
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : pageMode === "strategy" ? (
           <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : pageMode === "glossary" ? (
+          <GlossaryPanel />
         ) : pageMode === "autotrade" ? (
           <AutoTradePanel apiBase={apiBase} />
         ) : pageMode === "account" ? (
@@ -3789,6 +3801,9 @@ export default function App() {
         </button>
         <button type="button" className={pageMode === "strategy" ? "active" : ""} onClick={() => setPageMode("strategy")}>
           전략
+        </button>
+        <button type="button" className={pageMode === "glossary" ? "active" : ""} onClick={() => setPageMode("glossary")}>
+          용어
         </button>
         <button type="button" className={pageMode === "autotrade" ? "active" : ""} onClick={() => setPageMode("autotrade")}>
           자동

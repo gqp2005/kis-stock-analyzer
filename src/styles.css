@@ -2313,7 +2313,7 @@ h2 {
     bottom: 10px;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px;
     padding: 8px;
     border-radius: 16px;
@@ -2455,6 +2455,7 @@ h2 {
   .screener-compact-grid,
   .screener-dashboard-grid,
   .strategy-summary-grid,
+  .glossary-grid,
   .account-summary-grid,
   .fund-grid,
   .volume-grid,
@@ -2494,6 +2495,43 @@ h2 {
 
 .strategy-mini-item p {
   margin: 6px 0;
+}
+
+.glossary-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.glossary-intro p {
+  margin: 0;
+}
+
+.glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.glossary-card {
+  min-width: 0;
+}
+
+.glossary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.glossary-card p {
+  margin: 8px 0 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.glossary-card strong {
+  color: #f0f6ff;
 }
 
 .strategy-mini-head {

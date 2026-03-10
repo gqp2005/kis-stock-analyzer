@@ -3,6 +3,8 @@ export interface Env {
   KIS_APP_SECRET: string;
   KIS_BASE_URL?: string;
   KIS_ENV?: "real" | "demo";
+  SITE_AUTH_PASSWORD?: string;
+  SITE_AUTH_COOKIE_SECRET?: string;
   KIS_ACCOUNT_NO?: string;
   KIS_ACCOUNT_PRDT_CD?: string;
   AUTOTRADE_KV?: KVNamespace;
