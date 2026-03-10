@@ -29,6 +29,10 @@ import type {
 } from "./types";
 import AdminOpsPanel from "./AdminOpsPanel";
 import AccountPanel from "./AccountPanel";
+import AnalysisChartWorkspace from "./analysis/AnalysisChartWorkspace";
+import AnalysisDecisionSummary from "./analysis/AnalysisDecisionSummary";
+import AnalysisDetailSections from "./analysis/AnalysisDetailSections";
+import AnalysisSearchHeader from "./analysis/AnalysisSearchHeader";
 import AutoTradePanel from "./AutoTradePanel";
 import FavoriteButton from "./FavoriteButton";
 import GlossaryPanel from "./GlossaryPanel";
@@ -2098,6 +2102,1436 @@ export default function App() {
       text: "RSI가 중립권이라 방향 확증 신호가 더 필요합니다.",
     };
   })();
+  const analysisTabs = result
+    ? TF_TABS.map((tf) => ({
+        id: tf,
+        label: TF_LABEL[tf],
+        disabled: !result.timeframes[tf],
+      }))
+    : [];
+  const decisionPlanItems = [
+    { label: "진입가", value: formatPrice(tradePlan?.entry ?? null) },
+    { label: "손절가", value: formatPrice(tradePlan?.stop ?? null) },
+    { label: "목표가", value: formatPrice(tradePlan?.target ?? null) },
+    { label: "손익비", value: formatRiskReward(tradePlan?.riskReward ?? null) },
+  ];
+  const decisionScoreItems = activeAnalysis
+    ? [
+        {
+          label: "추세",
+          value: activeAnalysis.scores.trend,
+          className: `decision-score-box ${scoreClass(activeAnalysis.scores.trend)}`,
+        },
+        {
+          label: "모멘텀",
+          value: activeAnalysis.scores.momentum,
+          className: `decision-score-box ${scoreClass(activeAnalysis.scores.momentum)}`,
+        },
+        {
+          label: "위험도",
+          value: activeAnalysis.scores.risk,
+          className: `decision-score-box ${scoreClass(activeAnalysis.scores.risk)}`,
+        },
+      ]
+    : [];
+  const decisionCoreReasons = activeAnalysis
+    ? activeAnalysis.reasons.slice(0, 3).map((reason, index) => {
+        const tone = toneBadge(coreReasonTone(activeAnalysis, index));
+        return {
+          text: reason,
+          toneLabel: tone.text,
+          toneClassName: tone.className,
+        };
+      })
+    : [
+        {
+          text: "근거 데이터가 아직 없습니다.",
+          toneLabel: "중립",
+          toneClassName: "reason-tag neutral",
+        },
+      ];
+  const decisionMetaLine = result ? `${result.meta.market} · ${result.meta.asOf} · 출처 ${result.meta.source}` : "";
+  const chartSettingsContent =
+    maInfo && activeAnalysis ? (
+      <div className="indicator-controls indicator-controls-panel">
+        <div className="chart-height-controls">
+          <span>차트 높이</span>
+          <div className="chart-height-buttons">
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={decreasePriceChartHeight}
+              disabled={priceChartHeight <= MIN_PRICE_CHART_HEIGHT}
+            >
+              -80
+            </button>
+            <strong>{priceChartHeight}px</strong>
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={increasePriceChartHeight}
+              disabled={priceChartHeight >= MAX_PRICE_CHART_HEIGHT}
+            >
+              +80
+            </button>
+            <button type="button" className="preset-btn" onClick={resetPriceChartHeight}>
+              기본
+            </button>
+          </div>
+        </div>
+        <div className="chart-width-controls">
+          <span>모바일 폭</span>
+          <button
+            type="button"
+            className={mobileChartFullWidth ? "preset-btn active" : "preset-btn"}
+            onClick={() => setMobileChartFullWidth((prev) => !prev)}
+          >
+            {mobileChartFullWidth ? "전체폭 해제" : "전체폭 켜기"}
+          </button>
+        </div>
+        <div className="chart-width-controls">
+          <span>우측 라벨 정리</span>
+          <div className="chart-height-buttons">
+            <button
+              type="button"
+              className={labelDensityMode === "AUTO" ? "preset-btn active" : "preset-btn"}
+              onClick={() => setLabelDensityMode("AUTO")}
+            >
+              자동
+            </button>
+            <button
+              type="button"
+              className={labelDensityMode === "COMPACT" ? "preset-btn active" : "preset-btn"}
+              onClick={() => setLabelDensityMode("COMPACT")}
+            >
+              정리
+            </button>
+            <button
+              type="button"
+              className={labelDensityMode === "FULL" ? "preset-btn active" : "preset-btn"}
+              onClick={() => setLabelDensityMode("FULL")}
+            >
+              전체
+            </button>
+          </div>
+        </div>
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={showMa1}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setShowMa1(event.target.checked);
+              }}
+            />
+            MA{maInfo.ma1Period}
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={showMa2}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setShowMa2(event.target.checked);
+              }}
+            />
+            MA{maInfo.ma2Period}
+          </label>
+          {maInfo.ma3Period != null && (
+            <label>
+              <input
+                type="checkbox"
+                checked={showMa3}
+                onChange={(event) => {
+                  setDrawingPresetMode("custom");
+                  setShowMa3(event.target.checked);
+                }}
+              />
+              MA{maInfo.ma3Period}
+            </label>
+          )}
+        </>
+        <label>
+          <input
+            type="checkbox"
+            checked={showLevels}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowLevels(event.target.checked);
+            }}
+          />
+          레벨
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showTrendlines}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowTrendlines(event.target.checked);
+            }}
+          />
+          추세선
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showChannels}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowChannels(event.target.checked);
+            }}
+          />
+          채널
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showFanLines}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowFanLines(event.target.checked);
+            }}
+          />
+          팬 라인
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showZones}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowZones(event.target.checked);
+            }}
+          />
+          존
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={showMarkers}
+            onChange={(event) => {
+              setDrawingPresetMode("custom");
+              setShowMarkers(event.target.checked);
+            }}
+          />
+          마커
+        </label>
+        {activeTf === "day" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={showAdvancedPatternMarkers}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setShowAdvancedPatternMarkers(event.target.checked);
+              }}
+            />
+            고급 마커(HOT/CAP/WB)
+          </label>
+        )}
+        {activeTf === "day" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={showPatternReferenceLevel}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setShowPatternReferenceLevel(event.target.checked);
+              }}
+            />
+            패턴 기준선 표시
+          </label>
+        )}
+        {activeTf === "day" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={highlightSelectedCandle}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setHighlightSelectedCandle(event.target.checked);
+              }}
+            />
+            선택 캔들 강조
+          </label>
+        )}
+        {activeTf === "day" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={showWashoutEntries}
+              onChange={(event) => {
+                setDrawingPresetMode("custom");
+                setShowWashoutEntries(event.target.checked);
+              }}
+            />
+            눌림목 분할 진입선
+          </label>
+        )}
+      </div>
+    ) : null;
+  const chartNotices = (
+    <>
+      {shouldCondenseOverlays && (
+        <p className="chart-density-note">
+          기본형 프리셋에서 차트 과밀을 줄이기 위해 추세선·채널·팬 라인·존·고급 마커를 자동 숨겼습니다.
+        </p>
+      )}
+      {compactLabelMode && (
+        <p className="chart-density-note">
+          우측 가격 라벨은 비슷한 가격대를 묶어 핵심 레벨 위주로 정리해 표시합니다.
+        </p>
+      )}
+    </>
+  );
+  const chartFooter = (
+    <>
+      {activeTf === "day" && showMarkers && selectedPattern && (
+        <div className="marker-detail-panel">
+          <div className="marker-detail-head">
+            <h4>패턴 상세</h4>
+            <button type="button" className="marker-detail-close" onClick={() => setSelectedPattern(null)}>
+              닫기
+            </button>
+          </div>
+          <div className="marker-detail-meta">
+            <span>{selectedPattern.t.slice(0, 10)}</span>
+            <strong>{VOLUME_PATTERN_TEXT[selectedPattern.type] ?? selectedPattern.label}</strong>
+            <em>{selectedPattern.desc}</em>
+          </div>
+          <div className="marker-detail-grid">
+            <div>
+              <span>가격</span>
+              <strong>{formatPrice(selectedPatternDetails?.price ?? null)}</strong>
+            </div>
+            <div>
+              <span>거래량</span>
+              <strong>{(selectedPatternDetails?.volume ?? 0).toLocaleString("ko-KR")}</strong>
+            </div>
+            <div>
+              <span>거래량 비율</span>
+              <strong>{formatRatio(selectedPatternDetails?.volRatio ?? null)}</strong>
+            </div>
+            <div>
+              <span>ref.level</span>
+              <strong>{formatPrice(selectedPatternDetails?.refLevel ?? null)}</strong>
+            </div>
+          </div>
+          <div className="marker-checklist">
+            <h5>조건 체크리스트</h5>
+            <ul>
+              {(selectedPatternDetails?.checklist ?? []).map((item) => (
+                <li key={item.label} className={item.ok ? "ok" : "no"}>
+                  {item.ok ? "✓" : "✕"} {item.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p
+            className={
+              selectedPatternDetails?.tone === "warning" ? "marker-signal warning" : "marker-signal confirm"
+            }
+          >
+            {selectedPatternDetails?.message ?? selectedPattern.desc}
+          </p>
+        </div>
+      )}
+      {activeTf === "day" && showMarkers && !selectedPattern && (
+        <p className="marker-detail-hint">차트 마커를 클릭하면 패턴 상세가 표시됩니다.</p>
+      )}
+      {activeTf === "day" && <p className="plan-note">CONFIRMED 조건: close&gt;R &amp;&amp; volRatio&gt;=1.5</p>}
+      {showLevels && (
+        <div className="level-guide">
+          <div className="level-guide-head">
+            <h4>레벨 설명</h4>
+            <small>표시 중 {levelGuideRows.length}개</small>
+          </div>
+          {levelGuideRows.length > 0 ? (
+            <ul className="level-guide-list">
+              {levelGuideRows.map((item) => (
+                <li key={`${item.id}-${item.price}`}>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <p>{item.meaning}</p>
+                  </div>
+                  <span>{formatPrice(item.price)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="plan-note">현재 표시 가능한 레벨이 없습니다.</p>
+          )}
+        </div>
+      )}
+      <p className="insight-opinion">
+        <small className={verdictToneClass(chartOneLiner.verdict)}>{chartOneLiner.verdict}</small>
+        {chartOneLiner.text}
+      </p>
+    </>
+  );
+  const reasoningSectionContent = activeAnalysis ? (
+    <>
+      <div className="insight-grid">
+        <div className="card insight-card">
+          <h3>자동 작도 신뢰도 요약</h3>
+          {reliabilitySummary ? (
+            <>
+              <div className="insight-kpi-grid">
+                <div className="plan-item">
+                  <span>노출/전체</span>
+                  <strong>
+                    {reliabilitySummary.shown}/{reliabilitySummary.total}
+                  </strong>
+                </div>
+                <div className="plan-item">
+                  <span>숨김 선</span>
+                  <strong>{reliabilitySummary.hidden}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>평균 신뢰도</span>
+                  <strong>{reliabilitySummary.averageScore}점</strong>
+                </div>
+              </div>
+              <ul className="insight-list">
+                {reliabilitySummary.topLines.slice(0, 3).map((line) => (
+                  <li key={line.id}>
+                    <span>{line.label}</span>
+                    <small className="signal-tag neutral">
+                      {reliabilityLevelLabel(line.score)} {line.score}점
+                    </small>
+                  </li>
+                ))}
+              </ul>
+              <p className="insight-opinion">
+                <small className={verdictToneClass(reliabilityOneLiner.verdict)}>{reliabilityOneLiner.verdict}</small>
+                {reliabilityOneLiner.text}
+              </p>
+            </>
+          ) : (
+            <p className="plan-note">신뢰도 요약 데이터가 아직 없습니다.</p>
+          )}
+        </div>
+
+        <div className="card insight-card">
+          <h3>컨플루언스 TOP</h3>
+          {confluenceTop.length > 0 ? (
+            <>
+              <ul className="insight-list">
+                {confluenceTop.map((band, index) => (
+                  <li key={`${band.bandLow}-${band.bandHigh}-${index}`}>
+                    <span>
+                      {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
+                    </span>
+                    <small className="signal-tag neutral">
+                      강도 {band.strength}
+                      {band.distancePct != null ? ` · 현재가 거리 ${band.distancePct.toFixed(2)}%` : ""}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+              <p className="insight-opinion">
+                <small className={verdictToneClass(confluenceOneLiner.verdict)}>{confluenceOneLiner.verdict}</small>
+                {confluenceOneLiner.text}
+              </p>
+            </>
+          ) : (
+            <p className="plan-note">컨플루언스 상위 구간이 없습니다.</p>
+          )}
+        </div>
+
+        <div className="card insight-card">
+          <h3>추세 레짐 (240/120/60봉)</h3>
+          {regimeSummary ? (
+            <>
+              <div className="insight-headline">
+                <span className="plan-note">정렬 상태</span>
+                <small
+                  className={
+                    regimeSummary.alignment === "UP"
+                      ? "signal-tag positive"
+                      : regimeSummary.alignment === "DOWN"
+                        ? "signal-tag negative"
+                        : "signal-tag neutral"
+                  }
+                >
+                  {regimeAlignmentLabel(regimeSummary.alignment)}
+                </small>
+              </div>
+              <div className="insight-kpi-grid">
+                {regimeSummary.items.map((item) => (
+                  <div key={`${item.window}-${item.lineId ?? "none"}`} className="plan-item">
+                    <span>{item.label}</span>
+                    <strong>{regimeLabel(item.direction)}</strong>
+                    <small className={regimeChipClass(item.direction)}>신뢰도 {item.score}점</small>
+                  </div>
+                ))}
+              </div>
+              <p className="insight-opinion">
+                <small className={verdictToneClass(regimeOneLiner.verdict)}>{regimeOneLiner.verdict}</small>
+                {regimeOneLiner.text}
+              </p>
+            </>
+          ) : (
+            <p className="plan-note">레짐 요약 데이터가 없습니다.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>강한 지지/저항 구간 (Confluence)</h3>
+        {confluenceBands.length > 0 ? (
+          <div className="confluence-grid">
+            {confluenceBands.slice(0, 5).map((band, index) => (
+              <article key={`${band.bandLow}-${band.bandHigh}-${index}`} className="confluence-item">
+                <div className="confluence-head">
+                  <strong>
+                    {formatPrice(band.bandLow)} ~ {formatPrice(band.bandHigh)}
+                  </strong>
+                  <small>강도 {band.strength}</small>
+                </div>
+                <p>{band.reasons.join(" · ")}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="plan-note">컨플루언스 구간이 아직 충분하지 않습니다.</p>
+        )}
+        <p className="insight-opinion">
+          <small className={verdictToneClass(confluenceOneLiner.verdict)}>{confluenceOneLiner.verdict}</small>
+          {confluenceOneLiner.text}
+        </p>
+      </div>
+
+      <div className="card">
+        <h3>오버레이 설명</h3>
+        {overlayExplanations.length > 0 ? (
+          <ul>
+            {overlayExplanations.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="plan-note">오버레이 설명이 없습니다.</p>
+        )}
+        <p className="insight-opinion">
+          <small className={verdictToneClass(overlayOneLiner.verdict)}>{overlayOneLiner.verdict}</small>
+          {overlayOneLiner.text}
+        </p>
+      </div>
+
+      <div className="card">
+        <h3>{TF_LABEL[activeTf]} 근거</h3>
+        <ul>
+          {activeAnalysis.reasons.map((reason, index) => (
+            <li key={reason} className="reason-item">
+              <span>{reason}</span>
+              {(() => {
+                const tone = toneBadge(coreReasonTone(activeAnalysis, index));
+                return <small className={tone.className}>{tone.text}</small>;
+              })()}
+            </li>
+          ))}
+        </ul>
+        <p className="insight-opinion">
+          <small className={verdictToneClass(reasonsOneLiner.verdict)}>{reasonsOneLiner.verdict}</small>
+          {reasonsOneLiner.text}
+        </p>
+      </div>
+    </>
+  ) : null;
+  const patternSectionContent = activeAnalysis ? (
+    <>
+      <div className="insight-grid">
+        <div className="card insight-card">
+          <h3>패턴 상태 (VCP/컵앤핸들)</h3>
+          <div className="insight-kpi-grid">
+            {patternStateRows.map((item) => (
+              <div key={item.key} className="plan-item">
+                <span>{item.title}</span>
+                <strong>{item.state}</strong>
+                <small className="plan-note">{item.score}점</small>
+              </div>
+            ))}
+          </div>
+          <ul className="insight-list">
+            {patternStateRows.map((item) => (
+              <li key={`${item.key}-note`}>
+                <span>{item.note}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(patternOneLiner.verdict)}>{patternOneLiner.verdict}</small>
+            {patternOneLiner.text}
+          </p>
+        </div>
+
+        <div className="card insight-card">
+          <h3>거래량 패턴 모니터</h3>
+          <div className="insight-kpi-grid">
+            <div className="plan-item">
+              <span>최근 20봉 감지</span>
+              <strong>{recent20Patterns.length}건</strong>
+            </div>
+            <div className="plan-item">
+              <span>긍정/부정</span>
+              <strong>
+                {recentPositiveCount}/{recentNegativeCount}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>해석</span>
+              <strong>{volumeMonitorLabel}</strong>
+            </div>
+          </div>
+          <p className="plan-note">
+            최근 패턴:{" "}
+            {recentVolumePatterns[0]
+              ? `${VOLUME_PATTERN_TEXT[recentVolumePatterns[0].type] ?? recentVolumePatterns[0].label} (${recentVolumePatterns[0].t.slice(0, 10)})`
+              : "없음"}
+          </p>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(volumeOneLiner.verdict)}>{volumeOneLiner.verdict}</small>
+            {volumeOneLiner.text}
+          </p>
+        </div>
+      </div>
+
+      {cupHandleSignal && (
+        <div className="card">
+          <h3>컵앤핸들 분석</h3>
+          <div className="fund-grid">
+            <div className="plan-item">
+              <span>패턴 상태</span>
+              <strong className="fund-label-wrap">
+                {cupHandleStateLabel(cupHandleSignal.state)}
+                <small className={cupHandleStateClass(cupHandleSignal.state)}>
+                  {cupHandleSignal.detected ? "감지됨" : "미감지"}
+                </small>
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>패턴 점수</span>
+              <strong>{cupHandleSignal.score}점</strong>
+            </div>
+            <div className="plan-item">
+              <span>넥라인(기준)</span>
+              <strong>{formatPrice(cupHandleSignal.neckline)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>돌파 여부</span>
+              <strong>
+                <small className={cupHandleSignal.breakout ? "signal-tag positive" : "signal-tag neutral"}>
+                  {cupHandleSignal.breakout ? "돌파 확인" : "돌파 대기"}
+                </small>
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>컵 깊이</span>
+              <strong>{formatPctPoint(cupHandleSignal.cupDepthPct)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>핸들 깊이</span>
+              <strong>{formatPctPoint(cupHandleSignal.handleDepthPct)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>컵 폭</span>
+              <strong>{formatBars(cupHandleSignal.cupWidthBars)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>핸들 기간</span>
+              <strong>{formatBars(cupHandleSignal.handleBars)}</strong>
+            </div>
+          </div>
+          <ul className="volume-reasons">
+            {cupHandleSignal.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(cupHandleOneLiner.verdict)}>{cupHandleOneLiner.verdict}</small>
+            {cupHandleOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {activeTf === "day" && washoutCard && (
+        <div className="card">
+          <div className="insight-headline">
+            <h3>{washoutCard.displayName}</h3>
+            <div className="final-badges">
+              <small className={washoutStateClass(washoutCard.state)}>{washoutStateLabel(washoutCard.state)}</small>
+              <span className={confidenceClass(washoutCard.score)}>점수 {washoutCard.score}</span>
+              <span className={confidenceClass(washoutCard.confidence)}>신뢰도 {washoutCard.confidence}</span>
+            </div>
+          </div>
+
+          <div className="washout-grid">
+            <div className="plan-item">
+              <span>Anchor 거래대금</span>
+              <strong>{formatRatio(washoutCard.anchorSpike.turnoverRatio)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>재유입 거래대금</span>
+              <strong>{formatRatio(washoutCard.washoutReentry.turnoverRatio)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>현재 상태</span>
+              <strong>{washoutStateLabel(washoutCard.state)}</strong>
+            </div>
+          </div>
+
+          <div className="washout-grid">
+            <div className="plan-item">
+              <span>Pullback Zone</span>
+              <strong>
+                {washoutCard.pullbackZone.low != null && washoutCard.pullbackZone.high != null
+                  ? `${formatPrice(washoutCard.pullbackZone.low)} ~ ${formatPrice(washoutCard.pullbackZone.high)}`
+                  : "-"}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>Entry Plan</span>
+              <strong>
+                {washoutCard.entryPlan.entries.length > 0
+                  ? `${washoutCard.entryPlan.style} (${washoutCard.entryPlan.entries
+                      .map((entry) => `${entry.label} ${formatPrice(entry.price)}`)
+                      .join(" / ")})`
+                  : `${washoutCard.entryPlan.style} (대기)`}
+              </strong>
+            </div>
+            <div className="plan-item">
+              <span>Invalidation</span>
+              <strong>{formatPrice(washoutCard.entryPlan.invalidLow)}</strong>
+            </div>
+          </div>
+
+          <div className="washout-grid">
+            <div className="plan-item">
+              <span>존 위치</span>
+              <strong>{washoutZonePosition}</strong>
+            </div>
+            <div className="plan-item">
+              <span>Anchor 일자</span>
+              <strong>{washoutCard.anchorSpike.date ?? "-"}</strong>
+            </div>
+            <div className="plan-item">
+              <span>재유입 일자</span>
+              <strong>{washoutCard.washoutReentry.date ?? "-"}</strong>
+            </div>
+          </div>
+
+          <div className="washout-columns">
+            <div>
+              <h4>근거</h4>
+              <ul className="volume-reasons">
+                {washoutCard.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h4>주의</h4>
+              {washoutCard.warnings.length > 0 ? (
+                <ul className="volume-reasons">
+                  {washoutCard.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="plan-note">현재 추가 경고는 없습니다.</p>
+              )}
+            </div>
+          </div>
+
+          <p className="plan-note">{washoutCard.statusSummary}</p>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(washoutCardOneLiner.verdict)}>{washoutCardOneLiner.verdict}</small>
+            {washoutCardOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {activeTf === "day" &&
+        darvasCard &&
+        nr7Card &&
+        trendTemplateCard &&
+        rsiDivergenceCard &&
+        flowPersistenceCard && (
+          <div className="card">
+            <h3>추가 전략 카드 (1~5)</h3>
+            <div className="strategy-mini-grid">
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>다르바스 박스</strong>
+                  <small className={strategySignalStateClass(darvasCard.state)}>
+                    {strategySignalStateLabel(darvasCard.state)}
+                  </small>
+                </div>
+                <p className="plan-note">
+                  점수 {darvasCard.score} · 신뢰도 {darvasCard.confidence}
+                </p>
+                <p>{darvasCard.summary}</p>
+                <p className="insight-opinion">
+                  <small className={verdictToneClass(darvasCardOneLiner.verdict)}>{darvasCardOneLiner.verdict}</small>
+                  {darvasCardOneLiner.text}
+                </p>
+              </article>
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>NR7+인사이드바</strong>
+                  <small className={strategySignalStateClass(nr7Card.state)}>
+                    {strategySignalStateLabel(nr7Card.state)}
+                  </small>
+                </div>
+                <p className="plan-note">
+                  점수 {nr7Card.score} · 신뢰도 {nr7Card.confidence}
+                </p>
+                <p>{nr7Card.summary}</p>
+                <p className="insight-opinion">
+                  <small className={verdictToneClass(nr7CardOneLiner.verdict)}>{nr7CardOneLiner.verdict}</small>
+                  {nr7CardOneLiner.text}
+                </p>
+              </article>
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>추세 템플릿</strong>
+                  <small className={strategySignalStateClass(trendTemplateCard.state)}>
+                    {strategySignalStateLabel(trendTemplateCard.state)}
+                  </small>
+                </div>
+                <p className="plan-note">
+                  점수 {trendTemplateCard.score} · 신뢰도 {trendTemplateCard.confidence}
+                </p>
+                <p>{trendTemplateCard.summary}</p>
+                <p className="insight-opinion">
+                  <small className={verdictToneClass(trendTemplateOneLiner.verdict)}>
+                    {trendTemplateOneLiner.verdict}
+                  </small>
+                  {trendTemplateOneLiner.text}
+                </p>
+              </article>
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>RSI 다이버전스</strong>
+                  <small className={strategySignalStateClass(rsiDivergenceCard.state)}>
+                    {strategySignalStateLabel(rsiDivergenceCard.state)}
+                  </small>
+                </div>
+                <p className="plan-note">
+                  점수 {rsiDivergenceCard.score} · 신뢰도 {rsiDivergenceCard.confidence}
+                </p>
+                <p>{rsiDivergenceCard.summary}</p>
+                <p className="insight-opinion">
+                  <small className={verdictToneClass(rsiDivergenceOneLiner.verdict)}>
+                    {rsiDivergenceOneLiner.verdict}
+                  </small>
+                  {rsiDivergenceOneLiner.text}
+                </p>
+              </article>
+              <article className="strategy-mini-item">
+                <div className="strategy-mini-head">
+                  <strong>수급 지속성</strong>
+                  <small className={strategySignalStateClass(flowPersistenceCard.state)}>
+                    {strategySignalStateLabel(flowPersistenceCard.state)}
+                  </small>
+                </div>
+                <p className="plan-note">
+                  점수 {flowPersistenceCard.score} · 신뢰도 {flowPersistenceCard.confidence}
+                </p>
+                <p>{flowPersistenceCard.summary}</p>
+                <p className="insight-opinion">
+                  <small className={verdictToneClass(flowPersistenceOneLiner.verdict)}>
+                    {flowPersistenceOneLiner.verdict}
+                  </small>
+                  {flowPersistenceOneLiner.text}
+                </p>
+              </article>
+            </div>
+          </div>
+        )}
+    </>
+  ) : null;
+  const technicalSectionContent = activeAnalysis ? (
+    <>
+      {shortProfileScore && midProfileScore && (
+        <div className="card">
+          <h3>투자 성향 맞춤 전략 (단기/중기 동시)</h3>
+          <div className="profile-dual-grid">
+            {[shortProfileScore, midProfileScore].map((item) => (
+              <article key={item.mode} className="profile-card">
+                <h4>{PROFILE_LABEL[item.mode]} 성향</h4>
+                <div className="profile-grid">
+                  <div className="plan-item">
+                    <span>가중 점수</span>
+                    <strong>{item.score}</strong>
+                  </div>
+                  <div className="plan-item">
+                    <span>가중 판정</span>
+                    <strong>{overallLabel(item.overall)}</strong>
+                  </div>
+                  <div className="plan-item">
+                    <span>가중치(추세/모멘텀/위험)</span>
+                    <strong>
+                      {item.weights.trend}/{item.weights.momentum}/{item.weights.risk}
+                    </strong>
+                  </div>
+                </div>
+                <p className="plan-note">{item.description}</p>
+              </article>
+            ))}
+          </div>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(profileOneLiner.verdict)}>{profileOneLiner.verdict}</small>
+            {profileOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {momentumSignal && riskSignal && (
+        <div className="card">
+          <h3>기술적 분석 (Technical)</h3>
+          <div className="tech-grid">
+            <div className="tech-item">
+              <strong>RSI</strong>
+              <p>
+                {momentumSignal.rsi != null ? momentumSignal.rsi.toFixed(2) : "-"} ·{" "}
+                {rsiSignalLabel(momentumSignal.rsiBand)}
+              </p>
+            </div>
+            <div className="tech-item">
+              <strong>MACD</strong>
+              <p>
+                {formatSignedDecimal(momentumSignal.macd)} / 시그널 {formatSignedDecimal(momentumSignal.macdSignal)} /
+                히스토그램 {formatSignedDecimal(momentumSignal.macdHist)}
+              </p>
+              <small className={momentumSignal.macdBullish ? "tech-positive" : "tech-negative"}>
+                {momentumSignal.macdBullish ? "MACD 우위(상승 모멘텀)" : "Signal 우위(하락/둔화 모멘텀)"}
+              </small>
+            </div>
+            <div className="tech-item">
+              <strong>볼린저</strong>
+              <p>{bbSignalLabel(riskSignal.bbPosition)}</p>
+            </div>
+          </div>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(technicalOneLiner.verdict)}>{technicalOneLiner.verdict}</small>
+            {technicalOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {fundamentalSignal && (
+        <div className="card">
+          <h3>펀더멘털 분석 (Fundamental)</h3>
+          <div className="fund-grid">
+            <div className="plan-item">
+              <span>PER</span>
+              <strong>{formatRatio(fundamentalSignal.per)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>PBR</span>
+              <strong>{formatRatio(fundamentalSignal.pbr)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>EPS</span>
+              <strong>{formatPrice(fundamentalSignal.eps)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>BPS</span>
+              <strong>{formatPrice(fundamentalSignal.bps)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>시가총액</span>
+              <strong>{formatPrice(fundamentalSignal.marketCap)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>결산월 / 밸류에이션</span>
+              <strong className="fund-label-wrap">
+                {fundamentalSignal.settlementMonth ?? "-"}
+                <small className={valuationLabelMeta(fundamentalSignal.label).className}>
+                  {valuationLabelMeta(fundamentalSignal.label).text}
+                </small>
+              </strong>
+            </div>
+          </div>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(fundamentalOneLiner.verdict)}>{fundamentalOneLiner.verdict}</small>
+            {fundamentalOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {flowSignal && (
+        <div className="card">
+          <h3>수급 분석 (Flow)</h3>
+          <div className="fund-grid">
+            <div className="plan-item">
+              <span>외국인 순매수</span>
+              <strong>{formatSignedQty(flowSignal.foreignNet)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>기관 순매수</span>
+              <strong>{formatSignedQty(flowSignal.institutionNet)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>개인 순매수</span>
+              <strong>{formatSignedQty(flowSignal.individualNet)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>프로그램 순매수</span>
+              <strong>{formatSignedQty(flowSignal.programNet)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>외국인 보유율</span>
+              <strong>{formatPercent(flowSignal.foreignHoldRate)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>수급 레이블</span>
+              <strong>
+                <small className={flowLabelMeta(flowSignal.label).className}>
+                  {flowLabelMeta(flowSignal.label).text}
+                </small>
+              </strong>
+            </div>
+          </div>
+          {flowDisplayReasons.length > 0 && (
+            <ul className="volume-reasons">
+              {flowDisplayReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          <p className="insight-opinion">
+            <small className={verdictToneClass(flowOneLiner.verdict)}>{flowOneLiner.verdict}</small>
+            {flowOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {volumeSignal && (
+        <div className="card">
+          <h3>거래량/수급</h3>
+          <div className="volume-grid">
+            <div className="plan-item">
+              <span>VolumeScore</span>
+              <strong>{volumeSignal.volumeScore}</strong>
+            </div>
+            <div className="plan-item">
+              <span>거래량 비율</span>
+              <strong>{formatRatio(volumeSignal.volRatio)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>대금(종가×거래량)</span>
+              <strong>{formatPrice(volumeSignal.turnover)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>20일 위치(pos20)</span>
+              <strong>{formatPercent(volumeSignal.pos20 * 100)}</strong>
+            </div>
+          </div>
+          <div className="volume-patterns">
+            <span>주요 패턴</span>
+            {majorVolumePatterns.length > 0 ? (
+              <div className="volume-pattern-tags">
+                {majorVolumePatterns.map((pattern) => (
+                  <small key={`${pattern.t}-${pattern.type}`} className="reason-tag positive">
+                    {VOLUME_PATTERN_TEXT[pattern.type] ?? pattern.label}
+                  </small>
+                ))}
+              </div>
+            ) : (
+              <small className="volume-empty">패턴 없음</small>
+            )}
+          </div>
+          <ul className="volume-reasons">
+            {volumeSignal.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+          <div className="volume-pattern-list">
+            <h4>최근 패턴 10개</h4>
+            {recentVolumePatterns.length > 0 ? (
+              <ul>
+                {recentVolumePatterns.map((pattern) => (
+                  <li key={`${pattern.t}-${pattern.type}`}>
+                    <button
+                      type="button"
+                      className={
+                        selectedPattern?.t === pattern.t && selectedPattern?.type === pattern.type
+                          ? "pattern-row active"
+                          : "pattern-row"
+                      }
+                      onClick={() => setSelectedPattern(pattern)}
+                    >
+                      <span>{pattern.t.slice(0, 10)}</span>
+                      <strong>{VOLUME_PATTERN_TEXT[pattern.type] ?? pattern.label}</strong>
+                      <em>{pattern.desc}</em>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>최근 10개 구간에서 감지된 패턴이 없습니다.</p>
+            )}
+          </div>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(volumeCardOneLiner.verdict)}>{volumeCardOneLiner.verdict}</small>
+            {volumeCardOneLiner.text}
+          </p>
+        </div>
+      )}
+    </>
+  ) : null;
+  const validationSectionContent = activeAnalysis ? (
+    <>
+      <div className="card">
+        <div className="decision-card-head">
+          <h3>백테스트 설정</h3>
+          <small className="badge neutral">조회 후 재계산</small>
+        </div>
+        <div className="backtest-controls analysis-backtest-controls">
+          <label>
+            백테스트 룰
+            <select
+              value={backtestRuleId}
+              onChange={(event) => setBacktestRuleId(event.target.value as BacktestRuleId)}
+              aria-label="백테스트 룰"
+            >
+              <option value="score-card-v1-day-overall">일봉 점수룰 v1</option>
+              <option value="washout-pullback-v1">설거지+눌림 v1(단일)</option>
+              <option value="washout-pullback-v1.1">설거지+눌림 v1.1(분할)</option>
+            </select>
+          </label>
+          <label>
+            백테스트 진입 신호
+            <select
+              value={backtestSignal}
+              onChange={(event) => setBacktestSignal(event.target.value as Overall)}
+              aria-label="백테스트 진입 신호"
+              disabled={backtestRuleId !== "score-card-v1-day-overall"}
+            >
+              <option value="GOOD">양호</option>
+              <option value="NEUTRAL">중립</option>
+              <option value="CAUTION">주의</option>
+            </select>
+          </label>
+          {backtestRuleId !== "score-card-v1-day-overall" && (
+            <label>
+              목표 모드(v1)
+              <select
+                value={backtestTargetMode}
+                onChange={(event) => setBacktestTargetMode(event.target.value as BacktestWashoutTargetMode)}
+                aria-label="설거지 백테스트 목표 모드"
+              >
+                <option value="2R">2R</option>
+                <option value="3R">3R</option>
+                <option value="ANCHOR_HIGH">Anchor 고점</option>
+              </select>
+            </label>
+          )}
+          {backtestRuleId === "washout-pullback-v1.1" && (
+            <label>
+              청산 방식(v1.1)
+              <select
+                value={backtestExitMode}
+                onChange={(event) => setBacktestExitMode(event.target.value as BacktestWashoutExitMode)}
+                aria-label="설거지 백테스트 청산 방식"
+              >
+                <option value="PARTIAL">1R 절반 + 2R 전량</option>
+                <option value="SINGLE_2R">단일 2R 전량</option>
+              </select>
+            </label>
+          )}
+          <label>
+            최대 보유 봉
+            <select
+              value={backtestHoldBars}
+              onChange={(event) => setBacktestHoldBars(Number(event.target.value))}
+              aria-label="최대 보유 봉"
+            >
+              {backtestRuleId === "score-card-v1-day-overall" ? (
+                <>
+                  <option value={5}>5봉</option>
+                  <option value={10}>10봉</option>
+                  <option value={15}>15봉</option>
+                  <option value={20}>20봉</option>
+                </>
+              ) : (
+                <>
+                  <option value={10}>10봉</option>
+                  <option value={20}>20봉</option>
+                  <option value={30}>30봉</option>
+                  <option value={40}>40봉</option>
+                </>
+              )}
+            </select>
+          </label>
+          <p>설정을 바꾼 뒤 상단 조회를 다시 누르면 선택한 룰로 백테스트가 다시 계산됩니다.</p>
+        </div>
+      </div>
+      {riskBreakdown && (
+        <div className="card">
+          <div className="collapsible-head">
+            <h3>위험도 점수 분해</h3>
+            <button
+              type="button"
+              className="collapse-toggle"
+              aria-expanded={riskBreakdownOpen}
+              onClick={() => setRiskBreakdownOpen((prev) => !prev)}
+            >
+              {riskBreakdownOpen ? "접기" : "펼치기"}
+            </button>
+          </div>
+          {riskBreakdownOpen ? (
+            <>
+              <div className="risk-breakdown-grid">
+                <div className="risk-row">
+                  <span>ATR 구간</span>
+                  <strong>{formatSigned(riskBreakdown.atrScore)}</strong>
+                </div>
+                <div className="risk-row">
+                  <span>볼린저 위치</span>
+                  <strong>{formatSigned(riskBreakdown.bbScore)}</strong>
+                </div>
+                <div className="risk-row">
+                  <span>20일 MDD</span>
+                  <strong>{formatSigned(riskBreakdown.mddScore)}</strong>
+                </div>
+                <div className="risk-row">
+                  <span>급락 패널티</span>
+                  <strong>{formatSigned(riskBreakdown.sharpDropScore)}</strong>
+                </div>
+                <div className="risk-row total">
+                  <span>원점수 / 최종</span>
+                  <strong>
+                    {riskBreakdown.rawTotal} / {riskBreakdown.finalRisk}
+                  </strong>
+                </div>
+              </div>
+              <p className="plan-note">위험도 = ATR + 볼린저 + MDD + 급락 패널티 (0~100 보정)</p>
+            </>
+          ) : (
+            <p className="plan-note">기본은 접힘 상태입니다. 펼치기를 누르면 상세 점수를 확인할 수 있습니다.</p>
+          )}
+          <p className="insight-opinion">
+            <small className={verdictToneClass(riskBreakdownOneLiner.verdict)}>{riskBreakdownOneLiner.verdict}</small>
+            {riskBreakdownOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      {tradePlan && (
+        <div className="card">
+          <h3>진입가 / 손절가 / 목표가 (참고)</h3>
+          <div className="plan-grid">
+            <div className="plan-item">
+              <span>진입가</span>
+              <strong>{formatPrice(tradePlan.entry)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>손절가</span>
+              <strong>{formatPrice(tradePlan.stop)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>목표가</span>
+              <strong>{formatPrice(tradePlan.target)}</strong>
+            </div>
+            <div className="plan-item">
+              <span>손익비</span>
+              <strong>{formatRiskReward(tradePlan.riskReward)}</strong>
+            </div>
+          </div>
+          <p className="plan-note">{tradePlan.note}</p>
+          <p className="insight-opinion">
+            <small className={verdictToneClass(tradePlanOneLiner.verdict)}>{tradePlanOneLiner.verdict}</small>
+            {tradePlanOneLiner.text}
+          </p>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="backtest-head">
+          <h3>
+            백테스트 ({BACKTEST_RULE_LABEL[backtest?.meta.ruleId ?? backtestRuleId]})
+            {(backtest?.meta.ruleId ?? backtestRuleId) === "score-card-v1-day-overall"
+              ? ` · 시그널 ${overallLabel(backtest?.meta.signalOverall ?? backtestSignal)}`
+              : ""}
+          </h3>
+          {backtestLoading && <span className="backtest-state">계산 중...</span>}
+        </div>
+        {backtestError && <p className="backtest-error">{backtestError}</p>}
+        {backtestSummary ? (
+          <>
+            <div className="backtest-summary-grid">
+              <div className="plan-item">
+                <span>총 거래 수</span>
+                <strong>{backtestSummary.tradeCount}건</strong>
+              </div>
+              <div className="plan-item">
+                <span>승률</span>
+                <strong>{formatPercent(backtestSummary.winRate)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>평균 손익률</span>
+                <strong>{formatPercent(backtestSummary.avgReturnPercent)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>손익비</span>
+                <strong>{formatFactor(backtestSummary.payoffRatio)}</strong>
+              </div>
+              <div className="plan-item">
+                <span>최대 낙폭(MDD)</span>
+                <strong>{formatPercent(backtestSummary.maxDrawdownPercent)}</strong>
+              </div>
+            </div>
+            {backtestStrategyMetrics && (
+              <div className="backtest-summary-grid">
+                <div className="plan-item">
+                  <span>평균 분할 체결 수</span>
+                  <strong>
+                    {backtestStrategyMetrics.avgTranchesFilled == null
+                      ? "-"
+                      : `${backtestStrategyMetrics.avgTranchesFilled.toFixed(2)}개`}
+                  </strong>
+                </div>
+                <div className="plan-item">
+                  <span>1차 체결률</span>
+                  <strong>{formatPercent(backtestStrategyMetrics.fillRate1)}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>2차 체결률</span>
+                  <strong>{formatPercent(backtestStrategyMetrics.fillRate2)}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>3차 체결률</span>
+                  <strong>{formatPercent(backtestStrategyMetrics.fillRate3)}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>부분청산률</span>
+                  <strong>{formatPercent(backtestStrategyMetrics.partialExitRate)}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>2R 도달률</span>
+                  <strong>{formatPercent(backtestStrategyMetrics.target2HitRate)}</strong>
+                </div>
+              </div>
+            )}
+            <p className="backtest-opinion">
+              <small className={verdictToneClass(backtestOneLiner.verdict)}>{backtestOneLiner.verdict}</small>
+              {backtestOneLiner.text}
+            </p>
+            <div className="backtest-table-wrap">
+              <table className="backtest-table">
+                <thead>
+                  <tr>
+                    <th>기간</th>
+                    <th>거래수</th>
+                    <th>승률</th>
+                    <th>평균손익</th>
+                    <th>평균 R</th>
+                    <th>손익비</th>
+                    <th>PF</th>
+                    <th>MDD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backtest.periods.map((period) => (
+                    <tr key={period.label}>
+                      <td>{period.label}</td>
+                      <td>{period.tradeCount}</td>
+                      <td>{formatPercent(period.winRate)}</td>
+                      <td>{formatPercent(period.avgReturnPercent)}</td>
+                      <td>{formatR(period.avgRMultiple)}</td>
+                      <td>{formatFactor(period.payoffRatio)}</td>
+                      <td>{formatFactor(period.profitFactor)}</td>
+                      <td>{formatPercent(period.maxDrawdownPercent)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="backtest-table-wrap" style={{ marginTop: "10px" }}>
+              <table className="backtest-table">
+                <thead>
+                  <tr>
+                    <th>진입일</th>
+                    <th>체결 단계</th>
+                    <th>평균단가</th>
+                    <th>무효화</th>
+                    <th>청산일</th>
+                    <th>청산 사유</th>
+                    <th>수익률</th>
+                    <th>R</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentBacktestTrades.length > 0 ? (
+                    recentBacktestTrades.map((trade, index) => (
+                      <tr key={`${trade.entryTime}-${trade.exitTime}-${index}`}>
+                        <td>{trade.entryTime}</td>
+                        <td>{backtestEntriesLabel(trade.entries)}</td>
+                        <td>{formatPrice(trade.avgEntry ?? trade.entryPrice)}</td>
+                        <td>{formatPrice(trade.invalidLow ?? trade.stopPrice)}</td>
+                        <td>{trade.exitTime}</td>
+                        <td>{backtestExitReasonLabel(trade.exitReason)}</td>
+                        <td>{formatPercent(trade.returnPercent)}</td>
+                        <td>{formatR(trade.r ?? trade.rMultiple)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={8}>최근 거래 내역이 없습니다.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="plan-note">룰 {backtest.meta.ruleId} · 보유기간 {backtest.meta.holdBars}봉 기준 시뮬레이션입니다.</p>
+            <p className="plan-note">
+              전체 기대값 {formatR(backtestSummary.expectancyR)} · 전체 손익비{" "}
+              {formatFactor(backtestSummary.payoffRatio)} · 전체 PF {formatFactor(backtestSummary.profitFactor)}
+              {backtest.meta.targetMode ? ` · 목표모드 ${backtest.meta.targetMode}` : ""}
+              {backtest.meta.exitMode ? ` · 청산모드 ${backtest.meta.exitMode}` : ""}
+            </p>
+            {backtest.warnings.length > 0 && <p className="plan-note">{backtest.warnings.join(" · ")}</p>}
+          </>
+        ) : (
+          !backtestLoading && !backtestError && <p className="plan-note">백테스트 결과가 없습니다.</p>
+        )}
+      </div>
+    </>
+  ) : null;
+  const detailSections = activeAnalysis
+    ? [
+        {
+          id: "analysis-reasons",
+          title: "판단 근거",
+          subtitle: "자동 작도 · 컨플루언스 · 추세 레짐 · 근거 리스트",
+          content: reasoningSectionContent,
+        },
+        {
+          id: "analysis-patterns",
+          title: "패턴·전략",
+          subtitle: "VCP/컵앤핸들 · 거래량 패턴 · 설거지 전략 · 추가 전략 카드",
+          content: patternSectionContent,
+        },
+        {
+          id: "analysis-technical",
+          title: "기술·수급·펀더멘털",
+          subtitle: "기술적 분석 · 거래량/수급 · 수급 · 펀더멘털 · 투자 성향",
+          content: technicalSectionContent,
+        },
+        {
+          id: "analysis-validation",
+          title: "검증",
+          subtitle: "위험도 분해 · 백테스트 설정 · 요약 · 기간별 테이블 · 최근 거래",
+          content: validationSectionContent,
+        },
+      ]
+    : [];
 
   useEffect(() => {
     if (!selectedPattern) return;
@@ -2170,7 +3604,91 @@ export default function App() {
 
         {pageMode === "analysis" ? (
           <>
-
+            <AnalysisSearchHeader
+              query={query}
+              days={days}
+              loading={loading}
+              backtestLoading={backtestLoading}
+              showSuggestions={showSuggestions}
+              suggestions={suggestions}
+              showEmptyState={!result && !loading && !error}
+              searchWrapRef={searchWrapRef}
+              queryInputRef={queryInputRef}
+              onSubmit={onSubmit}
+              onQueryChange={(value) => {
+                setQuery(value);
+                setShowSuggestions(true);
+              }}
+              onInputFocus={() => setShowSuggestions(true)}
+              onDaysChange={setDays}
+              onClearQuery={clearQuery}
+              onSelectSuggestion={onSelectSuggestion}
+            />
+            {error && <p className="error">{error}</p>}
+            {result && (
+              <section className="result analysis-result">
+                <AnalysisDecisionSummary
+                  name={result.meta.name}
+                  symbol={result.meta.symbol}
+                  summary={result.final.summary}
+                  metaLine={decisionMetaLine}
+                  favoriteButton={
+                    <FavoriteButton
+                      active={isFavorite(result.meta.symbol)}
+                      onClick={() => toggleFavorite({ code: result.meta.symbol, name: result.meta.name })}
+                    />
+                  }
+                  overallLabel={overallLabel(result.final.overall)}
+                  overallClassName={overallClass(result.final.overall)}
+                  confidence={result.final.confidence}
+                  confidenceClassName={confidenceClass(result.final.confidence)}
+                  activeTfLabel={TF_LABEL[activeTf]}
+                  currentPrice={formatPrice(headerQuote?.close ?? null)}
+                  currentChange={
+                    headerQuote?.change != null && headerQuote?.changePct != null
+                      ? formatSignedPriceChange(headerQuote.change, headerQuote.changePct)
+                      : null
+                  }
+                  currentChangeClassName={headerQuote ? `reason-tag ${headerQuote.tone}` : null}
+                  warnings={result.warnings}
+                  planItems={decisionPlanItems}
+                  planNote={tradePlan?.note ?? "진입/손절/목표가 데이터가 아직 부족합니다."}
+                  scoreItems={decisionScoreItems}
+                  scoreNote={executionOneLiner.text}
+                  coreReasons={decisionCoreReasons}
+                  reasonNote={reasonsOneLiner.text}
+                />
+                <AnalysisChartWorkspace
+                  tabs={analysisTabs}
+                  activeTab={activeTf}
+                  onSelectTab={(tabId) => setActiveTf(tabId as Timeframe)}
+                  hasActiveAnalysis={Boolean(activeAnalysis)}
+                  emptyTitle={`${TF_LABEL[activeTf]} 데이터 없음`}
+                  emptyDescription="해당 타임프레임 데이터가 부족해 비활성화되었습니다. 다른 탭을 선택해 주세요."
+                  chartTitle={`OHLCV 차트 (${TF_LABEL[activeTf]})`}
+                  priceChartHeight={priceChartHeight}
+                  mobileChartFullWidth={mobileChartFullWidth}
+                  priceChartRef={priceChartRef}
+                  rsiChartRef={rsiChartRef}
+                  presetMode={drawingPresetMode}
+                  onApplyBasicPreset={() => applyDrawingPreset("basic")}
+                  onApplyDetailPreset={() => applyDrawingPreset("detail")}
+                  hasChartSettings={Boolean(chartSettingsContent)}
+                  chartSettingsContent={chartSettingsContent}
+                  chartNotices={chartNotices}
+                  chartFooter={chartFooter}
+                  hasRsiPanel={hasRsiPanel}
+                  rsiBadge={`RSI ${activeRsiLast?.value != null ? activeRsiLast.value.toFixed(2) : "-"}`}
+                  rsiDisabledMessage={rsiDisabledMessage}
+                  rsiOpinionLabel={rsiPanelOneLiner.verdict}
+                  rsiOpinionClassName={verdictToneClass(rsiPanelOneLiner.verdict)}
+                  rsiOpinionText={rsiPanelOneLiner.text}
+                />
+                <AnalysisDetailSections sections={detailSections} />
+              </section>
+            )}
+            {false && (
+              <>
         <form className="search" onSubmit={onSubmit}>
           <div className="search-input-wrap" ref={searchWrapRef}>
             <input
@@ -3777,6 +5295,8 @@ export default function App() {
             )}
           </section>
         )}
+              </>
+            )}
           </>
         ) : pageMode === "screener" ? (
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
