@@ -213,12 +213,13 @@ export default function AnalysisStrategyChartStack(props: AnalysisStrategyChartS
                 key={item.id}
                 className="analysis-strategy-chart-card"
                 open={isOpen}
-                onToggle={(event) =>
+                onToggle={(event) => {
+                  const isExpanded = event.currentTarget.open;
                   setOpenMap((prev) => ({
                     ...prev,
-                    [item.id]: event.currentTarget.open,
-                  }))
-                }
+                    [item.id]: isExpanded,
+                  }));
+                }}
               >
                 <summary className="analysis-strategy-chart-summary">
                   <div className="analysis-strategy-chart-copy">
