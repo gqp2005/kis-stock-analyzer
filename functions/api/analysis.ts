@@ -40,6 +40,7 @@ const TARGET_MULTI = {
   month: 80,
   week: 200,
 } as const;
+const MULTI_DAY_FALLBACK_FETCH_COUNT = 260;
 
 const parseTf = (raw: string | null): TfParam => {
   if (!raw) return "day";
@@ -227,8 +228,22 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         warnings.push(`펀더멘털/수급 조회 실패: ${message}`);
       }
 
-      const dayFetchCount = useResampledHigherTf ? Math.max(dayCount, 1400) : Math.max(dayCount, 260);
-      const dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
+      const dayFetchCount = useResampledHigherTf
+        ? Math.max(dayCount, 1400)
+        : Math.max(dayCount, MULTI_DAY_FALLBACK_FETCH_COUNT);
+      let dayRaw = await safeFetchTf(fetchCtx, "day", dayFetchCount, warnings);
+      let reducedDayFallbackUsed = false;
+
+      if (
+        useResampledHigherTf &&
+        !dayRaw &&
+        dayFetchCount > Math.max(dayCount, MULTI_DAY_FALLBACK_FETCH_COUNT)
+      ) {
+        const reducedDayFetchCount = Math.max(dayCount, MULTI_DAY_FALLBACK_FETCH_COUNT);
+        warnings.push(`day 대량 조회 실패로 ${reducedDayFetchCount}봉 축소 조회를 재시도합니다.`);
+        dayRaw = await safeFetchTf(fetchCtx, "day", reducedDayFetchCount, warnings);
+        reducedDayFallbackUsed = dayRaw != null;
+      }
 
       let weekCandlesRaw: Candle[] | null = null;
       let monthCandlesRaw: Candle[] | null = null;
@@ -241,6 +256,24 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           monthCandlesRaw = resampleDayToMonthCandles(dayRaw.candles);
           weekName = dayRaw.name;
           monthName = dayRaw.name;
+
+          const weekResampleEnough = weekCandlesRaw.length >= MIN_MULTI.week;
+          const monthResampleEnough = monthCandlesRaw.length >= MIN_MULTI.month;
+          if (reducedDayFallbackUsed && (!weekResampleEnough || !monthResampleEnough)) {
+            warnings.push("week/month 리샘플링 데이터가 부족해 KIS 직접 조회로 보완합니다.");
+            const [weekRaw, monthRaw] = await Promise.all([
+              weekResampleEnough ? Promise.resolve(null) : safeFetchTf(fetchCtx, "week", TARGET_MULTI.week, warnings),
+              monthResampleEnough ? Promise.resolve(null) : safeFetchTf(fetchCtx, "month", TARGET_MULTI.month, warnings),
+            ]);
+            if (weekRaw?.candles?.length) {
+              weekCandlesRaw = weekRaw.candles;
+              weekName = weekRaw.name;
+            }
+            if (monthRaw?.candles?.length) {
+              monthCandlesRaw = monthRaw.candles;
+              monthName = monthRaw.name;
+            }
+          }
         } else {
           warnings.push("week/month 리샘플링 실패: day 데이터가 없습니다.");
         }

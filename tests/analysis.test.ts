@@ -202,6 +202,43 @@ describe("/api/analysis multi fallback", () => {
     expect(typeof body.final.overall).toBe("string");
   });
 
+  it("falls back to reduced day fetch and direct higher tf fetch when large multi fetch is rate-limited", async () => {
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf, minCount) => {
+      if (tf === "day" && minCount >= 1400) {
+        throw new Error("KIS API 오류(UNKNOWN): 초당 거래건수를 초과하였습니다.");
+      }
+      if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(260), cacheTtlSec: 60 };
+      if (tf === "week") return { name: "삼성전자", candles: makeDayCandles(220), cacheTtlSec: 60 };
+      if (tf === "month") return { name: "삼성전자", candles: makeDayCandles(90), cacheTtlSec: 60 };
+      throw new Error("unexpected tf");
+    });
+    resampleWeekMock.mockReturnValue(makeDayCandles(52));
+    resampleMonthMock.mockReturnValue(makeDayCandles(13));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/analysis?query=005930&tf=multi&count=180"),
+    );
+    const body = (await response.json()) as {
+      timeframes: {
+        day: object | null;
+        week: object | null;
+        month: object | null;
+      };
+      warnings: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.timeframes.day).not.toBeNull();
+    expect(body.timeframes.week).not.toBeNull();
+    expect(body.timeframes.month).not.toBeNull();
+    expect(body.warnings.some((w) => w.includes("day 대량 조회 실패"))).toBe(true);
+    expect(body.warnings.some((w) => w.includes("KIS 직접 조회로 보완"))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => call[3] === "day" && call[4] === 1400)).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => call[3] === "day" && call[4] === 260)).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => call[3] === "week" && call[4] === 200)).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => call[3] === "month" && call[4] === 80)).toBe(true);
+  });
+
   it("uses internal minimum counts for week/month when higher_tf_source=kis", async () => {
     fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
       if (tf === "day") return { name: "삼성전자", candles: makeDayCandles(280), cacheTtlSec: 60 };

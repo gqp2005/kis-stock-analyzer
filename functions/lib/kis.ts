@@ -66,6 +66,7 @@ const TOKEN_LOCK_KV_TTL_SEC = 60; // Cloudflare KV minimum expirationTtl
 const TOKEN_LOCK_RETRY_DELAYS_MS = [200, 400, 800];
 const KIS_HTTP_TIMEOUT_MS = 10_000;
 const KIS_HTTP_RETRY_DELAYS_MS: number[] = [];
+const KIS_BUSINESS_RETRY_DELAYS_MS = [250, 700, 1400];
 const KIS_TOKEN_KEY = "kis:token";
 const KIS_TOKEN_LOCK_KEY = "kis:token:lock";
 let memoryToken: (KisTokenRecord & { cacheIdentity: string }) | null = null;
@@ -341,6 +342,25 @@ const isTokenRelatedError = (data: unknown): boolean => {
   return msg.includes("token") || msg.includes("토큰") || msg.includes("authorization");
 };
 
+const isKisRateLimitedError = (data: unknown): boolean => {
+  if (!data || typeof data !== "object") return false;
+  const row = data as Partial<KisResponseBase>;
+  const msg = `${row.msg_cd ?? ""} ${row.msg1 ?? ""}`.toLowerCase();
+  return (
+    msg.includes("초당 거래건수를 초과") ||
+    msg.includes("호출 유량") ||
+    msg.includes("rate limit") ||
+    msg.includes("too many request") ||
+    msg.includes("http_429")
+  );
+};
+
+const formatKisApiError = (data: Partial<KisResponseBase>): string => {
+  const msgCode = typeof data.msg_cd === "string" && data.msg_cd.trim() ? data.msg_cd.trim() : "UNKNOWN";
+  const message = typeof data.msg1 === "string" && data.msg1.trim() ? data.msg1.trim() : "KIS 응답 오류";
+  return `KIS API 오류(${msgCode}): ${message}`;
+};
+
 export interface KisFetchOptions {
   method?: "GET" | "POST";
   trId?: string;
@@ -455,16 +475,23 @@ const kisGet = async <T extends KisResponseBase>(
   params: Record<string, string>,
   metrics?: RequestMetrics,
 ): Promise<T> => {
-  const { data: json } = await kisFetch<T>(env, path, {
-    method: "GET",
-    trId,
-    params,
-    metrics,
-  });
-  if (json.rt_cd === "0") {
-    return json;
+  for (let attempt = 0; attempt <= KIS_BUSINESS_RETRY_DELAYS_MS.length; attempt += 1) {
+    const { data: json } = await kisFetch<T>(env, path, {
+      method: "GET",
+      trId,
+      params,
+      metrics,
+    });
+    if (json.rt_cd === "0") {
+      return json;
+    }
+    if (isKisRateLimitedError(json) && attempt < KIS_BUSINESS_RETRY_DELAYS_MS.length) {
+      await sleep(KIS_BUSINESS_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    throw new Error(formatKisApiError(json));
   }
-  throw new Error(`KIS API 오류(${json.msg_cd}): ${json.msg1}`);
+  throw new Error("KIS API 호출 실패: rate limit 재시도 후에도 요청이 실패했습니다.");
 };
 
 const toNullableNumber = (value: unknown): number | null => {
