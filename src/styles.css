@@ -378,6 +378,149 @@ h1 {
   margin-bottom: 0;
 }
 
+.analysis-strategy-chart-section {
+  display: grid;
+  gap: 14px;
+}
+
+.analysis-strategy-chart-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-strategy-chart-section-head h3 {
+  margin: 0;
+}
+
+.analysis-strategy-chart-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.analysis-strategy-chart-card {
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(13, 25, 37, 0.86), rgba(7, 16, 27, 0.78)),
+    rgba(8, 17, 28, 0.88);
+  overflow: hidden;
+}
+
+.analysis-strategy-chart-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.analysis-strategy-chart-summary::-webkit-details-marker {
+  display: none;
+}
+
+.analysis-strategy-chart-copy {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-strategy-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-strategy-chart-head strong {
+  color: #ebf5ff;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.analysis-strategy-chart-copy p {
+  margin: 0;
+  color: #a9bfd4;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.analysis-strategy-chart-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.analysis-strategy-chart-toggle {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.analysis-strategy-chart-toggle::before,
+.analysis-strategy-chart-toggle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(223, 239, 255, 0.88);
+  transform: translate(-50%, -50%);
+}
+
+.analysis-strategy-chart-toggle::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.analysis-strategy-chart-card[open] .analysis-strategy-chart-toggle::after {
+  transform: translate(-50%, -50%) rotate(0deg);
+  opacity: 0;
+}
+
+.analysis-strategy-chart-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.analysis-strategy-chart-surface {
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(11, 23, 35, 0.96), rgba(8, 16, 27, 0.94)),
+    rgba(7, 14, 24, 0.9);
+  padding: 10px;
+}
+
+.analysis-strategy-chart-canvas {
+  width: 100%;
+}
+
+.analysis-strategy-chart-note {
+  margin: 0;
+  color: #9fb5cc;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.analysis-strategy-chart-empty {
+  margin: 0;
+  border: 1px dashed rgba(87, 163, 255, 0.24);
+  border-radius: 12px;
+  padding: 14px;
+  color: #9fb5cc;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(12, 24, 36, 0.4);
+}
+
 .analysis-backtest-controls {
   margin: 0;
 }
@@ -2568,7 +2711,9 @@ h2 {
   .analysis-chart-head,
   .analysis-chart-tools,
   .decision-card-head,
-  .analysis-detail-summary {
+  .analysis-detail-summary,
+  .analysis-strategy-chart-summary,
+  .analysis-strategy-chart-head {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -2579,6 +2724,18 @@ h2 {
 
   .analysis-detail-body {
     padding: 0 12px 12px;
+  }
+
+  .analysis-strategy-chart-body {
+    padding: 0 12px 12px;
+  }
+
+  .analysis-strategy-chart-badges {
+    justify-content: flex-start;
+  }
+
+  .analysis-strategy-chart-toggle {
+    align-self: flex-end;
   }
 
   .indicator-controls label {
@@ -3042,6 +3199,29 @@ h2 {
 
 .screener-dashboard-grid .insight-list li > small {
   flex: 0 0 auto;
+}
+
+.favorite-alert-card {
+  display: grid;
+  gap: 8px;
+}
+
+.screener-dashboard-grid .favorite-alert-list li {
+  display: grid;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.screener-dashboard-grid .favorite-alert-list li > span {
+  flex: none;
+  min-width: 0;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.screener-dashboard-grid .favorite-alert-list li > small {
+  align-self: flex-start;
+  white-space: normal;
 }
 
 @media (max-width: 1399px) {

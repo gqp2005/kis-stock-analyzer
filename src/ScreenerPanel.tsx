@@ -1056,7 +1056,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
 
       {(dashboard || dashboardError || favorites.length > 0) && (
         <div className="strategy-mini-grid screener-dashboard-grid">
-          <article className="strategy-mini-item">
+          <article className="strategy-mini-item favorite-alert-card">
             <div className="strategy-mini-head">
               <strong>관심종목 알림</strong>
               <small className="signal-tag neutral">{favoriteAlertCount}건</small>
@@ -1081,7 +1081,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
               </button>
             </div>
             {dashboard?.favorites.alerts.length ? (
-              <ul className="insight-list">
+              <ul className="insight-list favorite-alert-list">
                 {dashboard.favorites.alerts.slice(0, 4).map((item) => (
                   <li key={`favorite-alert-${item.code}`}>
                     <span>

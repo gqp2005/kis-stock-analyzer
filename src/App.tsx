@@ -33,6 +33,11 @@ import AnalysisChartWorkspace from "./analysis/AnalysisChartWorkspace";
 import AnalysisDecisionSummary from "./analysis/AnalysisDecisionSummary";
 import AnalysisDetailSections from "./analysis/AnalysisDetailSections";
 import AnalysisSearchHeader from "./analysis/AnalysisSearchHeader";
+import AnalysisStrategyChartStack, {
+  type StrategyChartDescriptor,
+  type StrategyChartOverlayLine,
+  type StrategyChartOverlayMarker,
+} from "./analysis/AnalysisStrategyChartStack";
 import AutoTradePanel from "./AutoTradePanel";
 import FavoriteButton from "./FavoriteButton";
 import GlossaryPanel from "./GlossaryPanel";
@@ -171,11 +176,36 @@ const BASIC_PATTERN_TYPES = new Set<OverlayMarkerType>([
 ]);
 const isVcpMarkerType = (type: OverlayMarkerType): boolean =>
   type === "VCPPeak" || type === "VCPTrough" || type === "VCPBreakout";
+const STRATEGY_MARKER_TYPES = new Set<OverlayMarkerType>([
+  "DarvasBreakout",
+  "DarvasRetest",
+  "NR7Setup",
+  "NR7Breakout",
+  "TrendTemplate",
+  "RsiDivLow1",
+  "RsiDivLow2",
+  "RsiDivBreakout",
+  "FlowPersistence",
+]);
+const STRATEGY_OVERLAY_ID_PREFIXES = [
+  "darvasRetest:",
+  "nr7InsideBar:",
+  "trendTemplate:",
+  "rsiDivergence:",
+  "flowPersistence:",
+];
+const isStrategyMarkerType = (type: OverlayMarkerType): boolean => STRATEGY_MARKER_TYPES.has(type);
 
 const canShowMarkerByType = (
   type: OverlayMarkerType,
   showAdvanced: boolean,
 ): boolean => isVcpMarkerType(type) || showAdvanced || BASIC_PATTERN_TYPES.has(type);
+const canShowMainChartMarkerByType = (type: OverlayMarkerType, showAdvanced: boolean): boolean =>
+  !isStrategyMarkerType(type) && canShowMarkerByType(type, showAdvanced);
+const filterCommonOverlayPriceLines = (lines: TimeframeAnalysis["overlays"]["priceLines"] | undefined) =>
+  (lines ?? []).filter((line) => !STRATEGY_OVERLAY_ID_PREFIXES.some((prefix) => line.id.startsWith(prefix)));
+const filterCommonOverlayMarkers = (markers: TimeframeAnalysis["overlays"]["markers"] | undefined) =>
+  (markers ?? []).filter((marker) => !isStrategyMarkerType(marker.type));
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
@@ -792,6 +822,7 @@ export default function App() {
   }, [activeTf, showMarkers]);
 
   const activeAnalysis: TimeframeAnalysis | null = result ? result.timeframes[activeTf] : null;
+  const strategyChartAnalysis: TimeframeAnalysis | null = result?.timeframes.day ?? null;
   const maInfo = activeAnalysis?.indicators.ma ?? null;
   const activeRsiPoints = activeAnalysis?.indicators.rsi14 ?? [];
   const activeRsiLast = findLastIndicatorPoint(activeRsiPoints);
@@ -810,14 +841,13 @@ export default function App() {
         confluence: 0,
       };
     }
-    const levels = activeAnalysis.overlays?.priceLines?.length ?? 0;
+    const levels = filterCommonOverlayPriceLines(activeAnalysis.overlays?.priceLines).length;
     const segments = activeAnalysis.overlays?.segments?.length ?? 0;
     const markers =
       activeTf === "day"
-        ? (activeAnalysis.overlays?.markers ?? []).filter((marker) => BASIC_PATTERN_TYPES.has(marker.type as OverlayMarkerType))
-            .length +
-          (activeAnalysis.strategyOverlays?.washoutPullback?.anchorSpike.time ? 1 : 0) +
-          (activeAnalysis.strategyOverlays?.washoutPullback?.washoutReentry.time ? 1 : 0)
+        ? filterCommonOverlayMarkers(activeAnalysis.overlays?.markers).filter((marker) =>
+            canShowMainChartMarkerByType(marker.type, false),
+          ).length
         : 0;
     const confluence = activeAnalysis.confluence?.length ?? 0;
     return {
@@ -933,42 +963,24 @@ export default function App() {
             (pattern) => effectiveShowAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
           )
         : [];
-    const strategyWashout = activeTf === "day" ? active.strategyOverlays?.washoutPullback : null;
+    const commonOverlayMarkers = filterCommonOverlayMarkers(active.overlays?.markers);
     const overlayMarkers =
       activeTf === "day"
-        ? (active.overlays?.markers ?? []).filter(
-            (marker) => canShowMarkerByType(marker.type, effectiveShowAdvancedPatternMarkers),
+        ? commonOverlayMarkers.filter((marker) =>
+            canShowMainChartMarkerByType(marker.type, effectiveShowAdvancedPatternMarkers),
           )
         : [];
-    const washoutMarkers: SeriesMarker<Time>[] = [];
-    if (activeTf === "day" && strategyWashout?.anchorSpike.time && strategyWashout.anchorSpike.price != null) {
-      washoutMarkers.push({
-        time: toChartTime(strategyWashout.anchorSpike.time),
-        position: "aboveBar",
-        shape: "circle",
-        color: "#f6c75f",
-        text: "ANCHOR",
-      });
-    }
-    if (activeTf === "day" && strategyWashout?.washoutReentry.time && strategyWashout.washoutReentry.price != null) {
-      washoutMarkers.push({
-        time: toChartTime(strategyWashout.washoutReentry.time),
-        position: "belowBar",
-        shape: "arrowUp",
-        color: "#00d5a0",
-        text: "REIN",
-      });
-    }
 
     if (showMarkers && activeTf === "day") {
-      candleSeries.setMarkers([...toOverlayMarkers(overlayMarkers), ...washoutMarkers]);
+      candleSeries.setMarkers(toOverlayMarkers(overlayMarkers));
     } else {
       candleSeries.setMarkers([]);
     }
 
     const latestChartClose = active.candles.length > 0 ? active.candles[active.candles.length - 1].close : null;
+    const commonOverlayPriceLines = filterCommonOverlayPriceLines(active.overlays?.priceLines);
     const baseLevelLines = pickNearestPriceItems(
-      (active.overlays?.priceLines ?? []).filter((line) => line.group === "level"),
+      commonOverlayPriceLines.filter((line) => line.group === "level"),
       compactLabelMode ? latestChartClose : null,
       compactLabelMode ? 8 : 12,
     );
@@ -980,7 +992,7 @@ export default function App() {
       compactLabelMode ? 0.006 : 0,
     );
     const baseZoneLines = pickNearestPriceItems(
-      (active.overlays?.priceLines ?? []).filter((line) => line.group === "zone"),
+      commonOverlayPriceLines.filter((line) => line.group === "zone"),
       compactLabelMode ? latestChartClose : null,
       compactLabelMode ? 4 : 8,
     );
@@ -1012,46 +1024,6 @@ export default function App() {
           lineStyle: LineStyle.Dotted,
           axisLabelVisible: true,
           title: line.label,
-        });
-      }
-    }
-    if (activeTf === "day" && strategyWashout?.pullbackZone.low != null && strategyWashout.pullbackZone.high != null) {
-      candleSeries.createPriceLine({
-        price: strategyWashout.pullbackZone.low,
-        color: "rgba(0, 179, 134, 0.7)",
-        lineWidth: 2,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: `${strategyWashout.pullbackZone.label} 하단`,
-      });
-      candleSeries.createPriceLine({
-        price: strategyWashout.pullbackZone.high,
-        color: "rgba(0, 179, 134, 0.7)",
-        lineWidth: 2,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: `${strategyWashout.pullbackZone.label} 상단`,
-      });
-    }
-    if (activeTf === "day" && strategyWashout?.invalidLow.price != null) {
-      candleSeries.createPriceLine({
-        price: strategyWashout.invalidLow.price,
-        color: "rgba(255, 90, 118, 0.95)",
-        lineWidth: 3,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: strategyWashout.invalidLow.label,
-      });
-    }
-    if (activeTf === "day" && showWashoutEntries && strategyWashout?.entryPlan.entries?.length) {
-      for (const entry of strategyWashout.entryPlan.entries) {
-        candleSeries.createPriceLine({
-          price: entry.price,
-          color: "rgba(87, 163, 255, 0.9)",
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: `${entry.label} 진입`,
         });
       }
     }
@@ -1328,7 +1300,7 @@ export default function App() {
       });
     };
 
-    const overlayLines = activeAnalysis.overlays?.priceLines ?? [];
+    const overlayLines = filterCommonOverlayPriceLines(activeAnalysis.overlays?.priceLines);
     for (const line of overlayLines) {
       if (line.group === "level") addRow(line.id, line.label, line.price, showLevels);
       if (line.group === "zone") addRow(line.id, line.label, line.price, effectiveShowZones);
@@ -1344,34 +1316,6 @@ export default function App() {
       if (!item.enabled || item.period == null) continue;
       const last = findLastIndicatorPoint(item.series);
       addRow(`ma-${item.period}`, `MA${item.period}`, last?.value ?? null, true);
-    }
-
-    if (activeTf === "day") {
-      const washoutOverlay = activeAnalysis.strategyOverlays?.washoutPullback;
-      if (washoutOverlay?.pullbackZone.low != null) {
-        addRow(
-          "washout-zone-low",
-          `${washoutOverlay.pullbackZone.label} 하단`,
-          washoutOverlay.pullbackZone.low,
-          true,
-        );
-      }
-      if (washoutOverlay?.pullbackZone.high != null) {
-        addRow(
-          "washout-zone-high",
-          `${washoutOverlay.pullbackZone.label} 상단`,
-          washoutOverlay.pullbackZone.high,
-          true,
-        );
-      }
-      if (washoutOverlay?.invalidLow.price != null) {
-        addRow("washout-invalid", washoutOverlay.invalidLow.label, washoutOverlay.invalidLow.price, true);
-      }
-      if (showWashoutEntries && washoutOverlay?.entryPlan.entries?.length) {
-        for (const entry of washoutOverlay.entryPlan.entries) {
-          addRow(`washout-entry-${entry.label}`, `${entry.label} 분할 진입`, entry.price, true);
-        }
-      }
     }
 
     const sortedRows = rows.sort((a, b) => b.price - a.price);
@@ -1391,7 +1335,6 @@ export default function App() {
     showMa1,
     showMa2,
     showMa3,
-    showWashoutEntries,
   ]);
   const riskBreakdown = activeAnalysis?.signals.risk.breakdown ?? null;
   const volumeSignal = activeAnalysis?.signals.volume ?? null;
@@ -1402,6 +1345,208 @@ export default function App() {
   const trendTemplateCard = activeAnalysis?.strategyCards?.trendTemplate ?? null;
   const rsiDivergenceCard = activeAnalysis?.strategyCards?.rsiDivergence ?? null;
   const flowPersistenceCard = activeAnalysis?.strategyCards?.flowPersistence ?? null;
+  const strategyChartDescriptors = useMemo<StrategyChartDescriptor[]>(() => {
+    if (!strategyChartAnalysis) return [];
+
+    const normalizeSimpleOverlay = (
+      overlay: TimeframeAnalysis["strategyOverlays"]["darvasRetest"],
+    ): { lines: StrategyChartOverlayLine[]; markers: StrategyChartOverlayMarker[] } => ({
+      lines: (overlay?.lines ?? [])
+        .filter((line) => line.price != null)
+        .map((line) => ({
+          price: line.price as number,
+          label: line.label,
+          style: line.style,
+          color: line.color,
+          lineWidth: 2,
+        })),
+      markers: (overlay?.markers ?? [])
+        .filter((marker) => marker.time && marker.price != null)
+        .map((marker) => ({
+          time: marker.time as string,
+          price: marker.price as number,
+          label: marker.label,
+          shape: marker.shape,
+          color: marker.color,
+        })),
+    });
+
+    const normalizeWashoutOverlay = (
+      overlay: TimeframeAnalysis["strategyOverlays"]["washoutPullback"],
+    ): { lines: StrategyChartOverlayLine[]; markers: StrategyChartOverlayMarker[] } => {
+      const lines: StrategyChartOverlayLine[] = [];
+      const markers: StrategyChartOverlayMarker[] = [];
+
+      if (overlay.anchorSpike.time && overlay.anchorSpike.price != null) {
+        markers.push({
+          time: overlay.anchorSpike.time,
+          price: overlay.anchorSpike.price,
+          label: "ANCHOR",
+          shape: "circle",
+          color: "#f6c75f",
+        });
+      }
+      if (overlay.washoutReentry.time && overlay.washoutReentry.price != null) {
+        markers.push({
+          time: overlay.washoutReentry.time,
+          price: overlay.washoutReentry.price,
+          label: "REIN",
+          shape: "arrowUp",
+          color: "#00d5a0",
+        });
+      }
+      if (overlay.pullbackZone.low != null) {
+        lines.push({
+          price: overlay.pullbackZone.low,
+          label: `${overlay.pullbackZone.label} 하단`,
+          style: "dotted",
+          color: "rgba(0, 179, 134, 0.7)",
+          lineWidth: 2,
+        });
+      }
+      if (overlay.pullbackZone.high != null) {
+        lines.push({
+          price: overlay.pullbackZone.high,
+          label: `${overlay.pullbackZone.label} 상단`,
+          style: "dotted",
+          color: "rgba(0, 179, 134, 0.7)",
+          lineWidth: 2,
+        });
+      }
+      if (overlay.invalidLow.price != null) {
+        lines.push({
+          price: overlay.invalidLow.price,
+          label: overlay.invalidLow.label,
+          style: "dashed",
+          color: "rgba(255, 90, 118, 0.95)",
+          lineWidth: 3,
+        });
+      }
+      for (const entry of overlay.entryPlan.entries) {
+        lines.push({
+          price: entry.price,
+          label: `${entry.label} 진입`,
+          style: "solid",
+          color: "rgba(87, 163, 255, 0.9)",
+          lineWidth: 1,
+        });
+      }
+
+      return { lines, markers };
+    };
+
+    const dayCards = strategyChartAnalysis.strategyCards;
+    const dayOverlays = strategyChartAnalysis.strategyOverlays;
+    const washoutOverlay = normalizeWashoutOverlay(dayOverlays.washoutPullback);
+    const darvasOverlay = normalizeSimpleOverlay(dayOverlays.darvasRetest);
+    const nr7Overlay = normalizeSimpleOverlay(dayOverlays.nr7InsideBar);
+    const trendOverlay = normalizeSimpleOverlay(dayOverlays.trendTemplate);
+    const rsiOverlay = normalizeSimpleOverlay(dayOverlays.rsiDivergence);
+    const flowOverlay = normalizeSimpleOverlay(dayOverlays.flowPersistence);
+
+    const buildStrategyDescriptor = (
+      id: StrategyChartDescriptor["id"],
+      title: string,
+      summary: string,
+      stateLabel: string,
+      stateClassName: string,
+      score: number,
+      confidence: number,
+      defaultOpen: boolean,
+      emptyOverlayMessage: string,
+      overlay: { lines: StrategyChartOverlayLine[]; markers: StrategyChartOverlayMarker[] },
+    ): StrategyChartDescriptor => ({
+      id,
+      title,
+      summary,
+      stateLabel,
+      stateClassName,
+      score,
+      scoreClassName: confidenceClass(score),
+      confidence,
+      confidenceClassName: confidenceClass(confidence),
+      defaultOpen,
+      hasOverlay: overlay.lines.length > 0 || overlay.markers.length > 0,
+      emptyOverlayMessage,
+      lines: overlay.lines,
+      markers: overlay.markers,
+    });
+
+    return [
+      buildStrategyDescriptor(
+        "washoutPullback",
+        dayCards.washoutPullback.displayName,
+        dayCards.washoutPullback.statusSummary,
+        washoutStateLabel(dayCards.washoutPullback.state),
+        washoutStateClass(dayCards.washoutPullback.state),
+        dayCards.washoutPullback.score,
+        dayCards.washoutPullback.confidence,
+        dayCards.washoutPullback.detected,
+        "현재 설거지+눌림목 오버레이가 없습니다.",
+        washoutOverlay,
+      ),
+      buildStrategyDescriptor(
+        "darvasRetest",
+        dayCards.darvasRetest?.displayName ?? "다르바스 박스 돌파-리테스트",
+        dayCards.darvasRetest?.summary ?? "다르바스 박스 조건이 부족합니다.",
+        strategySignalStateLabel(dayCards.darvasRetest?.state ?? "NONE"),
+        strategySignalStateClass(dayCards.darvasRetest?.state ?? "NONE"),
+        dayCards.darvasRetest?.score ?? 0,
+        dayCards.darvasRetest?.confidence ?? 0,
+        Boolean(dayCards.darvasRetest?.detected),
+        "현재 다르바스 오버레이가 없습니다.",
+        darvasOverlay,
+      ),
+      buildStrategyDescriptor(
+        "nr7InsideBar",
+        dayCards.nr7InsideBar?.displayName ?? "NR7+인사이드바 변동성 수축 돌파",
+        dayCards.nr7InsideBar?.summary ?? "NR7+인사이드바 조건이 부족합니다.",
+        strategySignalStateLabel(dayCards.nr7InsideBar?.state ?? "NONE"),
+        strategySignalStateClass(dayCards.nr7InsideBar?.state ?? "NONE"),
+        dayCards.nr7InsideBar?.score ?? 0,
+        dayCards.nr7InsideBar?.confidence ?? 0,
+        Boolean(dayCards.nr7InsideBar?.detected),
+        "현재 NR7 오버레이가 없습니다.",
+        nr7Overlay,
+      ),
+      buildStrategyDescriptor(
+        "trendTemplate",
+        dayCards.trendTemplate?.displayName ?? "추세 템플릿 + RS 필터",
+        dayCards.trendTemplate?.summary ?? "추세 템플릿 조건이 부족합니다.",
+        strategySignalStateLabel(dayCards.trendTemplate?.state ?? "NONE"),
+        strategySignalStateClass(dayCards.trendTemplate?.state ?? "NONE"),
+        dayCards.trendTemplate?.score ?? 0,
+        dayCards.trendTemplate?.confidence ?? 0,
+        Boolean(dayCards.trendTemplate?.detected),
+        "현재 추세 템플릿 오버레이가 없습니다.",
+        trendOverlay,
+      ),
+      buildStrategyDescriptor(
+        "rsiDivergence",
+        dayCards.rsiDivergence?.displayName ?? "RSI 다이버전스 + 넥라인 돌파",
+        dayCards.rsiDivergence?.summary ?? "RSI 다이버전스 조건이 부족합니다.",
+        strategySignalStateLabel(dayCards.rsiDivergence?.state ?? "NONE"),
+        strategySignalStateClass(dayCards.rsiDivergence?.state ?? "NONE"),
+        dayCards.rsiDivergence?.score ?? 0,
+        dayCards.rsiDivergence?.confidence ?? 0,
+        Boolean(dayCards.rsiDivergence?.detected),
+        "현재 RSI 다이버전스 오버레이가 없습니다.",
+        rsiOverlay,
+      ),
+      buildStrategyDescriptor(
+        "flowPersistence",
+        dayCards.flowPersistence?.displayName ?? "기관/외인 수급 지속성 추종",
+        dayCards.flowPersistence?.summary ?? "수급 지속성 조건이 부족합니다.",
+        strategySignalStateLabel(dayCards.flowPersistence?.state ?? "NONE"),
+        strategySignalStateClass(dayCards.flowPersistence?.state ?? "NONE"),
+        dayCards.flowPersistence?.score ?? 0,
+        dayCards.flowPersistence?.confidence ?? 0,
+        Boolean(dayCards.flowPersistence?.detected),
+        "현재 수급 지속성 오버레이가 없습니다.",
+        flowOverlay,
+      ),
+    ];
+  }, [strategyChartAnalysis]);
   const fundamentalSignal = activeAnalysis?.signals.fundamental ?? null;
   const flowSignal = activeAnalysis?.signals.flow ?? null;
   const flowDisplayReasons = (flowSignal?.reasons ?? []).filter((reason) =>
@@ -2357,19 +2502,6 @@ export default function App() {
             선택 캔들 강조
           </label>
         )}
-        {activeTf === "day" && (
-          <label>
-            <input
-              type="checkbox"
-              checked={showWashoutEntries}
-              onChange={(event) => {
-                setDrawingPresetMode("custom");
-                setShowWashoutEntries(event.target.checked);
-              }}
-            />
-            눌림목 분할 진입선
-          </label>
-        )}
       </div>
     ) : null;
   const chartNotices = (
@@ -2757,201 +2889,10 @@ export default function App() {
         </div>
       )}
 
-      {activeTf === "day" && washoutCard && (
-        <div className="card">
-          <div className="insight-headline">
-            <h3>{washoutCard.displayName}</h3>
-            <div className="final-badges">
-              <small className={washoutStateClass(washoutCard.state)}>{washoutStateLabel(washoutCard.state)}</small>
-              <span className={confidenceClass(washoutCard.score)}>점수 {washoutCard.score}</span>
-              <span className={confidenceClass(washoutCard.confidence)}>신뢰도 {washoutCard.confidence}</span>
-            </div>
-          </div>
-
-          <div className="washout-grid">
-            <div className="plan-item">
-              <span>Anchor 거래대금</span>
-              <strong>{formatRatio(washoutCard.anchorSpike.turnoverRatio)}</strong>
-            </div>
-            <div className="plan-item">
-              <span>재유입 거래대금</span>
-              <strong>{formatRatio(washoutCard.washoutReentry.turnoverRatio)}</strong>
-            </div>
-            <div className="plan-item">
-              <span>현재 상태</span>
-              <strong>{washoutStateLabel(washoutCard.state)}</strong>
-            </div>
-          </div>
-
-          <div className="washout-grid">
-            <div className="plan-item">
-              <span>Pullback Zone</span>
-              <strong>
-                {washoutCard.pullbackZone.low != null && washoutCard.pullbackZone.high != null
-                  ? `${formatPrice(washoutCard.pullbackZone.low)} ~ ${formatPrice(washoutCard.pullbackZone.high)}`
-                  : "-"}
-              </strong>
-            </div>
-            <div className="plan-item">
-              <span>Entry Plan</span>
-              <strong>
-                {washoutCard.entryPlan.entries.length > 0
-                  ? `${washoutCard.entryPlan.style} (${washoutCard.entryPlan.entries
-                      .map((entry) => `${entry.label} ${formatPrice(entry.price)}`)
-                      .join(" / ")})`
-                  : `${washoutCard.entryPlan.style} (대기)`}
-              </strong>
-            </div>
-            <div className="plan-item">
-              <span>Invalidation</span>
-              <strong>{formatPrice(washoutCard.entryPlan.invalidLow)}</strong>
-            </div>
-          </div>
-
-          <div className="washout-grid">
-            <div className="plan-item">
-              <span>존 위치</span>
-              <strong>{washoutZonePosition}</strong>
-            </div>
-            <div className="plan-item">
-              <span>Anchor 일자</span>
-              <strong>{washoutCard.anchorSpike.date ?? "-"}</strong>
-            </div>
-            <div className="plan-item">
-              <span>재유입 일자</span>
-              <strong>{washoutCard.washoutReentry.date ?? "-"}</strong>
-            </div>
-          </div>
-
-          <div className="washout-columns">
-            <div>
-              <h4>근거</h4>
-              <ul className="volume-reasons">
-                {washoutCard.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4>주의</h4>
-              {washoutCard.warnings.length > 0 ? (
-                <ul className="volume-reasons">
-                  {washoutCard.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="plan-note">현재 추가 경고는 없습니다.</p>
-              )}
-            </div>
-          </div>
-
-          <p className="plan-note">{washoutCard.statusSummary}</p>
-          <p className="insight-opinion">
-            <small className={verdictToneClass(washoutCardOneLiner.verdict)}>{washoutCardOneLiner.verdict}</small>
-            {washoutCardOneLiner.text}
-          </p>
-        </div>
-      )}
-
-      {activeTf === "day" &&
-        darvasCard &&
-        nr7Card &&
-        trendTemplateCard &&
-        rsiDivergenceCard &&
-        flowPersistenceCard && (
-          <div className="card">
-            <h3>추가 전략 카드 (1~5)</h3>
-            <div className="strategy-mini-grid">
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>다르바스 박스</strong>
-                  <small className={strategySignalStateClass(darvasCard.state)}>
-                    {strategySignalStateLabel(darvasCard.state)}
-                  </small>
-                </div>
-                <p className="plan-note">
-                  점수 {darvasCard.score} · 신뢰도 {darvasCard.confidence}
-                </p>
-                <p>{darvasCard.summary}</p>
-                <p className="insight-opinion">
-                  <small className={verdictToneClass(darvasCardOneLiner.verdict)}>{darvasCardOneLiner.verdict}</small>
-                  {darvasCardOneLiner.text}
-                </p>
-              </article>
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>NR7+인사이드바</strong>
-                  <small className={strategySignalStateClass(nr7Card.state)}>
-                    {strategySignalStateLabel(nr7Card.state)}
-                  </small>
-                </div>
-                <p className="plan-note">
-                  점수 {nr7Card.score} · 신뢰도 {nr7Card.confidence}
-                </p>
-                <p>{nr7Card.summary}</p>
-                <p className="insight-opinion">
-                  <small className={verdictToneClass(nr7CardOneLiner.verdict)}>{nr7CardOneLiner.verdict}</small>
-                  {nr7CardOneLiner.text}
-                </p>
-              </article>
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>추세 템플릿</strong>
-                  <small className={strategySignalStateClass(trendTemplateCard.state)}>
-                    {strategySignalStateLabel(trendTemplateCard.state)}
-                  </small>
-                </div>
-                <p className="plan-note">
-                  점수 {trendTemplateCard.score} · 신뢰도 {trendTemplateCard.confidence}
-                </p>
-                <p>{trendTemplateCard.summary}</p>
-                <p className="insight-opinion">
-                  <small className={verdictToneClass(trendTemplateOneLiner.verdict)}>
-                    {trendTemplateOneLiner.verdict}
-                  </small>
-                  {trendTemplateOneLiner.text}
-                </p>
-              </article>
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>RSI 다이버전스</strong>
-                  <small className={strategySignalStateClass(rsiDivergenceCard.state)}>
-                    {strategySignalStateLabel(rsiDivergenceCard.state)}
-                  </small>
-                </div>
-                <p className="plan-note">
-                  점수 {rsiDivergenceCard.score} · 신뢰도 {rsiDivergenceCard.confidence}
-                </p>
-                <p>{rsiDivergenceCard.summary}</p>
-                <p className="insight-opinion">
-                  <small className={verdictToneClass(rsiDivergenceOneLiner.verdict)}>
-                    {rsiDivergenceOneLiner.verdict}
-                  </small>
-                  {rsiDivergenceOneLiner.text}
-                </p>
-              </article>
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>수급 지속성</strong>
-                  <small className={strategySignalStateClass(flowPersistenceCard.state)}>
-                    {strategySignalStateLabel(flowPersistenceCard.state)}
-                  </small>
-                </div>
-                <p className="plan-note">
-                  점수 {flowPersistenceCard.score} · 신뢰도 {flowPersistenceCard.confidence}
-                </p>
-                <p>{flowPersistenceCard.summary}</p>
-                <p className="insight-opinion">
-                  <small className={verdictToneClass(flowPersistenceOneLiner.verdict)}>
-                    {flowPersistenceOneLiner.verdict}
-                  </small>
-                  {flowPersistenceOneLiner.text}
-                </p>
-              </article>
-            </div>
-          </div>
-        )}
+      <AnalysisStrategyChartStack
+        items={strategyChartDescriptors}
+        candles={strategyChartAnalysis?.candles ?? []}
+      />
     </>
   ) : null;
   const technicalSectionContent = activeAnalysis ? (
@@ -3515,7 +3456,7 @@ export default function App() {
         {
           id: "analysis-patterns",
           title: "패턴·전략",
-          subtitle: "VCP/컵앤핸들 · 거래량 패턴 · 설거지 전략 · 추가 전략 카드",
+          subtitle: "VCP/컵앤핸들 · 거래량 패턴 · 전략별 일봉 차트",
           content: patternSectionContent,
         },
         {
