@@ -1372,10 +1372,14 @@ export default function App() {
     });
 
     const normalizeWashoutOverlay = (
-      overlay: TimeframeAnalysis["strategyOverlays"]["washoutPullback"],
+      overlay: TimeframeAnalysis["strategyOverlays"]["washoutPullback"] | undefined,
     ): { lines: StrategyChartOverlayLine[]; markers: StrategyChartOverlayMarker[] } => {
       const lines: StrategyChartOverlayLine[] = [];
       const markers: StrategyChartOverlayMarker[] = [];
+
+      if (!overlay) {
+        return { lines, markers };
+      }
 
       if (overlay.anchorSpike.time && overlay.anchorSpike.price != null) {
         markers.push({
@@ -1435,8 +1439,14 @@ export default function App() {
       return { lines, markers };
     };
 
-    const dayCards = strategyChartAnalysis.strategyCards;
-    const dayOverlays = strategyChartAnalysis.strategyOverlays;
+    const dayCards = (strategyChartAnalysis.strategyCards ?? {}) as Partial<TimeframeAnalysis["strategyCards"]>;
+    const dayOverlays = (strategyChartAnalysis.strategyOverlays ?? {}) as Partial<TimeframeAnalysis["strategyOverlays"]>;
+    const washoutCard = dayCards.washoutPullback;
+    const darvasCard = dayCards.darvasRetest;
+    const nr7Card = dayCards.nr7InsideBar;
+    const trendCard = dayCards.trendTemplate;
+    const rsiCard = dayCards.rsiDivergence;
+    const flowCard = dayCards.flowPersistence;
     const washoutOverlay = normalizeWashoutOverlay(dayOverlays.washoutPullback);
     const darvasOverlay = normalizeSimpleOverlay(dayOverlays.darvasRetest);
     const nr7Overlay = normalizeSimpleOverlay(dayOverlays.nr7InsideBar);
@@ -1475,73 +1485,73 @@ export default function App() {
     return [
       buildStrategyDescriptor(
         "washoutPullback",
-        dayCards.washoutPullback.displayName,
-        dayCards.washoutPullback.statusSummary,
-        washoutStateLabel(dayCards.washoutPullback.state),
-        washoutStateClass(dayCards.washoutPullback.state),
-        dayCards.washoutPullback.score,
-        dayCards.washoutPullback.confidence,
-        dayCards.washoutPullback.detected,
+        washoutCard?.displayName ?? "거래대금 설거지 + 눌림목 전략",
+        washoutCard?.statusSummary ?? "설거지+눌림목 데이터가 아직 준비되지 않았습니다.",
+        washoutCard ? washoutStateLabel(washoutCard.state) : "데이터 없음",
+        washoutCard ? washoutStateClass(washoutCard.state) : "signal-tag neutral",
+        washoutCard?.score ?? 0,
+        washoutCard?.confidence ?? 0,
+        Boolean(washoutCard?.detected),
         "현재 설거지+눌림목 오버레이가 없습니다.",
         washoutOverlay,
       ),
       buildStrategyDescriptor(
         "darvasRetest",
-        dayCards.darvasRetest?.displayName ?? "다르바스 박스 돌파-리테스트",
-        dayCards.darvasRetest?.summary ?? "다르바스 박스 조건이 부족합니다.",
-        strategySignalStateLabel(dayCards.darvasRetest?.state ?? "NONE"),
-        strategySignalStateClass(dayCards.darvasRetest?.state ?? "NONE"),
-        dayCards.darvasRetest?.score ?? 0,
-        dayCards.darvasRetest?.confidence ?? 0,
-        Boolean(dayCards.darvasRetest?.detected),
+        darvasCard?.displayName ?? "다르바스 박스 돌파-리테스트",
+        darvasCard?.summary ?? "다르바스 박스 조건이 부족합니다.",
+        strategySignalStateLabel(darvasCard?.state ?? "NONE"),
+        strategySignalStateClass(darvasCard?.state ?? "NONE"),
+        darvasCard?.score ?? 0,
+        darvasCard?.confidence ?? 0,
+        Boolean(darvasCard?.detected),
         "현재 다르바스 오버레이가 없습니다.",
         darvasOverlay,
       ),
       buildStrategyDescriptor(
         "nr7InsideBar",
-        dayCards.nr7InsideBar?.displayName ?? "NR7+인사이드바 변동성 수축 돌파",
-        dayCards.nr7InsideBar?.summary ?? "NR7+인사이드바 조건이 부족합니다.",
-        strategySignalStateLabel(dayCards.nr7InsideBar?.state ?? "NONE"),
-        strategySignalStateClass(dayCards.nr7InsideBar?.state ?? "NONE"),
-        dayCards.nr7InsideBar?.score ?? 0,
-        dayCards.nr7InsideBar?.confidence ?? 0,
-        Boolean(dayCards.nr7InsideBar?.detected),
+        nr7Card?.displayName ?? "NR7+인사이드바 변동성 수축 돌파",
+        nr7Card?.summary ?? "NR7+인사이드바 조건이 부족합니다.",
+        strategySignalStateLabel(nr7Card?.state ?? "NONE"),
+        strategySignalStateClass(nr7Card?.state ?? "NONE"),
+        nr7Card?.score ?? 0,
+        nr7Card?.confidence ?? 0,
+        Boolean(nr7Card?.detected),
         "현재 NR7 오버레이가 없습니다.",
         nr7Overlay,
       ),
       buildStrategyDescriptor(
         "trendTemplate",
-        dayCards.trendTemplate?.displayName ?? "추세 템플릿 + RS 필터",
-        dayCards.trendTemplate?.summary ?? "추세 템플릿 조건이 부족합니다.",
-        strategySignalStateLabel(dayCards.trendTemplate?.state ?? "NONE"),
-        strategySignalStateClass(dayCards.trendTemplate?.state ?? "NONE"),
-        dayCards.trendTemplate?.score ?? 0,
-        dayCards.trendTemplate?.confidence ?? 0,
-        Boolean(dayCards.trendTemplate?.detected),
+        trendCard?.displayName ?? "추세 템플릿 + RS 필터",
+        trendCard?.summary ?? "추세 템플릿 조건이 부족합니다.",
+        strategySignalStateLabel(trendCard?.state ?? "NONE"),
+        strategySignalStateClass(trendCard?.state ?? "NONE"),
+        trendCard?.score ?? 0,
+        trendCard?.confidence ?? 0,
+        Boolean(trendCard?.detected),
         "현재 추세 템플릿 오버레이가 없습니다.",
         trendOverlay,
       ),
       buildStrategyDescriptor(
         "rsiDivergence",
-        dayCards.rsiDivergence?.displayName ?? "RSI 다이버전스 + 넥라인 돌파",
-        dayCards.rsiDivergence?.summary ?? "RSI 다이버전스 조건이 부족합니다.",
-        strategySignalStateLabel(dayCards.rsiDivergence?.state ?? "NONE"),
-        strategySignalStateClass(dayCards.rsiDivergence?.state ?? "NONE"),
-        dayCards.rsiDivergence?.score ?? 0,
-        dayCards.rsiDivergence?.confidence ?? 0,
-        Boolean(dayCards.rsiDivergence?.detected),
+        rsiCard?.displayName ?? "RSI 다이버전스 + 넥라인 돌파",
+        rsiCard?.summary ?? "RSI 다이버전스 조건이 부족합니다.",
+        strategySignalStateLabel(rsiCard?.state ?? "NONE"),
+        strategySignalStateClass(rsiCard?.state ?? "NONE"),
+        rsiCard?.score ?? 0,
+        rsiCard?.confidence ?? 0,
+        Boolean(rsiCard?.detected),
         "현재 RSI 다이버전스 오버레이가 없습니다.",
         rsiOverlay,
       ),
       buildStrategyDescriptor(
         "flowPersistence",
-        dayCards.flowPersistence?.displayName ?? "기관/외인 수급 지속성 추종",
-        dayCards.flowPersistence?.summary ?? "수급 지속성 조건이 부족합니다.",
-        strategySignalStateLabel(dayCards.flowPersistence?.state ?? "NONE"),
-        strategySignalStateClass(dayCards.flowPersistence?.state ?? "NONE"),
-        dayCards.flowPersistence?.score ?? 0,
-        dayCards.flowPersistence?.confidence ?? 0,
-        Boolean(dayCards.flowPersistence?.detected),
+        flowCard?.displayName ?? "기관/외인 수급 지속성 추종",
+        flowCard?.summary ?? "수급 지속성 조건이 부족합니다.",
+        strategySignalStateLabel(flowCard?.state ?? "NONE"),
+        strategySignalStateClass(flowCard?.state ?? "NONE"),
+        flowCard?.score ?? 0,
+        flowCard?.confidence ?? 0,
+        Boolean(flowCard?.detected),
         "현재 수급 지속성 오버레이가 없습니다.",
         flowOverlay,
       ),
