@@ -496,6 +496,12 @@ const sortItems = (
 
 export default function ScreenerPanel(props: ScreenerPanelProps) {
   const { apiBase, onSelectSymbol } = props;
+  const [isMobileView, setIsMobileView] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 860px)").matches;
+  });
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileDashboardOpen, setMobileDashboardOpen] = useState(false);
   const [market, setMarket] = useState<ScreenerMarketFilter>("ALL");
   const [strategy, setStrategy] = useState<ScreenerStrategyFilter>("ALL");
   const [washoutState, setWashoutState] = useState<ScreenerWashoutStateFilter>("ALL");
@@ -591,6 +597,28 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(FAVORITE_NOTIFY_KEY, favoriteNotificationsEnabled ? "true" : "false");
   }, [favoriteNotificationsEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 860px)");
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileView(event.matches);
+    };
+    setIsMobileView(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileView) {
+      setMobileFiltersOpen(false);
+      setMobileDashboardOpen(false);
+    }
+  }, [isMobileView]);
 
   useEffect(() => {
     if (!dashboard || !favoriteNotificationsEnabled) return;
@@ -716,6 +744,90 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   }, [dashboard?.timeline]);
 
   const favoriteAlertCount = dashboard?.favorites.alerts.length ?? 0;
+  const mobileFilterSummary = useMemo(() => {
+    const parts = [`정렬 ${sortLabel(sortKey)}`, `노출 ${count}개`, showAdvancedCards ? "고급 ON" : "고급 OFF"];
+    if (strategy === "WASHOUT_PULLBACK") {
+      parts.push(washoutState === "ALL" ? "상태 전체" : washoutStateLabel(washoutState));
+      parts.push(washoutPosition === "ALL" ? "위치 전체" : washoutPositionLabel(washoutPosition));
+      parts.push(washoutRiskMax === "ALL" ? "리스크 제한 없음" : `리스크 ${Math.round(Number(washoutRiskMax) * 100)}%`);
+    }
+    return parts.join(" · ");
+  }, [count, showAdvancedCards, sortKey, strategy, washoutPosition, washoutRiskMax, washoutState]);
+  const mobileDashboardSummary = dashboard
+    ? `${dashboard.marketTemperature.heatLabel} ${dashboard.marketTemperature.heatScore}점 · 타임라인 ${dashboard.timeline.length}건`
+    : "시장 요약";
+  const dashboardInsightCards = dashboard ? (
+    <>
+      <article className="strategy-mini-item">
+        <div className="strategy-mini-head">
+          <strong>시장 전체 온도계</strong>
+          <small className="signal-tag neutral">
+            {dashboard.marketTemperature.heatLabel} · {dashboard.marketTemperature.heatScore}점
+          </small>
+        </div>
+        <p>
+          평균 점수 {formatNullable(dashboard.marketTemperature.avgScore)} · 평균 신뢰도{" "}
+          {formatNullable(dashboard.marketTemperature.avgConfidence)}
+        </p>
+        <p>
+          강세 {dashboard.marketTemperature.strongCount} · 혼조 {dashboard.marketTemperature.neutralCount} · 주의{" "}
+          {dashboard.marketTemperature.cautionCount}
+        </p>
+        <p>
+          RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들 {dashboard.marketTemperature.cupHandleCount} · 설거지{" "}
+          {dashboard.marketTemperature.washoutCount}
+        </p>
+        <p>{dashboard.marketTemperature.summary}</p>
+      </article>
+
+      <article className="strategy-mini-item">
+        <div className="strategy-mini-head">
+          <strong>전략별 성과 랭킹</strong>
+          <small className="signal-tag neutral">상위 5개</small>
+        </div>
+        <ul className="insight-list">
+          {dashboard.strategyRanking.slice(0, 5).map((item) => (
+            <li key={`rank-${item.key}`}>
+              <span>
+                {item.label} · 후보 {item.candidateCount}개 · 품질 {item.qualityScore ?? "-"}
+              </span>
+              <small className="signal-tag neutral">
+                승률 {formatNullable(item.avgWinRate)} / PF {formatNullable(item.avgPf)}
+              </small>
+            </li>
+          ))}
+        </ul>
+      </article>
+
+      <article className="strategy-mini-item">
+        <div className="strategy-mini-head">
+          <strong>전략 후보 타임라인</strong>
+          <small className="signal-tag neutral">{dashboard.timeline.length}건</small>
+        </div>
+        {timelineGroups.length > 0 ? (
+          <div className="timeline-groups">
+            {timelineGroups.map(([date, items]) => (
+              <div key={`timeline-${date}`} className="timeline-group">
+                <strong>{date}</strong>
+                <ul className="insight-list">
+                  {items.slice(0, 3).map((item) => (
+                    <li key={`${date}-${item.code}-${item.strategyKey}`}>
+                      <span>
+                        {item.name}({item.code}) · {item.strategyLabel}
+                      </span>
+                      <small className="signal-tag neutral">{item.stateLabel}</small>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="plan-note">타임라인 이벤트가 아직 없습니다.</p>
+        )}
+      </article>
+    </>
+  ) : null;
 
   const requestFavoriteNotificationPermission = async () => {
     if (typeof Notification === "undefined") return;
@@ -727,108 +839,202 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
 
   return (
     <section className="screener">
-      <form className="screener-controls" onSubmit={onSubmit}>
-        <label>
-          시장
-          <select value={market} onChange={(e) => setMarket(e.target.value as ScreenerMarketFilter)}>
-            <option value="ALL">전체</option>
-            <option value="KOSPI">KOSPI</option>
-            <option value="KOSDAQ">KOSDAQ</option>
-          </select>
-        </label>
-        <label>
-          전략
-          <select value={strategy} onChange={(e) => setStrategy(e.target.value as ScreenerStrategyFilter)}>
-            <option value="ALL">ALL</option>
-            <option value="VOLUME">VOLUME</option>
-            <option value="VCP">VCP</option>
-            <option value="WASHOUT_PULLBACK">거래대금 설거지+눌림목</option>
-            <option value="DARVAS">다르바스 박스</option>
-            <option value="NR7">NR7+인사이드바</option>
-            <option value="TREND_TEMPLATE">추세 템플릿</option>
-            <option value="RSI_DIVERGENCE">RSI 다이버전스</option>
-            <option value="FLOW_PERSISTENCE">수급 지속성</option>
-            <option value="IHS">IHS</option>
-            <option value="HS">HS</option>
-          </select>
-        </label>
-        {strategy === "WASHOUT_PULLBACK" && (
-          <>
-            <label>
-              상태
-              <select
-                value={washoutState}
-                onChange={(e) => setWashoutState(e.target.value as ScreenerWashoutStateFilter)}
-              >
-                <option value="ALL">전체</option>
-                <option value="REBOUND_CONFIRMED">반등 재개(확인)</option>
-                <option value="PULLBACK_READY">눌림 관찰(준비)</option>
-                <option value="WASHOUT_CANDIDATE">반등 후보(설거지)</option>
-                <option value="ANCHOR_DETECTED">대금 흔적(앵커)</option>
-              </select>
-            </label>
-            <label>
-              현재가 위치
-              <select
-                value={washoutPosition}
-                onChange={(e) => setWashoutPosition(e.target.value as ScreenerWashoutPositionFilter)}
-              >
-                <option value="ALL">전체</option>
-                <option value="IN_ZONE">존 내부</option>
-                <option value="ABOVE_ZONE">존 위</option>
-                <option value="BELOW_ZONE">존 아래</option>
-              </select>
-            </label>
-            <label>
-              최대 리스크
-              <select value={washoutRiskMax} onChange={(e) => setWashoutRiskMax(e.target.value)}>
-                <option value="ALL">제한 없음</option>
-                <option value="0.06">6% 이하</option>
-                <option value="0.08">8% 이하</option>
-                <option value="0.10">10% 이하</option>
-                <option value="0.12">12% 이하</option>
-                <option value="0.15">15% 이하</option>
-              </select>
-            </label>
-          </>
-        )}
-        <label>
-          정렬
-          <select
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
-            disabled={strategy === "WASHOUT_PULLBACK"}
+      <form className="screener-form" onSubmit={onSubmit}>
+        <div className="screener-controls screener-controls-primary">
+          <label>
+            시장
+            <select value={market} onChange={(e) => setMarket(e.target.value as ScreenerMarketFilter)}>
+              <option value="ALL">전체</option>
+              <option value="KOSPI">KOSPI</option>
+              <option value="KOSDAQ">KOSDAQ</option>
+            </select>
+          </label>
+          <label>
+            전략
+            <select value={strategy} onChange={(e) => setStrategy(e.target.value as ScreenerStrategyFilter)}>
+              <option value="ALL">ALL</option>
+              <option value="VOLUME">VOLUME</option>
+              <option value="VCP">VCP</option>
+              <option value="WASHOUT_PULLBACK">거래대금 설거지+눌림목</option>
+              <option value="DARVAS">다르바스 박스</option>
+              <option value="NR7">NR7+인사이드바</option>
+              <option value="TREND_TEMPLATE">추세 템플릿</option>
+              <option value="RSI_DIVERGENCE">RSI 다이버전스</option>
+              <option value="FLOW_PERSISTENCE">수급 지속성</option>
+              <option value="IHS">IHS</option>
+              <option value="HS">HS</option>
+            </select>
+          </label>
+          <button type="submit" disabled={loading}>
+            {loading ? "조회 중..." : "스크리너 조회"}
+          </button>
+        </div>
+
+        {isMobileView ? (
+          <details
+            className="screener-mobile-drawer"
+            open={mobileFiltersOpen}
+            onToggle={(event) => setMobileFiltersOpen(event.currentTarget.open)}
           >
-            <option value="SCORE">점수순</option>
-            <option value="CONFIDENCE">신뢰도순</option>
-            <option value="BACKTEST">백테스트순</option>
-          </select>
-        </label>
-        <label>
-          노출 개수
-          <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-            <option value={20}>20개</option>
-            <option value={30}>30개</option>
-            <option value={50}>50개</option>
-          </select>
-        </label>
-        <label>
-          유니버스
-          <select value={universe} onChange={(e) => setUniverse(Number(e.target.value))} disabled>
-            <option value={500}>500개</option>
-          </select>
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={showAdvancedCards}
-            onChange={(e) => setShowAdvancedCards(e.target.checked)}
-          />
-          카드 고급 정보
-        </label>
-        <button type="submit" disabled={loading}>
-          {loading ? "조회 중..." : "스크리너 조회"}
-        </button>
+            <summary>
+              <strong>세부 필터</strong>
+              <small>{mobileFilterSummary}</small>
+            </summary>
+            <div className="screener-controls screener-controls-secondary">
+              {strategy === "WASHOUT_PULLBACK" && (
+                <>
+                  <label>
+                    상태
+                    <select
+                      value={washoutState}
+                      onChange={(e) => setWashoutState(e.target.value as ScreenerWashoutStateFilter)}
+                    >
+                      <option value="ALL">전체</option>
+                      <option value="REBOUND_CONFIRMED">반등 재개(확인)</option>
+                      <option value="PULLBACK_READY">눌림 관찰(준비)</option>
+                      <option value="WASHOUT_CANDIDATE">반등 후보(설거지)</option>
+                      <option value="ANCHOR_DETECTED">대금 흔적(앵커)</option>
+                    </select>
+                  </label>
+                  <label>
+                    현재가 위치
+                    <select
+                      value={washoutPosition}
+                      onChange={(e) => setWashoutPosition(e.target.value as ScreenerWashoutPositionFilter)}
+                    >
+                      <option value="ALL">전체</option>
+                      <option value="IN_ZONE">존 내부</option>
+                      <option value="ABOVE_ZONE">존 위</option>
+                      <option value="BELOW_ZONE">존 아래</option>
+                    </select>
+                  </label>
+                  <label>
+                    최대 리스크
+                    <select value={washoutRiskMax} onChange={(e) => setWashoutRiskMax(e.target.value)}>
+                      <option value="ALL">제한 없음</option>
+                      <option value="0.06">6% 이하</option>
+                      <option value="0.08">8% 이하</option>
+                      <option value="0.10">10% 이하</option>
+                      <option value="0.12">12% 이하</option>
+                      <option value="0.15">15% 이하</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              <label>
+                정렬
+                <select
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  disabled={strategy === "WASHOUT_PULLBACK"}
+                >
+                  <option value="SCORE">점수순</option>
+                  <option value="CONFIDENCE">신뢰도순</option>
+                  <option value="BACKTEST">백테스트순</option>
+                </select>
+              </label>
+              <label>
+                노출 개수
+                <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
+                  <option value={20}>20개</option>
+                  <option value={30}>30개</option>
+                  <option value={50}>50개</option>
+                </select>
+              </label>
+              <label>
+                유니버스
+                <select value={universe} onChange={(e) => setUniverse(Number(e.target.value))} disabled>
+                  <option value={500}>500개</option>
+                </select>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={showAdvancedCards}
+                  onChange={(e) => setShowAdvancedCards(e.target.checked)}
+                />
+                카드 고급 정보
+              </label>
+            </div>
+          </details>
+        ) : (
+          <div className="screener-controls screener-controls-secondary">
+            {strategy === "WASHOUT_PULLBACK" && (
+              <>
+                <label>
+                  상태
+                  <select
+                    value={washoutState}
+                    onChange={(e) => setWashoutState(e.target.value as ScreenerWashoutStateFilter)}
+                  >
+                    <option value="ALL">전체</option>
+                    <option value="REBOUND_CONFIRMED">반등 재개(확인)</option>
+                    <option value="PULLBACK_READY">눌림 관찰(준비)</option>
+                    <option value="WASHOUT_CANDIDATE">반등 후보(설거지)</option>
+                    <option value="ANCHOR_DETECTED">대금 흔적(앵커)</option>
+                  </select>
+                </label>
+                <label>
+                  현재가 위치
+                  <select
+                    value={washoutPosition}
+                    onChange={(e) => setWashoutPosition(e.target.value as ScreenerWashoutPositionFilter)}
+                  >
+                    <option value="ALL">전체</option>
+                    <option value="IN_ZONE">존 내부</option>
+                    <option value="ABOVE_ZONE">존 위</option>
+                    <option value="BELOW_ZONE">존 아래</option>
+                  </select>
+                </label>
+                <label>
+                  최대 리스크
+                  <select value={washoutRiskMax} onChange={(e) => setWashoutRiskMax(e.target.value)}>
+                    <option value="ALL">제한 없음</option>
+                    <option value="0.06">6% 이하</option>
+                    <option value="0.08">8% 이하</option>
+                    <option value="0.10">10% 이하</option>
+                    <option value="0.12">12% 이하</option>
+                    <option value="0.15">15% 이하</option>
+                  </select>
+                </label>
+              </>
+            )}
+            <label>
+              정렬
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                disabled={strategy === "WASHOUT_PULLBACK"}
+              >
+                <option value="SCORE">점수순</option>
+                <option value="CONFIDENCE">신뢰도순</option>
+                <option value="BACKTEST">백테스트순</option>
+              </select>
+            </label>
+            <label>
+              노출 개수
+              <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
+                <option value={20}>20개</option>
+                <option value={30}>30개</option>
+                <option value={50}>50개</option>
+              </select>
+            </label>
+            <label>
+              유니버스
+              <select value={universe} onChange={(e) => setUniverse(Number(e.target.value))} disabled>
+                <option value={500}>500개</option>
+              </select>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={showAdvancedCards}
+                onChange={(e) => setShowAdvancedCards(e.target.checked)}
+              />
+              카드 고급 정보
+            </label>
+          </div>
+        )}
       </form>
 
       <p className="screener-note">
@@ -898,79 +1104,22 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
             {dashboardError && <p className="plan-note">{dashboardError}</p>}
           </article>
 
-          {dashboard && (
-            <>
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>시장 전체 온도계</strong>
-                  <small className="signal-tag neutral">
-                    {dashboard.marketTemperature.heatLabel} · {dashboard.marketTemperature.heatScore}점
-                  </small>
-                </div>
-                <p>
-                  평균 점수 {formatNullable(dashboard.marketTemperature.avgScore)} · 평균 신뢰도{" "}
-                  {formatNullable(dashboard.marketTemperature.avgConfidence)}
-                </p>
-                <p>
-                  강세 {dashboard.marketTemperature.strongCount} · 혼조 {dashboard.marketTemperature.neutralCount} ·
-                  주의 {dashboard.marketTemperature.cautionCount}
-                </p>
-                <p>
-                  RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들 {dashboard.marketTemperature.cupHandleCount} ·
-                  설거지 {dashboard.marketTemperature.washoutCount}
-                </p>
-                <p>{dashboard.marketTemperature.summary}</p>
-              </article>
-
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>전략별 성과 랭킹</strong>
-                  <small className="signal-tag neutral">상위 5개</small>
-                </div>
-                <ul className="insight-list">
-                  {dashboard.strategyRanking.slice(0, 5).map((item) => (
-                    <li key={`rank-${item.key}`}>
-                      <span>
-                        {item.label} · 후보 {item.candidateCount}개 · 품질 {item.qualityScore ?? "-"}
-                      </span>
-                      <small className="signal-tag neutral">
-                        승률 {formatNullable(item.avgWinRate)} / PF {formatNullable(item.avgPf)}
-                      </small>
-                    </li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="strategy-mini-item">
-                <div className="strategy-mini-head">
-                  <strong>전략 후보 타임라인</strong>
-                  <small className="signal-tag neutral">{dashboard.timeline.length}건</small>
-                </div>
-                {timelineGroups.length > 0 ? (
-                  <div className="timeline-groups">
-                    {timelineGroups.map(([date, items]) => (
-                      <div key={`timeline-${date}`} className="timeline-group">
-                        <strong>{date}</strong>
-                        <ul className="insight-list">
-                          {items.slice(0, 3).map((item) => (
-                            <li key={`${date}-${item.code}-${item.strategyKey}`}>
-                              <span>
-                                {item.name}({item.code}) · {item.strategyLabel}
-                              </span>
-                              <small className="signal-tag neutral">{item.stateLabel}</small>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="plan-note">타임라인 이벤트가 아직 없습니다.</p>
-                )}
-              </article>
-            </>
-          )}
+          {!isMobileView && dashboardInsightCards}
         </div>
+      )}
+
+      {isMobileView && dashboardInsightCards && (
+        <details
+          className="screener-mobile-drawer screener-dashboard-drawer"
+          open={mobileDashboardOpen}
+          onToggle={(event) => setMobileDashboardOpen(event.currentTarget.open)}
+        >
+          <summary>
+            <strong>시장 요약</strong>
+            <small>{mobileDashboardSummary}</small>
+          </summary>
+          <div className="strategy-mini-grid screener-dashboard-secondary">{dashboardInsightCards}</div>
+        </details>
       )}
 
       {error && <p className="error">{error}</p>}
@@ -1169,8 +1318,8 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                         : "screener-card"
                   }
                 >
-                  <div className="screener-card-head">
-                    <div>
+                  <div className={`screener-card-head${isMobileView ? " compact" : ""}`}>
+                    <div className="screener-card-title">
                       <h3>
                         {item.name} ({item.code})
                       </h3>
@@ -1184,7 +1333,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                         active={isFavorite(item.code)}
                         onClick={() => toggleFavorite({ code: item.code, name: item.name })}
                       />
-                      {strategy === "WASHOUT_PULLBACK" ? (
+                      {isMobileView ? (
+                        <span className={primaryStatusClass}>{primaryStatusLabel}</span>
+                      ) : strategy === "WASHOUT_PULLBACK" ? (
                         <>
                           <span className={washoutStateBadgeClass(item.hits.washoutPullback.state)}>
                             {washoutStateLabel(item.hits.washoutPullback.state)}
@@ -1254,7 +1405,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     <div className="collapsible-head screener-detail-head">
                       <h4>세부 신호</h4>
                       <button type="button" className="collapse-toggle" onClick={() => toggleCardDetails(itemKey)}>
-                        {detailOpen ? "접기" : "펼치기"}
+                        {detailOpen ? "세부 접기" : "세부 보기"}
                       </button>
                     </div>
                   )}
@@ -1518,7 +1669,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     </div>
                   )}
                   <button type="button" onClick={() => onSelectSymbol(item.code)}>
-                    상세 분석으로 이동
+                    {isMobileView ? "상세 분석" : "상세 분석으로 이동"}
                   </button>
                 </article>
               );
