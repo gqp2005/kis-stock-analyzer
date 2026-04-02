@@ -2878,7 +2878,7 @@ h2 {
     bottom: max(10px, env(safe-area-inset-bottom));
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 8px;
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
     border-radius: 16px;
@@ -3251,4 +3251,300 @@ h2 {
 
 .mobile-bottom-nav {
   display: none;
+}
+
+.wang-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.wang-header-card,
+.wang-hero-card {
+  background:
+    linear-gradient(180deg, rgba(10, 23, 36, 0.92), rgba(8, 17, 28, 0.82)),
+    radial-gradient(circle at top right, rgba(246, 199, 95, 0.12), transparent 42%);
+}
+
+.wang-header-copy,
+.wang-card-head,
+.wang-phase-head,
+.wang-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wang-header-copy {
+  margin-bottom: 12px;
+}
+
+.wang-header-card h2 {
+  margin: 0 0 6px;
+}
+
+.wang-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wang-search-form {
+  margin: 0;
+}
+
+.wang-favorite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.wang-favorite-row > span {
+  color: #9fb5cc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.wang-chip-btn {
+  min-height: 34px;
+}
+
+.wang-empty-state {
+  display: grid;
+  gap: 12px;
+}
+
+.wang-empty-grid,
+.wang-summary-grid,
+.wang-secondary-grid,
+.wang-tertiary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.wang-summary-grid {
+  grid-template-columns: 1.4fr 1fr;
+}
+
+.wang-kpi-grid,
+.wang-zone-kpis,
+.wang-selected-grid,
+.wang-timeframe-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.wang-kpi-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.wang-summary-headline {
+  margin: 10px 0 6px;
+  color: #eef7ff;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.wang-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  gap: 12px;
+}
+
+.wang-chart-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.wang-chart-stage {
+  position: relative;
+  border: 1px solid rgba(87, 163, 255, 0.16);
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(7, 16, 27, 0.96), rgba(6, 14, 24, 0.94)),
+    rgba(7, 16, 27, 0.96);
+}
+
+.wang-chart-canvas {
+  width: 100%;
+}
+
+.wang-chart-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.wang-chart-zone {
+  position: absolute;
+  border: 1px solid;
+  border-radius: 10px;
+  backdrop-filter: blur(2px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.wang-chart-zone span,
+.wang-chart-ref span {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  color: #d6e8fb;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.wang-chart-ref {
+  position: absolute;
+  border-top: 2px solid;
+}
+
+.wang-chart-ref.dashed {
+  border-top-style: dashed;
+}
+
+.wang-chart-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(87, 163, 255, 0.04));
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wang-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #a9bfd4;
+  font-size: 12px;
+}
+
+.wang-chart-legend-line {
+  width: 24px;
+  height: 0;
+  border-top: 2px solid #7dd3fc;
+}
+
+.wang-chart-legend-zone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 24px;
+  border: 1px solid rgba(0, 179, 134, 0.45);
+  border-radius: 999px;
+  background: rgba(0, 179, 134, 0.14);
+  color: #aef4e2;
+  padding: 0 10px;
+}
+
+.wang-selected-card {
+  margin-top: 10px;
+  border: 1px solid rgba(87, 163, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(12, 24, 36, 0.52);
+  padding: 10px;
+}
+
+.wang-selected-grid,
+.wang-zone-kpis {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wang-phase-stack,
+.wang-risk-stack,
+.wang-training-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.wang-phase-item,
+.wang-timeframe-item,
+.wang-training-item {
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(12, 24, 36, 0.48);
+  padding: 10px;
+}
+
+.wang-checklist-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.wang-risk-item {
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.wang-risk-item strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.wang-risk-item p,
+.wang-training-item p {
+  margin: 0;
+  color: #c3d7ec;
+  line-height: 1.55;
+}
+
+.wang-risk-item.info {
+  border: 1px solid rgba(87, 163, 255, 0.26);
+  background: rgba(87, 163, 255, 0.1);
+}
+
+.wang-risk-item.warning {
+  border: 1px solid rgba(246, 199, 95, 0.3);
+  background: rgba(246, 199, 95, 0.12);
+}
+
+.wang-risk-item.danger {
+  border: 1px solid rgba(255, 90, 118, 0.34);
+  background: rgba(255, 90, 118, 0.12);
+}
+
+.wang-timeframe-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .wang-summary-grid,
+  .wang-main-grid,
+  .wang-secondary-grid,
+  .wang-tertiary-grid,
+  .wang-checklist-columns,
+  .wang-timeframe-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wang-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .wang-header-copy,
+  .wang-card-head,
+  .wang-phase-head,
+  .wang-hero-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .wang-kpi-grid,
+  .wang-zone-kpis,
+  .wang-selected-grid {
+    grid-template-columns: 1fr;
+  }
 }

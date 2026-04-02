@@ -43,6 +43,7 @@ import FavoriteButton from "./FavoriteButton";
 import GlossaryPanel from "./GlossaryPanel";
 import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
+import WangStrategyPanel from "./wang/WangStrategyPanel";
 import { useFavorites } from "./favorites";
 
 interface StockLookup {
@@ -580,7 +581,7 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
   const [pageMode, setPageMode] = useState<
-    "analysis" | "screener" | "strategy" | "glossary" | "autotrade" | "account" | "admin"
+    "analysis" | "screener" | "strategy" | "wangStrategy" | "glossary" | "autotrade" | "account" | "admin"
   >("analysis");
   const [query, setQuery] = useState("");
   const [days, setDays] = useState(180);
@@ -3525,6 +3526,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={pageMode === "wangStrategy" ? "tab active" : "tab"}
+            onClick={() => setPageMode("wangStrategy")}
+          >
+            왕장군 전략
+          </button>
+          <button
+            type="button"
             className={pageMode === "glossary" ? "tab active" : "tab"}
             onClick={() => setPageMode("glossary")}
           >
@@ -5253,6 +5261,8 @@ export default function App() {
           <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : pageMode === "strategy" ? (
           <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+        ) : pageMode === "wangStrategy" ? (
+          <WangStrategyPanel apiBase={apiBase} />
         ) : pageMode === "glossary" ? (
           <GlossaryPanel />
         ) : pageMode === "autotrade" ? (
@@ -5272,6 +5282,13 @@ export default function App() {
         </button>
         <button type="button" className={pageMode === "strategy" ? "active" : ""} onClick={() => setPageMode("strategy")}>
           전략
+        </button>
+        <button
+          type="button"
+          className={pageMode === "wangStrategy" ? "active" : ""}
+          onClick={() => setPageMode("wangStrategy")}
+        >
+          왕장군
         </button>
         <button type="button" className={pageMode === "glossary" ? "active" : ""} onClick={() => setPageMode("glossary")}>
           용어
