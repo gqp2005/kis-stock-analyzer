@@ -124,7 +124,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const count = parseCount(url);
     const cache = await caches.open("kis-analyzer-cache-v3");
     const ttlSec = timeframeCacheTtlSec("day");
-    const cacheKey = `https://cache.local/wang-strategy/v1?code=${encodeURIComponent(
+    const cacheKey = `https://cache.local/wang-strategy/v3?code=${encodeURIComponent(
       resolved.code,
     )}&count=${count}`;
 

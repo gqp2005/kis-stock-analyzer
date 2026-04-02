@@ -1,12 +1,15 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   DashboardOverviewResponse,
   Overall,
   PatternState,
+  ScreenerBooleanFilter,
   StrategySignalState,
   WashoutZonePosition,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
+  ScreenerWangActionBiasFilter,
+  ScreenerWangPhaseFilter,
   VcpLeadershipLabel,
   VcpPivotLabel,
   VcpRiskGrade,
@@ -15,6 +18,9 @@ import type {
   ScreenerResponse,
   ScreenerStrategyFilter,
   VolumePatternType,
+  WangStrategyActionBias,
+  WangStrategyPhase,
+  WangStrategyScreeningSummary,
 } from "./types";
 import FavoriteButton from "./FavoriteButton";
 import {
@@ -30,7 +36,7 @@ interface ScreenerPanelProps {
 
 const FAVORITE_NOTIFY_KEY = "kis-favorite-notify-enabled";
 
-type SortKey = "SCORE" | "CONFIDENCE" | "BACKTEST";
+type SortKey = "SCORE" | "CONFIDENCE" | "BACKTEST" | "WANG_SCORE" | "WANG_CONFIDENCE";
 type ScreenerVerdict = "매수 검토" | "관망" | "비중 축소";
 
 interface ScreenerQueryState {
@@ -39,6 +45,11 @@ interface ScreenerQueryState {
   washoutState: ScreenerWashoutStateFilter;
   washoutPosition: ScreenerWashoutPositionFilter;
   washoutRiskMax: string;
+  wangEligible: ScreenerBooleanFilter;
+  wangActionBias: ScreenerWangActionBiasFilter;
+  wangPhase: ScreenerWangPhaseFilter;
+  wangZoneReady: ScreenerBooleanFilter;
+  wangMa20DiscountReady: ScreenerBooleanFilter;
   count: number;
   universe: number;
 }
@@ -234,7 +245,38 @@ const marketLabel = (value: ScreenerMarketFilter): string => {
 const sortLabel = (value: SortKey): string => {
   if (value === "SCORE") return "점수순";
   if (value === "CONFIDENCE") return "신뢰도순";
+  if (value === "WANG_SCORE") return "왕장군 점수순";
+  if (value === "WANG_CONFIDENCE") return "왕장군 신뢰도순";
   return "백테스트순";
+};
+
+const wangPhaseLabel = (value: WangStrategyPhase): string => {
+  if (value === "LIFE_VOLUME") return "인생거래량";
+  if (value === "BASE_VOLUME") return "기준거래량";
+  if (value === "RISING_VOLUME") return "상승거래량";
+  if (value === "ELASTIC_VOLUME") return "탄력거래량";
+  if (value === "MIN_VOLUME") return "최소거래량";
+  if (value === "REACCUMULATION") return "재축적";
+  return "미감지";
+};
+
+const wangActionBiasLabel = (value: WangStrategyActionBias): string => {
+  if (value === "ACCUMULATE") return "적립";
+  if (value === "CAUTION") return "경계";
+  if (value === "OVERHEAT") return "과열";
+  return "관찰";
+};
+
+const wangBadgeClass = (wang: WangStrategyScreeningSummary): string => {
+  if (wang.eligible) return "badge good";
+  if (wang.actionBias === "CAUTION" || wang.actionBias === "OVERHEAT") return "badge caution";
+  return "badge neutral";
+};
+
+const booleanFilterLabel = (value: ScreenerBooleanFilter): string => {
+  if (value === "YES") return "YES";
+  if (value === "NO") return "NO";
+  return "ALL";
 };
 
 const verdictClass = (value: ScreenerVerdict): string => {
@@ -483,6 +525,22 @@ const sortItems = (
   if (sortKey === "CONFIDENCE") {
     return cloned.sort((a, b) => b.confidence - a.confidence || b.scoreTotal - a.scoreTotal);
   }
+  if (sortKey === "WANG_SCORE") {
+    return cloned.sort(
+      (a, b) =>
+        b.wangStrategy.score - a.wangStrategy.score ||
+        b.wangStrategy.confidence - a.wangStrategy.confidence ||
+        b.scoreTotal - a.scoreTotal,
+    );
+  }
+  if (sortKey === "WANG_CONFIDENCE") {
+    return cloned.sort(
+      (a, b) =>
+        b.wangStrategy.confidence - a.wangStrategy.confidence ||
+        b.wangStrategy.score - a.wangStrategy.score ||
+        b.scoreTotal - a.scoreTotal,
+    );
+  }
   if (sortKey === "BACKTEST") {
     return cloned.sort((a, b) => {
       const ar = a.backtestSummary?.avgReturn ?? Number.NEGATIVE_INFINITY;
@@ -507,6 +565,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   const [washoutState, setWashoutState] = useState<ScreenerWashoutStateFilter>("ALL");
   const [washoutPosition, setWashoutPosition] = useState<ScreenerWashoutPositionFilter>("ALL");
   const [washoutRiskMax, setWashoutRiskMax] = useState<string>("ALL");
+  const [wangEligible, setWangEligible] = useState<ScreenerBooleanFilter>("ALL");
+  const [wangActionBias, setWangActionBias] = useState<ScreenerWangActionBiasFilter>("ALL");
+  const [wangPhase, setWangPhase] = useState<ScreenerWangPhaseFilter>("ALL");
+  const [wangZoneReady, setWangZoneReady] = useState<ScreenerBooleanFilter>("ALL");
+  const [wangMa20DiscountReady, setWangMa20DiscountReady] = useState<ScreenerBooleanFilter>("ALL");
   const [count, setCount] = useState(30);
   const [universe, setUniverse] = useState(500);
   const [sortKey, setSortKey] = useState<SortKey>("SCORE");
@@ -551,6 +614,12 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     const nextWashoutState = override?.washoutState ?? washoutState;
     const nextWashoutPosition = override?.washoutPosition ?? washoutPosition;
     const nextWashoutRiskMax = override?.washoutRiskMax ?? washoutRiskMax;
+    const nextWangEligible = override?.wangEligible ?? wangEligible;
+    const nextWangActionBias = override?.wangActionBias ?? wangActionBias;
+    const nextWangPhase = override?.wangPhase ?? wangPhase;
+    const nextWangZoneReady = override?.wangZoneReady ?? wangZoneReady;
+    const nextWangMa20DiscountReady =
+      override?.wangMa20DiscountReady ?? wangMa20DiscountReady;
     setLoading(true);
     setError("");
     try {
@@ -566,6 +635,21 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
         if (nextWashoutRiskMax !== "ALL") {
           query.set("riskPctMax", nextWashoutRiskMax);
         }
+      }
+      if (nextWangEligible !== "ALL") {
+        query.set("wangEligible", nextWangEligible);
+      }
+      if (nextWangActionBias !== "ALL") {
+        query.set("wangActionBias", nextWangActionBias);
+      }
+      if (nextWangPhase !== "ALL") {
+        query.set("wangPhase", nextWangPhase);
+      }
+      if (nextWangZoneReady !== "ALL") {
+        query.set("wangZoneReady", nextWangZoneReady);
+      }
+      if (nextWangMa20DiscountReady !== "ALL") {
+        query.set("wangMa20DiscountReady", nextWangMa20DiscountReady);
       }
       const url = `${apiBase}/api/screener?${query.toString()}`;
       const result = await fetch(url);
@@ -654,6 +738,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       washoutState: "ALL",
       washoutPosition: "ALL",
       washoutRiskMax: "ALL",
+      wangEligible: "ALL",
+      wangActionBias: "ALL",
+      wangPhase: "ALL",
+      wangZoneReady: "ALL",
+      wangMa20DiscountReady: "ALL",
       count: 30,
       universe: 500,
     };
@@ -662,6 +751,11 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     setWashoutState(defaults.washoutState);
     setWashoutPosition(defaults.washoutPosition);
     setWashoutRiskMax(defaults.washoutRiskMax);
+    setWangEligible(defaults.wangEligible);
+    setWangActionBias(defaults.wangActionBias);
+    setWangPhase(defaults.wangPhase);
+    setWangZoneReady(defaults.wangZoneReady);
+    setWangMa20DiscountReady(defaults.wangMa20DiscountReady);
     setCount(defaults.count);
     setUniverse(defaults.universe);
     setSortKey("SCORE");
@@ -677,11 +771,21 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     setWashoutState("ALL");
     setWashoutPosition("ALL");
     setWashoutRiskMax("ALL");
+    setWangEligible("ALL");
+    setWangActionBias("ALL");
+    setWangPhase("ALL");
+    setWangZoneReady("ALL");
+    setWangMa20DiscountReady("ALL");
     void fetchScreener({
       strategy: "ALL",
       washoutState: "ALL",
       washoutPosition: "ALL",
       washoutRiskMax: "ALL",
+      wangEligible: "ALL",
+      wangActionBias: "ALL",
+      wangPhase: "ALL",
+      wangZoneReady: "ALL",
+      wangMa20DiscountReady: "ALL",
     });
   };
 
@@ -715,15 +819,44 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       `전략 ${strategyLabel(strategy)}`,
       `정렬 ${sortLabel(sortKey)}`,
       `노출 ${count}개`,
-      "유니버스 500개",
+      `유니버스 ${universe}개`,
     ];
     if (strategy === "WASHOUT_PULLBACK") {
       chips.push(`상태 ${washoutState === "ALL" ? "전체" : washoutStateLabel(washoutState)}`);
       chips.push(`현재가 ${washoutPosition === "ALL" ? "전체" : washoutPositionLabel(washoutPosition)}`);
       chips.push(`리스크 ${washoutRiskMax === "ALL" ? "제한 없음" : `${Math.round(Number(washoutRiskMax) * 100)}% 이하`}`);
     }
+    if (wangEligible !== "ALL") {
+      chips.push(`왕장군 적합도 ${booleanFilterLabel(wangEligible)}`);
+    }
+    if (wangActionBias !== "ALL") {
+      chips.push(`왕장군 행동 ${wangActionBiasLabel(wangActionBias)}`);
+    }
+    if (wangPhase !== "ALL") {
+      chips.push(`왕장군 phase ${wangPhaseLabel(wangPhase)}`);
+    }
+    if (wangZoneReady !== "ALL") {
+      chips.push(`Zone Ready ${booleanFilterLabel(wangZoneReady)}`);
+    }
+    if (wangMa20DiscountReady !== "ALL") {
+      chips.push(`MA20 할인 ${booleanFilterLabel(wangMa20DiscountReady)}`);
+    }
     return chips;
-  }, [market, strategy, sortKey, count, washoutState, washoutPosition, washoutRiskMax]);
+  }, [
+    count,
+    market,
+    sortKey,
+    strategy,
+    universe,
+    washoutPosition,
+    washoutRiskMax,
+    washoutState,
+    wangActionBias,
+    wangEligible,
+    wangMa20DiscountReady,
+    wangPhase,
+    wangZoneReady,
+  ]);
 
   const rebuildProgressPct = response?.meta.lastRebuildStatus?.total
     ? Math.min(
@@ -751,8 +884,36 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       parts.push(washoutPosition === "ALL" ? "위치 전체" : washoutPositionLabel(washoutPosition));
       parts.push(washoutRiskMax === "ALL" ? "리스크 제한 없음" : `리스크 ${Math.round(Number(washoutRiskMax) * 100)}%`);
     }
+    if (wangEligible !== "ALL") {
+      parts.push(`적합도 ${booleanFilterLabel(wangEligible)}`);
+    }
+    if (wangActionBias !== "ALL") {
+      parts.push(wangActionBiasLabel(wangActionBias));
+    }
+    if (wangPhase !== "ALL") {
+      parts.push(wangPhaseLabel(wangPhase));
+    }
+    if (wangZoneReady !== "ALL") {
+      parts.push(`Zone ${booleanFilterLabel(wangZoneReady)}`);
+    }
+    if (wangMa20DiscountReady !== "ALL") {
+      parts.push(`MA20 ${booleanFilterLabel(wangMa20DiscountReady)}`);
+    }
     return parts.join(" · ");
-  }, [count, showAdvancedCards, sortKey, strategy, washoutPosition, washoutRiskMax, washoutState]);
+  }, [
+    count,
+    showAdvancedCards,
+    sortKey,
+    strategy,
+    washoutPosition,
+    washoutRiskMax,
+    washoutState,
+    wangActionBias,
+    wangEligible,
+    wangMa20DiscountReady,
+    wangPhase,
+    wangZoneReady,
+  ]);
   const mobileDashboardSummary = dashboard
     ? `${dashboard.marketTemperature.heatLabel} ${dashboard.marketTemperature.heatScore}점 · 타임라인 ${dashboard.timeline.length}건`
     : "시장 요약";
@@ -775,7 +936,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
         </p>
         <p>
           RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들 {dashboard.marketTemperature.cupHandleCount} · 설거지{" "}
-          {dashboard.marketTemperature.washoutCount}
+          {dashboard.marketTemperature.washoutCount} · 왕장군 {dashboard.marketTemperature.wangEligibleCount}
         </p>
         <p>{dashboard.marketTemperature.summary}</p>
       </article>
@@ -836,6 +997,74 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       setFavoriteNotificationsEnabled(true);
     }
   };
+
+  const wangFilterControls = (
+    <>
+      <label>
+        왕장군 적합도
+        <select value={wangEligible} onChange={(e) => setWangEligible(e.target.value as ScreenerBooleanFilter)}>
+          <option value="ALL">전체</option>
+          <option value="YES">YES</option>
+          <option value="NO">NO</option>
+        </select>
+      </label>
+      <label>
+        행동 바이어스
+        <select
+          value={wangActionBias}
+          onChange={(e) => setWangActionBias(e.target.value as ScreenerWangActionBiasFilter)}
+        >
+          <option value="ALL">전체</option>
+          <option value="ACCUMULATE">적립</option>
+          <option value="WATCH">관찰</option>
+          <option value="CAUTION">경계</option>
+          <option value="OVERHEAT">과열</option>
+        </select>
+      </label>
+      <label>
+        Phase
+        <select value={wangPhase} onChange={(e) => setWangPhase(e.target.value as ScreenerWangPhaseFilter)}>
+          <option value="ALL">전체</option>
+          <option value="MIN_VOLUME">최소거래량</option>
+          <option value="REACCUMULATION">재축적</option>
+          <option value="ELASTIC_VOLUME">탄력거래량</option>
+          <option value="RISING_VOLUME">상승거래량</option>
+          <option value="BASE_VOLUME">기준거래량</option>
+          <option value="LIFE_VOLUME">인생거래량</option>
+          <option value="NONE">미감지</option>
+        </select>
+      </label>
+      <label>
+        Zone Ready
+        <select value={wangZoneReady} onChange={(e) => setWangZoneReady(e.target.value as ScreenerBooleanFilter)}>
+          <option value="ALL">전체</option>
+          <option value="YES">YES</option>
+          <option value="NO">NO</option>
+        </select>
+      </label>
+      <label>
+        MA20 할인
+        <select
+          value={wangMa20DiscountReady}
+          onChange={(e) => setWangMa20DiscountReady(e.target.value as ScreenerBooleanFilter)}
+        >
+          <option value="ALL">전체</option>
+          <option value="YES">YES</option>
+          <option value="NO">NO</option>
+        </select>
+      </label>
+    </>
+  );
+
+  const sortOptions = (
+    <>
+      <option value="SCORE">점수순</option>
+      <option value="CONFIDENCE">신뢰도순</option>
+      <option value="WANG_SCORE">왕장군 점수순</option>
+      <option value="WANG_CONFIDENCE">왕장군 신뢰도순</option>
+      <option value="BACKTEST">백테스트순</option>
+    </>
+  );
 
   return (
     <section className="screener">
@@ -921,6 +1150,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   </label>
                 </>
               )}
+              {wangFilterControls}
               <label>
                 정렬
                 <select
@@ -928,9 +1158,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   onChange={(e) => setSortKey(e.target.value as SortKey)}
                   disabled={strategy === "WASHOUT_PULLBACK"}
                 >
-                  <option value="SCORE">점수순</option>
-                  <option value="CONFIDENCE">신뢰도순</option>
-                  <option value="BACKTEST">백테스트순</option>
+                  {sortOptions}
                 </select>
               </label>
               <label>
@@ -999,6 +1227,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 </label>
               </>
             )}
+            {wangFilterControls}
             <label>
               정렬
               <select
@@ -1006,9 +1235,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 onChange={(e) => setSortKey(e.target.value as SortKey)}
                 disabled={strategy === "WASHOUT_PULLBACK"}
               >
-                <option value="SCORE">점수순</option>
-                <option value="CONFIDENCE">신뢰도순</option>
-                <option value="BACKTEST">백테스트순</option>
+                {sortOptions}
               </select>
             </label>
             <label>
@@ -1284,6 +1511,10 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
               const cardOneLiner = buildCardOneLiner(item, strategy);
               const itemKey = `${item.market}-${item.code}`;
               const compactItems = buildCompactItems(item, strategy);
+              const wangCompactItem = {
+                label: "왕장군",
+                value: `${item.wangStrategy.label} / ${item.wangStrategy.score}`,
+              };
               const detailOpen = showAdvancedCards || Boolean(expandedCards[itemKey]);
               const primaryStatusLabel =
                 strategy === "WASHOUT_PULLBACK"
@@ -1333,6 +1564,9 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                         active={isFavorite(item.code)}
                         onClick={() => toggleFavorite({ code: item.code, name: item.name })}
                       />
+                      <span className={wangBadgeClass(item.wangStrategy)}>
+                        왕장군 {wangActionBiasLabel(item.wangStrategy.actionBias)} · {item.wangStrategy.score}
+                      </span>
                       {isMobileView ? (
                         <span className={primaryStatusClass}>{primaryStatusLabel}</span>
                       ) : strategy === "WASHOUT_PULLBACK" ? (
@@ -1388,7 +1622,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   </div>
 
                   <div className="screener-compact-grid">
-                    {compactItems.map((compact) => (
+                    {[...compactItems, wangCompactItem].map((compact) => (
                       <div key={`${itemKey}-${compact.label}`} className="plan-item screener-compact-item">
                         <span>{compact.label}</span>
                         <strong>{compact.value}</strong>
@@ -1645,6 +1879,17 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                           </div>
                         </>
                       )}
+                      <div className="screener-hit-row">
+                        <small className={wangBadgeClass(item.wangStrategy)}>
+                          왕장군 {item.wangStrategy.label}
+                        </small>
+                        <small className="reason-tag neutral">
+                          {wangPhaseLabel(item.wangStrategy.currentPhase)}
+                        </small>
+                        <small className="reason-tag neutral">
+                          {wangActionBiasLabel(item.wangStrategy.actionBias)} / {item.wangStrategy.confidence}
+                        </small>
+                      </div>
                       <ul>
                         {item.reasons.slice(0, showAdvancedCards ? 3 : 2).map((reason) => (
                           <li key={reason}>{reason}</li>

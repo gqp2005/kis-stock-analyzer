@@ -13,15 +13,19 @@ import type {
   RsiDivergenceHit,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
+  ScreenerBooleanFilter,
   ScreenerItem,
   ScreenerMarketFilter,
   ScreenerStrategyFilter,
+  ScreenerWangActionBiasFilter,
+  ScreenerWangPhaseFilter,
   StrategyBacktestSummary,
   TimeframeAnalysis,
   TrendTemplateHit,
   VcpHit,
   VolumeHit,
   VolumePatternType,
+  WangStrategyScreeningSummary,
   WashoutPullbackHit,
 } from "./types";
 import { clamp, round2 } from "./utils";
@@ -120,6 +124,7 @@ export interface ScreenerStoredCandidate {
     ret63Diff: number | null;
     label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A";
   };
+  wangStrategy: WangStrategyScreeningSummary;
   tuning: {
     thresholds: StrategyThresholds;
     quality: number | null;
@@ -321,6 +326,23 @@ const defaultFlowPersistenceHit = (reason: string): FlowPersistenceHit => ({
 });
 
 const defaultBacktestSummary = (): StrategyBacktestSummary | null => null;
+
+const defaultWangStrategySummary = (): WangStrategyScreeningSummary => ({
+  eligible: false,
+  label: "비적합",
+  score: 0,
+  confidence: 0,
+  currentPhase: "NONE",
+  actionBias: "WATCH",
+  executionState: "WAIT_WEEKLY_STRUCTURE",
+  reasons: ["왕장군 검증 데이터가 아직 없습니다."],
+  weekBias: "주봉 phase 미평가",
+  dayBias: "일봉 실행 미평가",
+  zoneReady: false,
+  ma20DiscountReady: false,
+  dailyRebaseReady: false,
+  retestReady: false,
+});
 
 const getSwingHighs = (candles: Candle[], leftRight: number): Array<{ index: number; price: number; time: string }> => {
   const swings: Array<{ index: number; price: number; time: string }> = [];
@@ -1400,6 +1422,7 @@ export const analyzeScreenerRawCandidate = (
       flowPersistence: backtestFlowPersistence,
     },
     rs: rsInfo,
+    wangStrategy: defaultWangStrategySummary(),
     tuning: {
       thresholds: tuningResult.thresholds,
       quality: tuningQuality,
@@ -1472,6 +1495,7 @@ export const materializeScreenerItem = (
       ret63Diff: null,
       label: "N/A",
     } as const);
+  const wangStrategy = raw.wangStrategy ?? defaultWangStrategySummary();
   const reasonsByKey = (raw.reasons?.[key] ?? raw.reasons?.all ?? []).slice(0, 6);
   const backtestByKey = raw.backtestSummary?.[key] ?? raw.backtestSummary?.all ?? null;
 
@@ -1489,6 +1513,7 @@ export const materializeScreenerItem = (
     levels: raw.levels,
     backtestSummary: backtestByKey,
     rs,
+    wangStrategy,
     tuning: raw.tuning ?? null,
   };
 };
@@ -1529,10 +1554,26 @@ export interface WashoutScreenerFilters {
   riskPctMax: number | null;
 }
 
+export interface WangScreenerFilters {
+  eligible: ScreenerBooleanFilter;
+  actionBias: ScreenerWangActionBiasFilter;
+  phase: ScreenerWangPhaseFilter;
+  zoneReady: ScreenerBooleanFilter;
+  ma20DiscountReady: ScreenerBooleanFilter;
+}
+
 const defaultWashoutFilters = (): WashoutScreenerFilters => ({
   state: "ALL",
   position: "ALL",
   riskPctMax: null,
+});
+
+const defaultWangFilters = (): WangScreenerFilters => ({
+  eligible: "ALL",
+  actionBias: "ALL",
+  phase: "ALL",
+  zoneReady: "ALL",
+  ma20DiscountReady: "ALL",
 });
 
 export interface ScreenerAdaptiveCutoffs {
@@ -1644,14 +1685,21 @@ export const buildScreenerView = (
   strategy: ScreenerStrategyFilter,
   count: number,
   cutoffOverride?: Partial<ScreenerAdaptiveCutoffs> | null,
-  washoutFiltersInput?: Partial<WashoutScreenerFilters> | null,
+  filtersInput?: {
+    washout?: Partial<WashoutScreenerFilters> | null;
+    wang?: Partial<WangScreenerFilters> | null;
+  } | null,
 ): {
   items: ScreenerItem[];
   warningItems: ScreenerItem[];
 } => {
   const washoutFilters: WashoutScreenerFilters = {
     ...defaultWashoutFilters(),
-    ...(washoutFiltersInput ?? {}),
+    ...(filtersInput?.washout ?? {}),
+  };
+  const wangFilters: WangScreenerFilters = {
+    ...defaultWangFilters(),
+    ...(filtersInput?.wang ?? {}),
   };
   const filteredCandidates = candidates.filter((candidate) =>
     market === "ALL" ? true : candidate.market === market,
@@ -1672,7 +1720,27 @@ export const buildScreenerView = (
       ? rawItems
       : rawItems.filter((item) => isRsQualified(item));
 
-  const items = rsFilteredItems.filter((item) => {
+  const matchesBoolean = (value: boolean, filter: ScreenerBooleanFilter): boolean => {
+    if (filter === "ALL") return true;
+    return filter === "YES" ? value : !value;
+  };
+
+  const wangFilteredItems = rsFilteredItems.filter((item) => {
+    if (!matchesBoolean(item.wangStrategy.eligible, wangFilters.eligible)) return false;
+    if (wangFilters.actionBias !== "ALL" && item.wangStrategy.actionBias !== wangFilters.actionBias) {
+      return false;
+    }
+    if (wangFilters.phase !== "ALL" && item.wangStrategy.currentPhase !== wangFilters.phase) {
+      return false;
+    }
+    if (!matchesBoolean(item.wangStrategy.zoneReady, wangFilters.zoneReady)) return false;
+    if (!matchesBoolean(item.wangStrategy.ma20DiscountReady, wangFilters.ma20DiscountReady)) {
+      return false;
+    }
+    return true;
+  });
+
+  const items = wangFilteredItems.filter((item) => {
     if (strategy === "VOLUME") return item.scoreTotal >= adaptiveCutoffs.volume;
     if (strategy === "HS") return item.scoreTotal >= adaptiveCutoffs.hs;
     if (strategy === "IHS") return item.scoreTotal >= adaptiveCutoffs.ihs;

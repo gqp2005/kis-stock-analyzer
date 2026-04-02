@@ -114,27 +114,48 @@ describe("/api/wang-strategy", () => {
     const body = (await response.json()) as {
       meta: { tf: string; candleCount: number };
       summary: { interpretation: string };
+      weeklyPhaseContext: { phase: string; baseRepeatCount: number };
+      dailyExecutionContext: { state: string; dailyRebaseCount: number; belowMa20: boolean };
       currentPhase: string;
       phases: Array<{ phase: string; occurrences: unknown[] }>;
       checklist: Array<{ ok: boolean }>;
       tradeZones: Array<{ low: number; high: number }>;
-      chartOverlays: { refLevels: unknown[]; zones: unknown[]; ma20Series: unknown[] };
-      markers: Array<{ type: string }>;
+      chartOverlays: {
+        week: { refLevels: unknown[]; zones: unknown[]; movingAverages: unknown[] };
+        day: { refLevels: unknown[]; zones: unknown[]; movingAverages: Array<{ points: unknown[] }> };
+      };
+      markers: {
+        week: Array<{ type: string }>;
+        day: Array<{ type: string }>;
+      };
+      candles: {
+        week: unknown[];
+        day: unknown[];
+      };
       trainingNotes: Array<{ title: string }>;
     };
 
     expect(response.status).toBe(200);
     expect(body.meta.tf).toBe("multi");
     expect(body.meta.candleCount).toBe(240);
-    expect(body.currentPhase).toBe("REACCUMULATION");
+    expect(body.currentPhase).toBe("MIN_VOLUME");
     expect(body.summary.interpretation).toBe("ACCUMULATE");
+    expect(body.weeklyPhaseContext.phase).toBe("MIN_VOLUME");
+    expect(body.weeklyPhaseContext.baseRepeatCount).toBeGreaterThan(0);
+    expect(body.dailyExecutionContext.state).toBe("READY_ON_RETEST");
+    expect(body.dailyExecutionContext.belowMa20).toBe(true);
+    expect(body.dailyExecutionContext.dailyRebaseCount).toBeGreaterThanOrEqual(1);
     expect(body.phases.some((item) => item.phase === "BASE_VOLUME" && item.occurrences.length > 0)).toBe(true);
     expect(body.checklist.length).toBeGreaterThanOrEqual(8);
     expect(body.tradeZones.length).toBeGreaterThan(0);
-    expect(body.chartOverlays.refLevels.length).toBeGreaterThan(0);
-    expect(body.chartOverlays.zones.length).toBeGreaterThan(0);
-    expect(body.chartOverlays.ma20Series.length).toBe(240);
-    expect(body.markers.some((marker) => marker.type === "VOL_MIN")).toBe(true);
+    expect(body.candles.week.length).toBeGreaterThan(0);
+    expect(body.candles.day.length).toBe(240);
+    expect(body.chartOverlays.week.refLevels.length).toBeGreaterThan(0);
+    expect(body.chartOverlays.week.zones.length).toBeGreaterThan(0);
+    expect(body.chartOverlays.day.zones.length).toBeGreaterThan(0);
+    expect(body.chartOverlays.day.movingAverages[0]?.points.length).toBe(240);
+    expect(body.markers.week.some((marker) => marker.type === "VOL_MIN")).toBe(true);
+    expect(body.markers.day.some((marker) => marker.type === "VOL_BASE" || marker.type === "VOL_RETEST")).toBe(true);
     expect(body.trainingNotes.length).toBeGreaterThanOrEqual(5);
   });
 

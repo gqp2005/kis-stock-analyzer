@@ -1065,6 +1065,41 @@ export interface FlowPersistenceHit {
   reasons: string[];
 }
 
+export type WangStrategyPhase =
+  | "LIFE_VOLUME"
+  | "BASE_VOLUME"
+  | "RISING_VOLUME"
+  | "ELASTIC_VOLUME"
+  | "MIN_VOLUME"
+  | "REACCUMULATION"
+  | "NONE";
+
+export type WangStrategyActionBias = "ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT";
+export type WangStrategyExecutionState =
+  | "WAIT_WEEKLY_STRUCTURE"
+  | "WAIT_PULLBACK"
+  | "READY_ON_ZONE"
+  | "READY_ON_RETEST"
+  | "AVOID_BREAKDOWN"
+  | "AVOID_OVERHEAT";
+
+export interface WangStrategyScreeningSummary {
+  eligible: boolean;
+  label: "적립 후보" | "관찰 후보" | "비적합";
+  score: number;
+  confidence: number;
+  currentPhase: WangStrategyPhase;
+  actionBias: WangStrategyActionBias;
+  executionState: WangStrategyExecutionState;
+  reasons: string[];
+  weekBias: string;
+  dayBias: string;
+  zoneReady: boolean;
+  ma20DiscountReady: boolean;
+  dailyRebaseReady: boolean;
+  retestReady: boolean;
+}
+
 export interface ScreenerItem {
   code: string;
   name: string;
@@ -1099,6 +1134,7 @@ export interface ScreenerItem {
     ret63Diff: number | null;
     label: "STRONG" | "NEUTRAL" | "WEAK" | "N/A";
   };
+  wangStrategy: WangStrategyScreeningSummary;
   tuning: {
     thresholds: {
       volume: number;
@@ -1227,9 +1263,14 @@ export interface ScreenerResponse {
       totalRetries: number;
     } | null;
     filters?: {
-      washoutState: ScreenerWashoutStateFilter;
-      washoutPosition: ScreenerWashoutPositionFilter;
-      washoutRiskMax: number | null;
+      washoutState?: ScreenerWashoutStateFilter;
+      washoutPosition?: ScreenerWashoutPositionFilter;
+      washoutRiskMax?: number | null;
+      wangEligible?: ScreenerBooleanFilter;
+      wangActionBias?: ScreenerWangActionBiasFilter;
+      wangPhase?: ScreenerWangPhaseFilter;
+      wangZoneReady?: ScreenerBooleanFilter;
+      wangMa20DiscountReady?: ScreenerBooleanFilter;
     };
   };
   items: ScreenerItem[];
@@ -1301,6 +1342,8 @@ export interface DashboardOverviewResponse {
     trendTemplateCount: number;
     rsiDivergenceCount: number;
     flowPersistenceCount: number;
+    wangEligibleCount: number;
+    wangAccumulateCount: number;
     heatScore: number;
     heatLabel: "강세" | "중립" | "혼조" | "위축";
     summary: string;
@@ -1324,6 +1367,9 @@ export type ScreenerWashoutStateFilter =
   | "REBOUND_CONFIRMED";
 
 export type ScreenerWashoutPositionFilter = "ALL" | "IN_ZONE" | "ABOVE_ZONE" | "BELOW_ZONE";
+export type ScreenerBooleanFilter = "ALL" | "YES" | "NO";
+export type ScreenerWangActionBiasFilter = "ALL" | WangStrategyActionBias;
+export type ScreenerWangPhaseFilter = "ALL" | WangStrategyPhase;
 
 export interface AdminRebuildStatusResponse {
   ok: boolean;

@@ -1,8 +1,14 @@
 import { getCachedJson, putCachedJson } from "../../../lib/cache";
-import { fetchMarketIndexCandles, fetchTimeframeCandles } from "../../../lib/kis";
+import {
+  fetchMarketIndexCandles,
+  fetchTimeframeCandles,
+  resampleDayToMonthCandles,
+  resampleDayToWeekCandles,
+} from "../../../lib/kis";
 import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
 import { errorJson, json, serverError } from "../../../lib/response";
+import { analyzeTimeframe } from "../../../lib/scoring";
 import { hasAdminOrSessionAccess } from "../../../lib/siteAuth";
 import {
   analyzeScreenerRawCandidate,
@@ -11,6 +17,7 @@ import {
   type ScreenerBenchmarkMap,
   type ScreenerStoredCandidate,
 } from "../../../lib/screener";
+import { buildWangStrategyScreeningSummary } from "../../../lib/wangStrategy";
 import {
   REBUILD_LOCK_TTL_SEC,
   SCREENER_CACHE_TTL_SEC,
@@ -52,7 +59,7 @@ import {
   saveRebuildRuntimeProgress,
 } from "../../../lib/rebuildRuntime";
 import { ExternalProvider, MarketSummaryProvider, StaticProvider } from "../../../lib/universe";
-import type { Env } from "../../../lib/types";
+import type { Candle, Env } from "../../../lib/types";
 
 const TARGET_UNIVERSE = 500;
 const REBUILD_PHASE_SIZE = 100;
@@ -292,6 +299,51 @@ const normalizeProgress = (progress: RebuildProgressSnapshot): RebuildProgressSn
   },
   lastBatch: progress.lastBatch ?? null,
 });
+
+const enrichCandidateWithWangStrategy = (
+  candidate: ScreenerStoredCandidate,
+  entry: { code: string; name: string; market: string },
+  dayCandles: Candle[],
+  fetchedName: string,
+): ScreenerStoredCandidate => {
+  if (dayCandles.length < 120) {
+    return candidate;
+  }
+
+  try {
+    const trimmedDayCandles = dayCandles.slice(-280);
+    const weekCandles = resampleDayToWeekCandles(dayCandles).slice(-80);
+    const monthCandles = resampleDayToMonthCandles(dayCandles).slice(-36);
+    const dayAnalysis = analyzeTimeframe("day", trimmedDayCandles);
+    const weekAnalysis = weekCandles.length >= 20 ? analyzeTimeframe("week", weekCandles) : null;
+    const monthAnalysis = monthCandles.length >= 6 ? analyzeTimeframe("month", monthCandles) : null;
+
+    return {
+      ...candidate,
+      wangStrategy: buildWangStrategyScreeningSummary({
+        input: entry.code,
+        symbol: entry.code,
+        name: fetchedName || entry.name,
+        market: entry.market,
+        asOf: nowIsoKst(),
+        cacheTtlSec: 0,
+        dayAnalysis,
+        weekAnalysis,
+        monthAnalysis,
+        warnings: [],
+      }),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "wang strategy summary failed";
+    return {
+      ...candidate,
+      wangStrategy: {
+        ...candidate.wangStrategy,
+        reasons: [`왕장군 검증 실패: ${message}`],
+      },
+    };
+  }
+};
 
 const buildChangeSummary = (
   previous: ScreenerSnapshot | null,
@@ -1104,7 +1156,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           }
           return {
             kind: "ok" as const,
-            candidate,
+            candidate: enrichCandidateWithWangStrategy(
+              candidate,
+              entry,
+              fetched.candles,
+              fetched.name,
+            ),
             retries: attempt,
             reason: "",
           };

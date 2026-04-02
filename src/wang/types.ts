@@ -10,6 +10,15 @@ export type WangStrategyPhase =
   | "NONE";
 
 export type WangStrategyInterpretation = "WATCH" | "ACCUMULATE" | "CAUTION" | "OVERHEAT";
+export type WangStrategyExecutionState =
+  | "WAIT_WEEKLY_STRUCTURE"
+  | "WAIT_PULLBACK"
+  | "READY_ON_ZONE"
+  | "READY_ON_RETEST"
+  | "AVOID_BREAKDOWN"
+  | "AVOID_OVERHEAT";
+
+export type WangStrategyChartTimeframe = "week" | "day";
 
 export type WangStrategyMarkerType =
   | "VOL_LIFE"
@@ -22,6 +31,7 @@ export type WangStrategyMarkerType =
 
 export interface WangStrategyMarker {
   id: string;
+  tf: WangStrategyChartTimeframe;
   t: string;
   type: WangStrategyMarkerType;
   label: string;
@@ -56,7 +66,7 @@ export interface WangStrategyChecklistItem {
   label: string;
   ok: boolean;
   detail: string;
-  group: "structure" | "timing" | "risk";
+  group: "structure" | "execution" | "risk";
 }
 
 export interface WangStrategyRiskNote {
@@ -76,6 +86,7 @@ export interface WangStrategySplitPlanItem {
 export interface WangStrategyTradeZone {
   id: string;
   label: string;
+  sourceTf: WangStrategyChartTimeframe;
   low: number;
   high: number;
   active: boolean;
@@ -109,6 +120,7 @@ export interface WangStrategyTimeframeSummary {
 export interface WangStrategyRefLevel {
   id: string;
   label: string;
+  sourceTf: WangStrategyChartTimeframe;
   price: number;
   startTime: string;
   endTime: string;
@@ -119,18 +131,28 @@ export interface WangStrategyRefLevel {
 export interface WangStrategyZoneOverlay {
   id: string;
   label: string;
+  sourceTf: WangStrategyChartTimeframe;
   low: number;
   high: number;
   startTime: string;
   endTime: string;
   color: string;
-  kind: "accumulation" | "warning";
+  kind: "accumulation" | "warning" | "projection";
+}
+
+export interface WangStrategyMovingAverageLine {
+  id: string;
+  label: string;
+  color: string;
+  lineWidth: number;
+  points: IndicatorPoint[];
 }
 
 export interface WangStrategyChartOverlays {
-  ma20Series: IndicatorPoint[];
+  movingAverages: WangStrategyMovingAverageLine[];
   refLevels: WangStrategyRefLevel[];
   zones: WangStrategyZoneOverlay[];
+  highlightTime: string | null;
 }
 
 export interface WangStrategyTrainingNote {
@@ -149,6 +171,38 @@ export interface WangStrategySummary {
   posture: string;
 }
 
+export interface WangStrategyWeeklyPhaseContext {
+  phase: WangStrategyPhase;
+  score: number;
+  confidence: number;
+  headline: string;
+  stageSummary: string;
+  referenceVolume: number;
+  averageVolume: number;
+  maxVolume: number;
+  baseRepeatCount: number;
+  risingCount: number;
+  elasticCount: number;
+  hasMinVolume: boolean;
+  hasWeeklyZone: boolean;
+  anchorTime: string | null;
+}
+
+export interface WangStrategyDailyExecutionContext {
+  state: WangStrategyExecutionState;
+  score: number;
+  confidence: number;
+  headline: string;
+  action: string;
+  belowMa20: boolean;
+  hasProjectedZone: boolean;
+  inProjectedZone: boolean;
+  retestDetected: boolean;
+  dailyRebaseCount: number;
+  zoneWidthPct: number | null;
+  lastRetestTime: string | null;
+}
+
 export interface WangStrategyResponse {
   meta: {
     input: string;
@@ -165,6 +219,8 @@ export interface WangStrategyResponse {
     referenceVolume: number;
   };
   summary: WangStrategySummary;
+  weeklyPhaseContext: WangStrategyWeeklyPhaseContext;
+  dailyExecutionContext: WangStrategyDailyExecutionContext;
   phases: WangStrategyPhaseItem[];
   currentPhase: WangStrategyPhase;
   confidence: number;
@@ -179,9 +235,18 @@ export interface WangStrategyResponse {
     week: WangStrategyTimeframeSummary | null;
     day: WangStrategyTimeframeSummary | null;
   };
-  chartOverlays: WangStrategyChartOverlays;
-  markers: WangStrategyMarker[];
+  candles: {
+    week: Candle[];
+    day: Candle[];
+  };
+  chartOverlays: {
+    week: WangStrategyChartOverlays;
+    day: WangStrategyChartOverlays;
+  };
+  markers: {
+    week: WangStrategyMarker[];
+    day: WangStrategyMarker[];
+  };
   trainingNotes: WangStrategyTrainingNote[];
-  candles: Candle[];
   warnings: string[];
 }

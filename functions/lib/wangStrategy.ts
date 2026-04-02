@@ -1,7 +1,10 @@
 import type { Candle, IndicatorPoint, TimeframeAnalysis } from "./types";
 import type {
   WangStrategyChartOverlays,
+  WangStrategyChartTimeframe,
   WangStrategyChecklistItem,
+  WangStrategyDailyExecutionContext,
+  WangStrategyExecutionState,
   WangStrategyInterpretation,
   WangStrategyMarker,
   WangStrategyPayload,
@@ -10,49 +13,47 @@ import type {
   WangStrategyPhaseOccurrence,
   WangStrategyRefLevel,
   WangStrategyRiskNote,
+  WangStrategyScreeningSummary,
   WangStrategyTimeframeSummary,
   WangStrategyTradeZone,
   WangStrategyTrainingNote,
+  WangStrategyWeeklyPhaseContext,
   WangStrategyZoneOverlay,
 } from "./wangTypes";
 import { clamp, round2 } from "./utils";
+import {
+  WANG_EXECUTION_STATE_LABEL,
+  WANG_PHASE_LABEL,
+  WANG_STRATEGY_CONSTANTS,
+} from "./wangStrategyConstants";
 
-const WANG_STRATEGY_CONSTANTS = {
-  referenceVolumeRatio: 0.11,
-  referenceVolumeLower: 0.1,
-  referenceVolumeUpper: 0.12,
-  baseVolumeMinRatio: 1,
-  risingVolumeMinRatio: 1.15,
-  elasticVolumeMinRatio: 1.35,
-  elasticBodyRatio: 0.55,
-  elasticDailyRisePct: 3.5,
-  minVolumeMaxRatio: 0.85,
-  minVolumeMa20Buffer: 1.08,
-  zoneBuildBars: 3,
-  refLineBars: 5,
-  inZoneTolerancePct: 0.012,
-  breakZoneTolerancePct: 0.015,
-  overheatFromZonePct: 0.12,
-  overheatFromMa20Pct: 0.1,
-  splitPlanWeights: [40, 35, 25] as const,
-  activeRetestLookbackBars: 12,
-} as const;
-
-const PHASE_LABEL: Record<Exclude<WangStrategyPhase, "NONE">, string> = {
-  LIFE_VOLUME: "인생거래량",
-  BASE_VOLUME: "기준거래량",
-  RISING_VOLUME: "상승거래량",
-  ELASTIC_VOLUME: "탄력거래량",
-  MIN_VOLUME: "최소거래량",
-  REACCUMULATION: "재적립",
-};
-
-const INTERPRETATION_LABEL: Record<WangStrategyInterpretation, string> = {
-  WATCH: "관찰",
-  ACCUMULATE: "적립",
-  CAUTION: "경계",
-  OVERHEAT: "과열",
-};
+interface WangCycleDetection {
+  tf: WangStrategyChartTimeframe;
+  candles: Candle[];
+  ma20Series: IndicatorPoint[];
+  maxVolume: number;
+  averageVolume: number;
+  referenceVolume: number;
+  close: number;
+  ma20: number | null;
+  belowMa20: boolean;
+  ma20DistancePct: number | null;
+  lifeIndex: number;
+  baseIndices: number[];
+  risingIndices: number[];
+  elasticIndices: number[];
+  minIndex: number;
+  zoneStartIndex: number;
+  zoneEndIndex: number;
+  zoneLow: number | null;
+  zoneHigh: number | null;
+  retestIndices: number[];
+  latestRetestIndex: number;
+  inZone: boolean;
+  brokeZone: boolean;
+  farAboveZone: boolean;
+  currentPhase: WangStrategyPhase;
+}
 
 const average = (values: number[]): number => {
   if (values.length === 0) return 0;
@@ -69,9 +70,9 @@ const percentDiff = (value: number, reference: number | null): number | null => 
   return ((value - reference) / reference) * 100;
 };
 
-const dailyChangePct = (candles: Candle[], index: number): number => {
+const priceChangePct = (candles: Candle[], index: number): number => {
   if (index <= 0) return 0;
-  const prev = candles[index - 1].close;
+  const prev = candles[index - 1]?.close ?? 0;
   if (prev === 0) return 0;
   return ((candles[index].close - prev) / prev) * 100;
 };
@@ -96,25 +97,196 @@ const isLocalVolumeTrough = (candles: Candle[], index: number, span = 1): boolea
   return true;
 };
 
-const phaseOrder: WangStrategyPhase[] = [
-  "LIFE_VOLUME",
-  "BASE_VOLUME",
-  "RISING_VOLUME",
-  "ELASTIC_VOLUME",
-  "MIN_VOLUME",
-  "REACCUMULATION",
-];
-
 const toRoundedNumber = (value: number): number => round2(value) ?? value;
+
+const findBarIndexOnOrAfter = (candles: Candle[], time: string): number => {
+  const index = candles.findIndex((candle) => candle.time >= time);
+  return index >= 0 ? index : 0;
+};
+
+const isRecentRetest = (candles: Candle[], index: number): boolean =>
+  index >= 0 && candles.length - 1 - index <= WANG_STRATEGY_CONSTANTS.activeRetestLookbackBars;
+
+const detectVolumeCycle = (
+  tf: WangStrategyChartTimeframe,
+  candles: Candle[],
+  ma20Series: IndicatorPoint[],
+): WangCycleDetection => {
+  if (candles.length === 0) {
+    return {
+      tf,
+      candles,
+      ma20Series,
+      maxVolume: 0,
+      averageVolume: 0,
+      referenceVolume: 0,
+      close: 0,
+      ma20: null,
+      belowMa20: false,
+      ma20DistancePct: null,
+      lifeIndex: -1,
+      baseIndices: [],
+      risingIndices: [],
+      elasticIndices: [],
+      minIndex: -1,
+      zoneStartIndex: -1,
+      zoneEndIndex: -1,
+      zoneLow: null,
+      zoneHigh: null,
+      retestIndices: [],
+      latestRetestIndex: -1,
+      inZone: false,
+      brokeZone: false,
+      farAboveZone: false,
+      currentPhase: "NONE",
+    };
+  }
+
+  const close = candles[candles.length - 1].close;
+  const ma20 = ma20Series[ma20Series.length - 1]?.value ?? null;
+  const belowMa20 = ma20 != null ? close <= ma20 : false;
+  const ma20DistancePct = percentDiff(close, ma20);
+  const maxVolume = Math.max(...candles.map((candle) => candle.volume));
+  const averageVolume = average(candles.map((candle) => candle.volume));
+  const referenceVolume = maxVolume * WANG_STRATEGY_CONSTANTS.referenceVolumeRatio;
+  const lifeIndex = candles.findIndex((candle) => candle.volume === maxVolume);
+
+  const baseIndices = candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle, index }) => {
+      if (index <= lifeIndex) return false;
+      if (!isLocalVolumePivot(candles, index)) return false;
+      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.baseVolumeMinRatio) return false;
+      if (candle.volume >= maxVolume * 0.98) return false;
+      const ma20Point = ma20Series[index]?.value ?? null;
+      return candle.close >= candle.open || (ma20Point != null && candle.close >= ma20Point * 0.98);
+    })
+    .map(({ index }) => index)
+    .slice(-4);
+
+  const latestBaseIndex = baseIndices.length > 0 ? baseIndices[baseIndices.length - 1] : -1;
+
+  const risingIndices = candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle, index }) => {
+      if (index <= latestBaseIndex) return false;
+      if (!isLocalVolumePivot(candles, index)) return false;
+      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.risingVolumeMinRatio) return false;
+      const referenceClose = latestBaseIndex >= 0 ? candles[latestBaseIndex].close : candles[Math.max(index - 1, 0)].close;
+      return candle.close > referenceClose;
+    })
+    .map(({ index }) => index)
+    .slice(-3);
+
+  const latestRisingIndex = risingIndices.length > 0 ? risingIndices[risingIndices.length - 1] : -1;
+  const elasticStartIndex = Math.max(latestRisingIndex, latestBaseIndex);
+
+  const elasticIndices = candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle, index }) => {
+      if (index <= elasticStartIndex) return false;
+      if (!isLocalVolumePivot(candles, index)) return false;
+      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.elasticVolumeMinRatio) return false;
+      if (bodyRatio(candle) < WANG_STRATEGY_CONSTANTS.elasticBodyRatio) return false;
+      return priceChangePct(candles, index) >= WANG_STRATEGY_CONSTANTS.elasticRisePct;
+    })
+    .map(({ index }) => index)
+    .slice(-2);
+
+  const latestElasticIndex = elasticIndices.length > 0 ? elasticIndices[elasticIndices.length - 1] : -1;
+  const minSearchStartIndex = Math.max(latestElasticIndex, latestRisingIndex, latestBaseIndex);
+
+  const minIndices = candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle, index }) => {
+      if (index <= minSearchStartIndex) return false;
+      if (!isLocalVolumeTrough(candles, index)) return false;
+      if (candle.volume > referenceVolume * WANG_STRATEGY_CONSTANTS.minVolumeMaxRatio) return false;
+      const ma20Point = ma20Series[index]?.value ?? null;
+      return ma20Point == null || candle.close <= ma20Point * WANG_STRATEGY_CONSTANTS.minVolumeMa20Buffer;
+    })
+    .sort((left, right) => left.candle.volume - right.candle.volume || right.index - left.index)
+    .map(({ index }) => index);
+
+  const minIndex = minIndices.length > 0 ? minIndices[0] : -1;
+  const zoneStartIndex = minIndex >= 0 ? Math.min(candles.length - 1, minIndex + 1) : -1;
+  const zoneEndIndex =
+    zoneStartIndex >= 0
+      ? Math.min(candles.length - 1, zoneStartIndex + WANG_STRATEGY_CONSTANTS.zoneBuildBars - 1)
+      : -1;
+  const zoneCandles = zoneStartIndex >= 0 ? candles.slice(zoneStartIndex, zoneEndIndex + 1) : [];
+  const zoneLow = zoneCandles.length > 0 ? Math.min(...zoneCandles.map((candle) => candle.low)) : null;
+  const zoneHigh = zoneCandles.length > 0 ? Math.max(...zoneCandles.map((candle) => candle.high)) : null;
+
+  const retestIndices =
+    zoneLow != null && zoneHigh != null
+      ? candles
+          .map((candle, index) => ({ candle, index }))
+          .filter(({ candle, index }) => {
+            if (index <= zoneEndIndex) return false;
+            const touchesUpper = candle.low <= zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
+            const holdsLower = candle.high >= zoneLow * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
+            return touchesUpper && holdsLower;
+          })
+          .map(({ index }) => index)
+      : [];
+
+  const latestRetestIndex = retestIndices.length > 0 ? retestIndices[retestIndices.length - 1] : -1;
+  const inZone =
+    zoneLow != null && zoneHigh != null
+      ? close >= zoneLow * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct) &&
+        close <= zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct)
+      : false;
+  const brokeZone =
+    zoneLow != null ? close < zoneLow * (1 - WANG_STRATEGY_CONSTANTS.breakZoneTolerancePct) : false;
+  const farAboveZone =
+    zoneHigh != null ? close > zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.overheatFromZonePct) : false;
+
+  let currentPhase: WangStrategyPhase = "NONE";
+  if (latestRetestIndex >= 0 && (inZone || isRecentRetest(candles, latestRetestIndex))) currentPhase = "REACCUMULATION";
+  else if (minIndex >= 0) currentPhase = "MIN_VOLUME";
+  else if (latestElasticIndex >= 0) currentPhase = "ELASTIC_VOLUME";
+  else if (latestRisingIndex >= 0) currentPhase = "RISING_VOLUME";
+  else if (latestBaseIndex >= 0) currentPhase = "BASE_VOLUME";
+  else if (lifeIndex >= 0) currentPhase = "LIFE_VOLUME";
+
+  return {
+    tf,
+    candles,
+    ma20Series,
+    maxVolume,
+    averageVolume,
+    referenceVolume,
+    close,
+    ma20,
+    belowMa20,
+    ma20DistancePct,
+    lifeIndex,
+    baseIndices,
+    risingIndices,
+    elasticIndices,
+    minIndex,
+    zoneStartIndex,
+    zoneEndIndex,
+    zoneLow,
+    zoneHigh,
+    retestIndices,
+    latestRetestIndex,
+    inZone,
+    brokeZone,
+    farAboveZone,
+    currentPhase,
+  };
+};
 
 const toTimeframeSummary = (analysis: TimeframeAnalysis | null): WangStrategyTimeframeSummary | null => {
   if (!analysis) return null;
 
   const structure =
-    analysis.regime === "UP"
-      ? "가르기"
-      : analysis.regime === "DOWN"
-        ? "모으기"
+    analysis.regime === "DOWN"
+      ? "모으기"
+      : analysis.regime === "UP"
+        ? "가르기"
         : "혼합";
 
   let phaseBias: WangStrategyPhase = "BASE_VOLUME";
@@ -150,24 +322,23 @@ const buildOccurrence = (
   note,
 });
 
-const buildRefLevel = (
-  candles: Candle[],
-  index: number,
-  price: number,
-  label: string,
-  color: string,
-  style: "solid" | "dashed",
-): WangStrategyRefLevel => ({
-  id: `wang-ref-${label}-${candles[index].time}`,
-  label,
-  price: toRoundedNumber(price),
-  startTime: candles[index].time,
-  endTime: candles[Math.min(candles.length - 1, index + WANG_STRATEGY_CONSTANTS.refLineBars)].time,
-  color,
-  style,
+const buildPhaseItem = (
+  phase: Exclude<WangStrategyPhase, "NONE">,
+  currentPhase: WangStrategyPhase,
+  occurrences: WangStrategyPhaseOccurrence[],
+  summary: string,
+  nextCondition: string,
+): WangStrategyPhaseItem => ({
+  phase,
+  title: WANG_PHASE_LABEL[phase],
+  status: phase === currentPhase ? "active" : occurrences.length > 0 ? "completed" : "pending",
+  summary,
+  nextCondition,
+  occurrences,
 });
 
 const buildMarker = (
+  tf: WangStrategyChartTimeframe,
   candles: Candle[],
   index: number,
   type: WangStrategyMarker["type"],
@@ -178,7 +349,8 @@ const buildMarker = (
   shape: WangStrategyMarker["shape"],
   color: string,
 ): WangStrategyMarker => ({
-  id: `wang-marker-${type}-${candles[index].time}`,
+  id: `wang-${tf}-${type}-${candles[index].time}`,
+  tf,
   t: candles[index].time,
   type,
   label,
@@ -191,107 +363,335 @@ const buildMarker = (
   color,
 });
 
-const buildPhaseItem = (
-  phase: Exclude<WangStrategyPhase, "NONE">,
-  currentPhase: WangStrategyPhase,
-  occurrences: WangStrategyPhaseOccurrence[],
-  summary: string,
-  nextCondition: string,
-): WangStrategyPhaseItem => ({
-  phase,
-  title: PHASE_LABEL[phase],
-  status: phase === currentPhase ? "active" : occurrences.length > 0 ? "completed" : "pending",
-  summary,
-  nextCondition,
-  occurrences,
+const buildRefLevel = (
+  tf: WangStrategyChartTimeframe,
+  candles: Candle[],
+  index: number,
+  price: number,
+  label: string,
+  color: string,
+  style: "solid" | "dashed",
+  forwardBars = WANG_STRATEGY_CONSTANTS.refLineBars,
+): WangStrategyRefLevel => ({
+  id: `wang-ref-${tf}-${label}-${candles[index].time}`,
+  label,
+  sourceTf: tf,
+  price: toRoundedNumber(price),
+  startTime: candles[index].time,
+  endTime: candles[Math.min(candles.length - 1, index + forwardBars)].time,
+  color,
+  style,
+});
+
+const buildStaticRefLevel = (
+  tf: WangStrategyChartTimeframe,
+  startTime: string,
+  endTime: string,
+  price: number,
+  label: string,
+  color: string,
+  style: "solid" | "dashed",
+): WangStrategyRefLevel => ({
+  id: `wang-ref-${tf}-${label}-${startTime}`,
+  label,
+  sourceTf: tf,
+  price: toRoundedNumber(price),
+  startTime,
+  endTime,
+  color,
+  style,
+});
+
+const buildZoneOverlay = (
+  tf: WangStrategyChartTimeframe,
+  label: string,
+  sourceTf: WangStrategyChartTimeframe,
+  low: number,
+  high: number,
+  startTime: string,
+  endTime: string,
+  color: string,
+  kind: WangStrategyZoneOverlay["kind"],
+): WangStrategyZoneOverlay => ({
+  id: `wang-zone-${tf}-${label}-${startTime}`,
+  label,
+  sourceTf,
+  low: toRoundedNumber(low),
+  high: toRoundedNumber(high),
+  startTime,
+  endTime,
+  color,
+  kind,
 });
 
 const buildTrainingNotes = (referenceVolume: number, maxVolume: number): WangStrategyTrainingNote[] => [
   {
+    id: "wang-training-main-frame",
+    title: "주봉 메인, 일봉 상세",
+    text: "1차 버전은 주봉에서 거래량 사이클을 먼저 읽고, 일봉에서는 zone 재접근과 20일선 아래 적립 후보를 상세하게 해석하도록 설계했습니다.",
+    emphasis: "core",
+  },
+  {
     id: "wang-training-reference",
-    title: "기준거래량 기준선",
-    text: `이번 종목의 최대거래량은 ${Math.round(maxVolume).toLocaleString("ko-KR")}이고, 기준거래량 참고치는 그 10~12% 구간인 ${Math.round(
-      maxVolume * WANG_STRATEGY_CONSTANTS.referenceVolumeLower,
-    ).toLocaleString("ko-KR")}~${Math.round(maxVolume * WANG_STRATEGY_CONSTANTS.referenceVolumeUpper).toLocaleString("ko-KR")}입니다.`,
+    title: "기준거래량의 기준",
+    text: `이번 응답에서는 최대거래량 ${Math.round(maxVolume).toLocaleString("ko-KR")}을 기준으로 약 10~12% 구간을 참고해 기준거래량을 읽고 있습니다. 현재 기준값은 ${Math.round(referenceVolume).toLocaleString("ko-KR")}입니다.`,
     emphasis: "core",
   },
   {
     id: "wang-training-base-repeat",
-    title: "기준거래량은 반복된다",
-    text: "한 번 나온 기준거래량만 보지 않고, 같은 레퍼런스를 다시 넘는 봉이 나오는지 반복 확인해야 합니다.",
-    emphasis: "core",
+    title: "기준거래량은 여러 번 나온다",
+    text: "한 번의 기준거래량만으로 확정하지 않고, 반복 출현과 반복 실패 여부를 함께 읽어야 균형가격과 심리 전환을 더 안정적으로 볼 수 있습니다.",
+    emphasis: "practice",
   },
   {
     id: "wang-training-min-zone",
     title: "최소거래량 이후 zone",
-    text: "최소거래량 자체보다 그 뒤의 캔들 고저가 더 중요합니다. 실제 분할 적립 구간은 이후 캔들로 좁혀서 봅니다.",
-    emphasis: "practice",
+    text: "최소거래량 자체보다 그 이후 캔들 고저가 실제 적립 zone을 만듭니다. 그래서 최소거래량 직후의 캔들 묶음을 별도 zone으로 표시합니다.",
+    emphasis: "core",
   },
   {
     id: "wang-training-ma20",
-    title: "20일선 아래는 적립 후보",
-    text: "20일선 아래라고 무조건 매수하는 것이 아니라, 최소거래량 zone과 함께 겹칠 때 적극적 분할 적립 후보로 봅니다.",
+    title: "20일선 아래 적립 후보",
+    text: "20일선 아래라고 무조건 매수가 아니라, 최소거래량과 zone, 그리고 재접근 여부가 함께 있어야 분할 적립 후보로 해석합니다.",
     emphasis: "practice",
   },
   {
     id: "wang-training-mtf",
-    title: "월·주·일 연결 해석",
-    text: "월봉은 큰 균형가격, 주봉은 모으기/가르기 전환, 일봉은 실제 실행 위치로 연결해서 해석해야 합니다.",
+    title: "월/주/일 연결 해석",
+    text: "월봉은 큰 균형가격과 방향, 주봉은 핵심 거래량 단계, 일봉은 실제 실행 타이밍으로 연결해서 읽는 구조가 이후 2차 고도화의 기반이 됩니다.",
     emphasis: "warning",
-  },
-  {
-    id: "wang-training-reference-exact",
-    title: "현재 계산 기준",
-    text: `이번 응답에서는 기준거래량 계산값을 ${Math.round(referenceVolume).toLocaleString("ko-KR")}으로 고정해 phase를 판정했습니다.`,
-    emphasis: "practice",
   },
 ];
 
-const buildWangTradeZone = (
+const buildTradeZone = (
+  sourceTf: WangStrategyChartTimeframe,
   candles: Candle[],
   zoneStartIndex: number,
   zoneEndIndex: number,
   zoneLow: number,
   zoneHigh: number,
+  active: boolean,
   belowMa20: boolean,
 ): WangStrategyTradeZone => {
   const zoneMid = (zoneLow + zoneHigh) / 2;
-  const [weight1, weight2, weight3] = WANG_STRATEGY_CONSTANTS.splitPlanWeights;
-  const scenario = belowMa20
-    ? "20일선 아래 zone 접근으로 해석되어 상단 확인보다 분할 적립 우선 시나리오를 사용합니다."
-    : "20일선 위이므로 추격보다 zone 재접근 확인 후 분할 적립 시나리오를 권장합니다.";
+  const [firstWeight, secondWeight, thirdWeight] = WANG_STRATEGY_CONSTANTS.splitPlanWeights;
 
   return {
-    id: `wang-zone-${candles[zoneStartIndex].time}`,
-    label: "최소거래량 이후 재적립 zone",
+    id: `wang-trade-zone-${sourceTf}-${candles[zoneStartIndex].time}`,
+    label: sourceTf === "week" ? "주봉 최소거래량 이후 zone" : "일봉 최소거래량 이후 zone",
+    sourceTf,
     low: toRoundedNumber(zoneLow),
     high: toRoundedNumber(zoneHigh),
-    active: false,
-    anchorPhase: "MIN_VOLUME",
+    active,
+    anchorPhase: active ? "REACCUMULATION" : "MIN_VOLUME",
     startTime: candles[zoneStartIndex].time,
     endTime: candles[zoneEndIndex].time,
     invalidationPrice: toRoundedNumber(zoneLow * (1 - WANG_STRATEGY_CONSTANTS.breakZoneTolerancePct)),
-    scenario,
+    scenario: belowMa20
+      ? "20일선 아래에서 zone을 다시 확인하는 구간으로 해석해 추격보다 분할 적립 시나리오를 우선합니다."
+      : "20일선 위라면 추격보다 주봉 zone 재접근 여부를 먼저 확인하는 보수적 시나리오가 적합합니다.",
     splitPlan: [
       {
-        label: "1차",
+        label: "1차 적립",
         price: toRoundedNumber(zoneHigh),
-        weightPct: weight1,
-        note: "zone 상단 재진입 확인",
+        weightPct: firstWeight,
+        note: "zone 상단 확인 진입",
       },
       {
-        label: "2차",
+        label: "2차 적립",
         price: toRoundedNumber(zoneMid),
-        weightPct: weight2,
-        note: "균형가격 재확인",
+        weightPct: secondWeight,
+        note: "균형가격 재접근 구간",
       },
       {
-        label: "3차",
+        label: "3차 적립",
         price: toRoundedNumber(zoneLow),
-        weightPct: weight3,
-        note: "방어선 최종 점검",
+        weightPct: thirdWeight,
+        note: "zone 하단 방어 확인 구간",
       },
     ],
+  };
+};
+
+const sortMarkers = (markers: WangStrategyMarker[]): WangStrategyMarker[] =>
+  [...markers].sort((left, right) => left.t.localeCompare(right.t));
+
+const mapExecutionToInterpretation = (
+  state: WangStrategyExecutionState,
+): WangStrategyInterpretation => {
+  if (state === "READY_ON_ZONE" || state === "READY_ON_RETEST") return "ACCUMULATE";
+  if (state === "AVOID_OVERHEAT") return "OVERHEAT";
+  if (state === "AVOID_BREAKDOWN") return "CAUTION";
+  return "WATCH";
+};
+
+const buildWeeklyPhaseContext = (
+  detection: WangCycleDetection,
+): WangStrategyWeeklyPhaseContext => {
+  const weights = WANG_STRATEGY_CONSTANTS.weeklyPhaseWeights;
+  const score = clamp(
+    (detection.lifeIndex >= 0 ? weights.life : 0) +
+      (detection.baseIndices.length > 0 ? weights.base : 0) +
+      (detection.risingIndices.length > 0 ? weights.rising : 0) +
+      (detection.elasticIndices.length > 0 ? weights.elastic : 0) +
+      (detection.minIndex >= 0 ? weights.min : 0) +
+      (detection.zoneLow != null && detection.zoneHigh != null ? weights.zone : 0) +
+      (detection.latestRetestIndex >= 0 ? weights.retest : 0),
+    0,
+    100,
+  );
+
+  const confidence = clamp(
+    Math.round(
+      score * 0.78 +
+        (detection.currentPhase === "MIN_VOLUME" ? 8 : 0) +
+        (detection.currentPhase === "REACCUMULATION" ? 12 : 0),
+    ),
+    0,
+    100,
+  );
+
+  const stageSummary =
+    detection.currentPhase === "REACCUMULATION"
+      ? "주봉 minimum 이후 zone을 다시 확인하는 단계입니다."
+      : detection.currentPhase === "MIN_VOLUME"
+        ? "주봉 최소거래량이 확인돼 가장 쌀 확률이 높은 자리 후보를 설명할 수 있습니다."
+        : detection.currentPhase === "ELASTIC_VOLUME"
+          ? "주봉 탄력거래량 단계까지는 왔지만 minimum 확인 전이라 실행보다 구조 해석이 우선입니다."
+          : detection.currentPhase === "RISING_VOLUME"
+            ? "상승거래량 단계로 구조는 좋아지지만 아직 눌림과 zone 설명은 이릅니다."
+            : detection.currentPhase === "BASE_VOLUME"
+              ? "반복 기준거래량을 확인하는 단계입니다."
+              : detection.currentPhase === "LIFE_VOLUME"
+                ? "최대 거래량 기준점은 확보됐지만 반복 기준거래량 축적이 더 필요합니다."
+                : "주봉 phase를 확정할 근거가 아직 부족합니다.";
+
+  const headline =
+    detection.currentPhase === "NONE"
+      ? "주봉 phase 미확정"
+      : `주봉 ${WANG_PHASE_LABEL[detection.currentPhase as Exclude<WangStrategyPhase, "NONE">]}`;
+
+  return {
+    phase: detection.currentPhase,
+    score,
+    confidence,
+    headline,
+    stageSummary,
+    referenceVolume: Math.round(detection.referenceVolume),
+    averageVolume: Math.round(detection.averageVolume),
+    maxVolume: Math.round(detection.maxVolume),
+    baseRepeatCount: detection.baseIndices.length,
+    risingCount: detection.risingIndices.length,
+    elasticCount: detection.elasticIndices.length,
+    hasMinVolume: detection.minIndex >= 0,
+    hasWeeklyZone: detection.zoneLow != null && detection.zoneHigh != null,
+    anchorTime: detection.lifeIndex >= 0 ? detection.candles[detection.lifeIndex].time : null,
+  };
+};
+
+const buildDailyExecutionContext = (params: {
+  dayDetection: WangCycleDetection;
+  weeklyPhase: WangStrategyWeeklyPhaseContext;
+  projectedDayZone:
+    | {
+        startIndex: number;
+        endIndex: number;
+        low: number;
+        high: number;
+      }
+    | null;
+  projectedDayInZone: boolean;
+  projectedDayRetestIndex: number;
+  projectedDayBrokeZone: boolean;
+  dailyRebaseIndices: number[];
+}): WangStrategyDailyExecutionContext => {
+  const {
+    dayDetection,
+    weeklyPhase,
+    projectedDayZone,
+    projectedDayInZone,
+    projectedDayRetestIndex,
+    projectedDayBrokeZone,
+    dailyRebaseIndices,
+  } = params;
+
+  const zoneWidthPct =
+    projectedDayZone != null && projectedDayZone.low > 0
+      ? toRoundedNumber(((projectedDayZone.high - projectedDayZone.low) / projectedDayZone.low) * 100)
+      : null;
+
+  let state: WangStrategyExecutionState = "WAIT_WEEKLY_STRUCTURE";
+  if (projectedDayBrokeZone) {
+    state = "AVOID_BREAKDOWN";
+  } else if (
+    projectedDayZone != null &&
+    (dayDetection.close > projectedDayZone.high * (1 + WANG_STRATEGY_CONSTANTS.overheatFromZonePct) ||
+      (dayDetection.ma20DistancePct != null &&
+        dayDetection.ma20DistancePct >= WANG_STRATEGY_CONSTANTS.overheatFromMa20Pct * 100))
+  ) {
+    state = "AVOID_OVERHEAT";
+  } else if (weeklyPhase.phase === "MIN_VOLUME" || weeklyPhase.phase === "REACCUMULATION") {
+    if (projectedDayZone != null && dayDetection.belowMa20 && projectedDayRetestIndex >= 0) {
+      state = "READY_ON_RETEST";
+    } else if (projectedDayZone != null && dayDetection.belowMa20 && projectedDayInZone) {
+      state = "READY_ON_ZONE";
+    } else if (projectedDayZone != null) {
+      state = "WAIT_PULLBACK";
+    }
+  }
+
+  const weights = WANG_STRATEGY_CONSTANTS.dailyExecutionWeights;
+  const score = clamp(
+    (weeklyPhase.phase === "MIN_VOLUME" || weeklyPhase.phase === "REACCUMULATION" ? weights.weeklyReady : 0) +
+      (projectedDayZone != null ? weights.projectedZone : 0) +
+      (dayDetection.belowMa20 ? weights.belowMa20 : 0) +
+      (projectedDayInZone ? weights.inZone : 0) +
+      (projectedDayRetestIndex >= 0 ? weights.retest : 0) +
+      (dailyRebaseIndices.length > 0 ? weights.rebase : 0) -
+      (projectedDayBrokeZone ? 45 : 0) -
+      (state === "AVOID_OVERHEAT" ? 18 : 0),
+    0,
+    100,
+  );
+
+  const confidence = clamp(
+    Math.round(
+      score * 0.8 +
+        (state === "READY_ON_RETEST" ? 10 : 0) +
+        (state === "READY_ON_ZONE" ? 6 : 0) -
+        (state === "AVOID_BREAKDOWN" ? 12 : 0),
+    ),
+    0,
+    100,
+  );
+
+  const headline = `${WANG_EXECUTION_STATE_LABEL[state]} · 일봉 실행 판단`;
+  const action =
+    state === "READY_ON_RETEST"
+      ? "주봉 zone 재접근과 20일선 아래 조건이 겹쳐 분할 적립 후보로 볼 수 있습니다."
+      : state === "READY_ON_ZONE"
+        ? "일봉이 주봉 zone 안으로 진입해 적립 관찰을 시작할 수 있습니다."
+        : state === "WAIT_PULLBACK"
+          ? "주봉 구조는 나왔지만 일봉 당김과 20일선 조건이 더 필요합니다."
+          : state === "AVOID_BREAKDOWN"
+            ? "zone 하단 이탈이면 적립 가설보다 방어와 재확인이 우선입니다."
+            : state === "AVOID_OVERHEAT"
+              ? "zone 대비 과열이라 추격 매수보다 다음 눌림을 기다리는 편이 낫습니다."
+              : "주봉 phase가 아직 minimum 이전이라 일봉 실행보다 구조 관찰이 우선입니다.";
+
+  return {
+    state,
+    score,
+    confidence,
+    headline,
+    action,
+    belowMa20: dayDetection.belowMa20,
+    hasProjectedZone: projectedDayZone != null,
+    inProjectedZone: projectedDayInZone,
+    retestDetected: projectedDayRetestIndex >= 0,
+    dailyRebaseCount: dailyRebaseIndices.length,
+    zoneWidthPct,
+    lastRetestTime: projectedDayRetestIndex >= 0 ? dayDetection.candles[projectedDayRetestIndex].time : null,
   };
 };
 
@@ -320,574 +720,650 @@ export const buildWangStrategyPayload = (params: {
     warnings = [],
   } = params;
 
-  const candles = dayAnalysis.candles;
-  const ma20Series = dayAnalysis.indicators.ma.ma1;
-  const close = candles[candles.length - 1]?.close ?? 0;
-  const ma20 = ma20Series[ma20Series.length - 1]?.value ?? null;
-  const belowMa20 = ma20 != null ? close <= ma20 : false;
-  const maxVolume = Math.max(...candles.map((candle) => candle.volume));
-  const averageVolume = average(candles.map((candle) => candle.volume));
-  const referenceVolume = maxVolume * WANG_STRATEGY_CONSTANTS.referenceVolumeRatio;
-  const lifeIndex = candles.findIndex((candle) => candle.volume === maxVolume);
+  const weekCandles = weekAnalysis?.candles ?? [];
+  const weekMa20 = weekAnalysis?.indicators.ma.ma1 ?? [];
+  const dayCandles = dayAnalysis.candles;
+  const dayMa20 = dayAnalysis.indicators.ma.ma1;
 
-  const baseIndices = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ candle, index }) => {
-      if (index <= lifeIndex) return false;
-      if (!isLocalVolumePivot(candles, index)) return false;
-      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.baseVolumeMinRatio) return false;
-      if (candle.volume >= maxVolume * 0.98) return false;
-      const ma20Point = ma20Series[index]?.value ?? null;
-      return candle.close >= candle.open || (ma20Point != null && candle.close >= ma20Point * 0.98);
-    })
-    .map(({ index }) => index)
-    .slice(-4);
+  const weekDetection = weekCandles.length > 0 ? detectVolumeCycle("week", weekCandles, weekMa20) : null;
+  const dayDetection = detectVolumeCycle("day", dayCandles, dayMa20);
+  const phaseSource = weekDetection ?? dayDetection;
 
-  const latestBaseIndex = baseIndices.length > 0 ? baseIndices[baseIndices.length - 1] : -1;
+  const mainZoneSource =
+    weekDetection && weekDetection.zoneLow != null && weekDetection.zoneHigh != null && weekDetection.zoneStartIndex >= 0 && weekDetection.zoneEndIndex >= 0
+      ? weekDetection
+      : dayDetection.zoneLow != null && dayDetection.zoneHigh != null && dayDetection.zoneStartIndex >= 0 && dayDetection.zoneEndIndex >= 0
+        ? dayDetection
+        : null;
 
-  const risingIndices = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ candle, index }) => {
-      if (index <= latestBaseIndex) return false;
-      if (!isLocalVolumePivot(candles, index)) return false;
-      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.risingVolumeMinRatio) return false;
-      const referenceClose = latestBaseIndex >= 0 ? candles[latestBaseIndex].close : candles[Math.max(index - 1, 0)].close;
-      const ma20Point = ma20Series[index]?.value ?? null;
-      return candle.close > referenceClose && (ma20Point == null || candle.close >= ma20Point * 0.99);
-    })
-    .map(({ index }) => index)
-    .slice(-3);
+  const projectedDayZone =
+    mainZoneSource && dayCandles.length > 0
+      ? {
+          startIndex: findBarIndexOnOrAfter(dayCandles, mainZoneSource.candles[mainZoneSource.zoneStartIndex].time),
+          endIndex: dayCandles.length - 1,
+          low: mainZoneSource.zoneLow!,
+          high: mainZoneSource.zoneHigh!,
+        }
+      : null;
 
-  const latestRisingIndex = risingIndices.length > 0 ? risingIndices[risingIndices.length - 1] : -1;
-  const elasticStartIndex = latestRisingIndex >= 0 ? latestRisingIndex : latestBaseIndex;
-
-  const elasticIndices = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ candle, index }) => {
-      if (index < Math.max(elasticStartIndex, 0)) return false;
-      if (!isLocalVolumePivot(candles, index)) return false;
-      if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.elasticVolumeMinRatio) return false;
-      if (bodyRatio(candle) < WANG_STRATEGY_CONSTANTS.elasticBodyRatio) return false;
-      return dailyChangePct(candles, index) >= WANG_STRATEGY_CONSTANTS.elasticDailyRisePct;
-    })
-    .map(({ index }) => index)
-    .slice(-2);
-
-  const latestElasticIndex = elasticIndices.length > 0 ? elasticIndices[elasticIndices.length - 1] : -1;
-  const minSearchStartIndex = Math.max(latestElasticIndex, latestRisingIndex, latestBaseIndex);
-
-  const minIndices = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ candle, index }) => {
-      if (index <= minSearchStartIndex) return false;
-      const ma20Point = ma20Series[index]?.value ?? null;
-      if (!isLocalVolumeTrough(candles, index)) return false;
-      if (candle.volume > referenceVolume * WANG_STRATEGY_CONSTANTS.minVolumeMaxRatio) return false;
-      return ma20Point == null || candle.close <= ma20Point * WANG_STRATEGY_CONSTANTS.minVolumeMa20Buffer;
-    })
-    .sort((left, right) => left.candle.volume - right.candle.volume || right.index - left.index)
-    .map(({ index }) => index);
-
-  const minIndex = minIndices.length > 0 ? minIndices[0] : -1;
-  const zoneSourceIndex = minIndex >= 0 ? minIndex : -1;
-  const zoneStartIndex =
-    zoneSourceIndex >= 0
-      ? Math.min(candles.length - 1, zoneSourceIndex + 1)
-      : -1;
-  const zoneEndIndex =
-    zoneStartIndex >= 0
-      ? Math.min(candles.length - 1, zoneStartIndex + WANG_STRATEGY_CONSTANTS.zoneBuildBars - 1)
-      : -1;
-  const zoneCandles =
-    zoneStartIndex >= 0
-      ? candles.slice(zoneStartIndex, zoneEndIndex + 1)
-      : [];
-  const zoneLow = zoneCandles.length > 0 ? Math.min(...zoneCandles.map((candle) => candle.low)) : null;
-  const zoneHigh = zoneCandles.length > 0 ? Math.max(...zoneCandles.map((candle) => candle.high)) : null;
-
-  const retestIndices =
-    zoneLow != null && zoneHigh != null
-      ? candles
+  const projectedDayRetestIndices =
+    projectedDayZone
+      ? dayCandles
           .map((candle, index) => ({ candle, index }))
           .filter(({ candle, index }) => {
-            if (index <= zoneEndIndex) return false;
-            const touchesUpper = candle.low <= zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
-            const holdsLower = candle.high >= zoneLow * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
+            if (index < projectedDayZone.startIndex) return false;
+            const touchesUpper =
+              candle.low <= projectedDayZone.high * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
+            const holdsLower =
+              candle.high >= projectedDayZone.low * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct);
             return touchesUpper && holdsLower;
           })
           .map(({ index }) => index)
       : [];
-  const latestRetestIndex = retestIndices.length > 0 ? retestIndices[retestIndices.length - 1] : -1;
 
-  const inZone =
-    zoneLow != null && zoneHigh != null
-      ? close >= zoneLow * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct) &&
-        close <= zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct)
+  const projectedDayRetestIndex =
+    projectedDayRetestIndices.length > 0 ? projectedDayRetestIndices[projectedDayRetestIndices.length - 1] : -1;
+  const projectedDayInZone =
+    projectedDayZone != null
+      ? dayDetection.close >= projectedDayZone.low * (1 - WANG_STRATEGY_CONSTANTS.inZoneTolerancePct) &&
+        dayDetection.close <= projectedDayZone.high * (1 + WANG_STRATEGY_CONSTANTS.inZoneTolerancePct)
       : false;
-  const brokeZone =
-    zoneLow != null ? close < zoneLow * (1 - WANG_STRATEGY_CONSTANTS.breakZoneTolerancePct) : false;
-  const farAboveZone =
-    zoneHigh != null ? close > zoneHigh * (1 + WANG_STRATEGY_CONSTANTS.overheatFromZonePct) : false;
-  const latestRetestActive =
-    latestRetestIndex >= 0 && candles.length - 1 - latestRetestIndex <= WANG_STRATEGY_CONSTANTS.activeRetestLookbackBars;
-  const ma20DistancePct = percentDiff(close, ma20);
+  const projectedDayBrokeZone =
+    projectedDayZone != null
+      ? dayDetection.close < projectedDayZone.low * (1 - WANG_STRATEGY_CONSTANTS.breakZoneTolerancePct)
+      : false;
 
-  let currentPhase: WangStrategyPhase = "NONE";
-  if (latestRetestIndex >= 0 && (inZone || latestRetestActive)) currentPhase = "REACCUMULATION";
-  else if (minIndex >= 0) currentPhase = "MIN_VOLUME";
-  else if (latestElasticIndex >= 0) currentPhase = "ELASTIC_VOLUME";
-  else if (latestRisingIndex >= 0) currentPhase = "RISING_VOLUME";
-  else if (latestBaseIndex >= 0) currentPhase = "BASE_VOLUME";
-  else if (lifeIndex >= 0) currentPhase = "LIFE_VOLUME";
+  const currentPhase = phaseSource.currentPhase;
 
-  let interpretation: WangStrategyInterpretation = "WATCH";
-  if (brokeZone || weekAnalysis?.regime === "DOWN" || monthAnalysis?.regime === "DOWN") {
-    interpretation = "CAUTION";
-  } else if (
-    farAboveZone ||
-    (ma20DistancePct != null && ma20DistancePct >= WANG_STRATEGY_CONSTANTS.overheatFromMa20Pct * 100)
-  ) {
-    interpretation = "OVERHEAT";
-  } else if (
-    zoneLow != null &&
-    zoneHigh != null &&
-    belowMa20 &&
-    (inZone || currentPhase === "MIN_VOLUME" || currentPhase === "REACCUMULATION")
-  ) {
-    interpretation = "ACCUMULATE";
-  }
+  const dailyRebaseIndices = dayDetection.baseIndices
+    .filter((index) => {
+      const candle = dayDetection.candles[index];
+      const afterZoneStart = projectedDayZone == null || index >= projectedDayZone.startIndex;
+      const volumeOk =
+        candle.volume >= dayDetection.referenceVolume * WANG_STRATEGY_CONSTANTS.dailyRebaseMinRatio;
+      const zoneBiasOk =
+        projectedDayZone == null ||
+        candle.close >= projectedDayZone.low * WANG_STRATEGY_CONSTANTS.dailyRebaseCloseBias;
+      return afterZoneStart && volumeOk && zoneBiasOk;
+    })
+    .slice(-WANG_STRATEGY_CONSTANTS.dayRebaseMarkerLimit);
+
+  const weeklyPhaseContext = buildWeeklyPhaseContext(phaseSource);
+  const dailyExecutionContext = buildDailyExecutionContext({
+    dayDetection,
+    weeklyPhase: weeklyPhaseContext,
+    projectedDayZone,
+    projectedDayInZone,
+    projectedDayRetestIndex,
+    projectedDayBrokeZone,
+    dailyRebaseIndices,
+  });
+
+  const interpretation = mapExecutionToInterpretation(dailyExecutionContext.state);
 
   const checklist: Array<WangStrategyChecklistItem & { weight: number }> = [
     {
-      id: "life-volume",
-      label: "인생거래량 기준봉 식별",
-      ok: lifeIndex >= 0,
-      detail: "최대 거래량을 기준점으로 고정해 이후 모든 거래량 해석의 출발점으로 사용합니다.",
+      id: "week-life-volume",
+      label: "주봉 인생거래량 기준 확보",
+      ok: weeklyPhaseContext.anchorTime != null,
+      detail: "최대 거래량을 기준점으로 잡고 이후 기준거래량과 평균거래량을 비교합니다.",
       group: "structure",
-      weight: 8,
+      weight: 10,
     },
     {
-      id: "base-volume",
-      label: "기준거래량 반복 확인",
-      ok: baseIndices.length > 0,
-      detail: `기준거래량은 최대거래량 대비 약 ${Math.round(WANG_STRATEGY_CONSTANTS.referenceVolumeLower * 100)}~${Math.round(
-        WANG_STRATEGY_CONSTANTS.referenceVolumeUpper * 100,
-      )}% 구간을 넘는 봉으로 판정합니다.`,
+      id: "week-base-repeat",
+      label: "주봉 기준거래량 반복 확인",
+      ok: weeklyPhaseContext.baseRepeatCount > 0,
+      detail: "기준거래량은 한 번보다 반복 출현이 더 중요합니다.",
       group: "structure",
       weight: 14,
     },
     {
-      id: "rising-volume",
-      label: "상승거래량 출현",
-      ok: risingIndices.length > 0,
-      detail: "기준거래량 이후 가격과 거래량이 같이 한 단계 위로 올라가는지 확인합니다.",
-      group: "structure",
-      weight: 12,
-    },
-    {
-      id: "elastic-volume",
-      label: "탄력거래량 확장",
-      ok: elasticIndices.length > 0,
-      detail: "몸통과 상승폭이 함께 커지는 탄력 봉이 나와야 심리 전환이 분명해집니다.",
+      id: "week-rising",
+      label: "주봉 상승거래량 출현",
+      ok: weeklyPhaseContext.risingCount > 0,
+      detail: "기준거래량 이후 실제로 위쪽으로 실리는 상승거래량이 확인돼야 합니다.",
       group: "structure",
       weight: 10,
     },
     {
-      id: "min-volume",
-      label: "최소거래량 확인",
-      ok: minIndex >= 0,
-      detail: "가장 싼 확률이 높은 자리인지 보려면 탄력 이후 거래량이 극단적으로 줄어드는 지점이 필요합니다.",
-      group: "timing",
-      weight: 18,
+      id: "week-elastic",
+      label: "주봉 탄력거래량 확인",
+      ok: weeklyPhaseContext.elasticCount > 0,
+      detail: "상승거래량 이후 몸통 탄력까지 붙어야 minimum 해석이 자연스럽습니다.",
+      group: "structure",
+      weight: 10,
     },
     {
-      id: "zone-built",
-      label: "최소거래량 이후 zone 형성",
-      ok: zoneLow != null && zoneHigh != null,
-      detail: "최소거래량 직후 캔들의 고저를 모아 실제 분할 적립 구간을 만듭니다.",
-      group: "timing",
+      id: "week-min",
+      label: "주봉 최소거래량 확인",
+      ok: weeklyPhaseContext.hasMinVolume,
+      detail: "가장 쌀 확률이 높은 자리 후보로 보는 minimum이 주봉에서 먼저 잡혀야 합니다.",
+      group: "structure",
+      weight: 16,
+    },
+    {
+      id: "week-zone",
+      label: "주봉 minimum 이후 zone 형성",
+      ok: dailyExecutionContext.hasProjectedZone,
+      detail: "최소거래량 다음 캔들 고저로 만든 zone이 있어야 일봉 실행 판단이 가능합니다.",
+      group: "structure",
       weight: 12,
     },
     {
-      id: "retest",
-      label: "zone 재접근 또는 재확인",
-      ok: latestRetestIndex >= 0 || inZone,
-      detail: "최소거래량 zone을 다시 확인해야 실제 재적립 단계로 읽을 수 있습니다.",
-      group: "timing",
+      id: "day-below-ma20",
+      label: "일봉 20일선 아래 적립 후보",
+      ok: dailyExecutionContext.belowMa20,
+      detail: "20일선 아래에서 zone을 확인하는 구간은 추격보다 적립 설명이 쉬워집니다.",
+      group: "execution",
       weight: 10,
     },
     {
-      id: "below-ma20",
-      label: "20일선 이하 적립 후보",
-      ok: belowMa20,
-      detail: "20일선 아래에서 zone이 겹치면 추격보다 적립 시나리오가 유리합니다.",
-      group: "timing",
+      id: "day-in-zone",
+      label: "일봉이 주봉 zone 안에 있음",
+      ok: dailyExecutionContext.inProjectedZone,
+      detail: "일봉은 주봉 zone을 실제 실행 위치로 재해석하는 역할입니다.",
+      group: "execution",
       weight: 10,
     },
     {
-      id: "week-context",
-      label: "주봉 하락 정렬 아님",
-      ok: weekAnalysis == null || weekAnalysis.regime !== "DOWN",
-      detail: "주봉이 하락 정렬이면 일봉 최소거래량 신호도 방어적으로 해석합니다.",
-      group: "risk",
-      weight: 3,
+      id: "day-retest",
+      label: "일봉 재접근 확인",
+      ok: dailyExecutionContext.retestDetected,
+      detail: "zone 재접근이 있어야 관찰 구간에서 실행 구간으로 넘어갑니다.",
+      group: "execution",
+      weight: 10,
+    },
+    {
+      id: "day-rebase",
+      label: "일봉 재기준거래량 확인",
+      ok: dailyExecutionContext.dailyRebaseCount > 0,
+      detail: "재접근 이후 거래량이 다시 붙는지 확인해야 심리 전환을 실행으로 옮길 수 있습니다.",
+      group: "execution",
+      weight: 8,
     },
     {
       id: "month-context",
-      label: "월봉 대세 훼손 아님",
+      label: "월봉 급락 추세 아님",
       ok: monthAnalysis == null || monthAnalysis.regime !== "DOWN",
-      detail: "월봉이 무너지면 일봉 zone만으로는 큰 균형가격을 이기기 어렵습니다.",
+      detail: "월봉이 무너지면 주봉 minimum도 방어적으로 읽어야 합니다.",
       group: "risk",
-      weight: 3,
+      weight: 5,
+    },
+    {
+      id: "zone-not-broken",
+      label: "주봉 zone 하단 이탈 아님",
+      ok: dailyExecutionContext.state !== "AVOID_BREAKDOWN",
+      detail: "zone 하단 이탈은 적립 시나리오 무효화입니다.",
+      group: "risk",
+      weight: 5,
     },
   ];
 
   const score = clamp(
-    checklist.reduce((sum, item) => sum + (item.ok ? item.weight : 0), 0),
+    Math.round(weeklyPhaseContext.score * 0.58 + dailyExecutionContext.score * 0.42),
     0,
     100,
   );
+
   const confidence = clamp(
-    Math.round(
-      score * 0.72 +
-        (interpretation === "ACCUMULATE" ? 12 : 0) +
-        (currentPhase === "REACCUMULATION" ? 8 : 0) -
-        (interpretation === "OVERHEAT" ? 10 : 0) -
-        (interpretation === "CAUTION" ? 20 : 0),
-    ),
+    Math.round(weeklyPhaseContext.confidence * 0.55 + dailyExecutionContext.confidence * 0.45),
     0,
     100,
   );
 
   const reasons: string[] = [];
-  if (lifeIndex >= 0) {
+  if (weeklyPhaseContext.anchorTime) {
     reasons.push(
-      `${candles[lifeIndex].time} 인생거래량을 기준으로 이후 기준거래량 레퍼런스를 ${Math.round(referenceVolume).toLocaleString("ko-KR")}으로 설정했습니다.`,
+      `${weeklyPhaseContext.anchorTime} 주봉 최대거래량을 기준으로 기준거래량 참조값 ${weeklyPhaseContext.referenceVolume.toLocaleString("ko-KR")}을 계산했습니다.`,
     );
-  }
-  if (baseIndices.length > 0) {
-    reasons.push(`기준거래량은 총 ${baseIndices.length}회 감지되어 반복 패턴 가능성을 남겼습니다.`);
   } else {
-    reasons.push("기준거래량 반복이 아직 충분하지 않아 교육형 관점에서는 관찰 우선입니다.");
+    reasons.push("주봉 데이터가 약하면 일봉 해석도 교육형 보조 시나리오에 머뭅니다.");
   }
-  if (minIndex >= 0 && zoneLow != null && zoneHigh != null) {
+  reasons.push(`주봉 phase는 ${weeklyPhaseContext.headline}로, 반복 기준거래량 ${weeklyPhaseContext.baseRepeatCount}회가 반영됐습니다.`);
+  if (dailyExecutionContext.hasProjectedZone && projectedDayZone != null) {
     reasons.push(
-      `최소거래량 이후 zone을 ${Math.round(zoneLow).toLocaleString("ko-KR")}~${Math.round(zoneHigh).toLocaleString("ko-KR")}으로 형성했습니다.`,
+      `일봉 실행 zone은 ${Math.round(projectedDayZone.low).toLocaleString("ko-KR")}~${Math.round(projectedDayZone.high).toLocaleString("ko-KR")}입니다.`,
     );
   }
-  if (belowMa20 && zoneLow != null) {
-    reasons.push("현재가가 20일선 아래에 있어 추격보다 분할 적립 후보 해석이 가능합니다.");
-  } else if (ma20 != null) {
-    reasons.push("현재가는 20일선 위에 있어 zone 재접근 없이 공격적으로 보기에는 부담이 있습니다.");
+  reasons.push(dailyExecutionContext.action);
+  if (dailyExecutionContext.dailyRebaseCount > 0) {
+    reasons.push(`일봉 재기준거래량이 ${dailyExecutionContext.dailyRebaseCount}회 확인돼 실행 해석을 보강합니다.`);
   }
-  if (weekAnalysis?.regime === "DOWN" || monthAnalysis?.regime === "DOWN") {
-    reasons.push("상위 타임프레임이 하락 정렬이어서 일봉 신호 단독 확정으로 보지 않습니다.");
-  }
-  if (farAboveZone) {
-    reasons.push("현재가가 zone 상단에서 너무 멀어져 실전 매수보다 교육용 관찰 구간에 가깝습니다.");
+  if (monthAnalysis?.regime === "DOWN") {
+    reasons.push("월봉이 하락 정렬이라도 이번 버전에서는 교육형 보수 해석으로만 반영합니다.");
   }
 
   const riskNotes: WangStrategyRiskNote[] = [];
-  if (zoneLow == null || zoneHigh == null) {
+  if (!weeklyPhaseContext.hasMinVolume) {
     riskNotes.push({
-      id: "no-zone",
-      title: "최소거래량 zone 미완성",
-      detail: "최소거래량 이후 캔들이 충분하지 않거나 구조가 좁혀지지 않아 적립 구간 확정이 이릅니다.",
+      id: "risk-no-minimum",
+      title: "주봉 minimum 미확인",
+      detail: "주봉 minimum이 없으면 아직은 구조 설명 단계지 실행 단계로 보기 어렵습니다.",
       severity: "warning",
     });
   }
-  if (brokeZone && zoneLow != null) {
+  if (!dailyExecutionContext.hasProjectedZone) {
     riskNotes.push({
-      id: "zone-break",
-      title: "zone 하단 이탈",
-      detail: `현재가가 zone 하단 ${Math.round(zoneLow).toLocaleString("ko-KR")} 아래로 밀리면 최소거래량 해석이 약해집니다.`,
+      id: "risk-no-zone",
+      title: "주봉 zone 미완성",
+      detail: "minimum 이후 zone이 아직 약하면 적립 구간 설명은 가능해도 확정 위치로 보기 어렵습니다.",
+      severity: "warning",
+    });
+  }
+  if (dailyExecutionContext.state === "AVOID_BREAKDOWN" && projectedDayZone != null) {
+    riskNotes.push({
+      id: "risk-zone-break",
+      title: "주봉 zone 하단 이탈",
+      detail: `일봉 종가가 zone 하단 ${Math.round(projectedDayZone.low).toLocaleString("ko-KR")} 아래로 밀리면 1차 적립 가설은 약해집니다.`,
       severity: "danger",
     });
   }
-  if (interpretation === "OVERHEAT" && zoneHigh != null) {
+  if (dailyExecutionContext.state === "AVOID_OVERHEAT") {
     riskNotes.push({
-      id: "overheat",
+      id: "risk-overheat",
       title: "zone 대비 과열",
-      detail: `현재가가 zone 상단 ${Math.round(zoneHigh).toLocaleString("ko-KR")} 대비 많이 올라 추격 리스크가 큽니다.`,
+      detail: "zone에서 너무 멀어져 추격보다 다음 균형가격을 기다리는 편이 낫습니다.",
       severity: "warning",
     });
   }
-  if (monthAnalysis?.regime === "DOWN") {
+  if (!dayDetection.belowMa20) {
     riskNotes.push({
-      id: "month-down",
-      title: "월봉 대세 역풍",
-      detail: "월봉이 하락 정렬이면 일봉 minimum zone 신호도 짧게만 유효할 수 있습니다.",
+      id: "risk-ma20-above",
+      title: "20일선 위 실행",
+      detail: "20일선 위에서는 적립보다 관찰과 zone 재접근 확인이 먼저입니다.",
+      severity: "info",
+    });
+  }
+  if (weekAnalysis?.regime === "DOWN" || monthAnalysis?.regime === "DOWN") {
+    riskNotes.push({
+      id: "risk-topdown",
+      title: "상위 타임프레임 역풍",
+      detail: "월봉 또는 주봉 추세가 약하면 일봉 실행 신호도 보수적으로 취급해야 합니다.",
       severity: "warning",
     });
   }
   if (riskNotes.length === 0) {
     riskNotes.push({
-      id: "confirmation",
-      title: "확정 대신 조건부",
-      detail: "이 화면은 설명 가능한 룰 기반 해석입니다. 다음 캔들의 거래량과 zone 방어 여부가 확정 조건입니다.",
+      id: "risk-open",
+      title: "룰 기반 2차 해석",
+      detail: "phase, zone, MA20, 재기준거래량까지 실제 로직에 연결했지만 분봉 실행과 백테스트는 아직 다음 단계입니다.",
       severity: "info",
     });
   }
 
   const tradeZones: WangStrategyTradeZone[] = [];
-  const zoneOverlays: WangStrategyZoneOverlay[] = [];
-  const refLevels: WangStrategyRefLevel[] = [];
-  const markers: WangStrategyMarker[] = [];
+  if (mainZoneSource && mainZoneSource.zoneLow != null && mainZoneSource.zoneHigh != null) {
+    const active = dailyExecutionContext.inProjectedZone || dailyExecutionContext.retestDetected;
 
-  if (lifeIndex >= 0) {
-    refLevels.push(buildRefLevel(candles, lifeIndex, candles[lifeIndex].close, "life.ref", "#f97316", "dashed"));
-    markers.push(
-      buildMarker(
-        candles,
-        lifeIndex,
-        "VOL_LIFE",
-        "인생거래량",
-        "최대 거래량 기준봉",
-        96,
-        "aboveBar",
-        "square",
-        "#f97316",
+    tradeZones.push(
+      buildTradeZone(
+        mainZoneSource.tf,
+        mainZoneSource.candles,
+        mainZoneSource.zoneStartIndex,
+        mainZoneSource.zoneEndIndex,
+        mainZoneSource.zoneLow,
+        mainZoneSource.zoneHigh,
+        active,
+        dayDetection.belowMa20,
       ),
     );
   }
 
-  baseIndices.forEach((index, order) => {
-    refLevels.push(buildRefLevel(candles, index, candles[index].close, `base.ref.${order + 1}`, "#57a3ff", "solid"));
-    markers.push(
+  const weekMarkers: WangStrategyMarker[] = [];
+  const weekRefLevels: WangStrategyRefLevel[] = [];
+  const weekZones: WangStrategyZoneOverlay[] = [];
+
+  if (weekDetection) {
+    if (weekDetection.lifeIndex >= 0) {
+      weekMarkers.push(
+        buildMarker("week", weekDetection.candles, weekDetection.lifeIndex, "VOL_LIFE", "인생거래량", "주봉 최대 거래량 기준점", 96, "aboveBar", "square", "#f97316"),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, weekDetection.lifeIndex, weekDetection.candles[weekDetection.lifeIndex].close, "life.ref", "#f97316", "dashed"),
+      );
+    }
+
+    weekDetection.baseIndices.forEach((index, order) => {
+      weekMarkers.push(
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          index,
+          "VOL_BASE",
+          `기준거래량 ${order + 1}`,
+          "주봉 반복 기준거래량 후보",
+          clamp(Math.round((weekDetection.candles[index].volume / weekDetection.referenceVolume) * 35), 40, 90),
+          "aboveBar",
+          "circle",
+          "#57a3ff",
+        ),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, index, weekDetection.candles[index].close, `base.ref.${order + 1}`, "#57a3ff", "solid"),
+      );
+    });
+
+    weekDetection.risingIndices.forEach((index) => {
+      weekMarkers.push(
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          index,
+          "VOL_RISE",
+          "상승거래량",
+          "주봉 상승거래량으로 해석되는 구간",
+          clamp(Math.round((weekDetection.candles[index].volume / weekDetection.referenceVolume) * 30), 45, 92),
+          "aboveBar",
+          "arrowUp",
+          "#00b386",
+        ),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, index, weekDetection.candles[index].close, "rise.ref", "#00b386", "solid"),
+      );
+    });
+
+    weekDetection.elasticIndices.forEach((index) => {
+      weekMarkers.push(
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          index,
+          "VOL_ELASTIC",
+          "탄력거래량",
+          "주봉 탄력이 붙는 확장 구간",
+          clamp(Math.round(bodyRatio(weekDetection.candles[index]) * 100), 55, 98),
+          "aboveBar",
+          "square",
+          "#facc15",
+        ),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, index, weekDetection.candles[index].high, "elastic.ref", "#facc15", "solid"),
+      );
+    });
+
+    if (weekDetection.minIndex >= 0) {
+      weekMarkers.push(
+        buildMarker("week", weekDetection.candles, weekDetection.minIndex, "VOL_MIN", "최소거래량", "주봉 최소거래량 후보", 95, "belowBar", "circle", "#22d3ee"),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, weekDetection.minIndex, weekDetection.candles[weekDetection.minIndex].low, "min.ref", "#22d3ee", "dashed"),
+      );
+    }
+
+    if (weekDetection.zoneLow != null && weekDetection.zoneHigh != null) {
+      weekZones.push(
+        buildZoneOverlay(
+          "week",
+          "주봉 zone",
+          "week",
+          weekDetection.zoneLow,
+          weekDetection.zoneHigh,
+          weekDetection.candles[weekDetection.zoneStartIndex].time,
+          weekDetection.candles[weekDetection.zoneEndIndex].time,
+          dayDetection.belowMa20 ? "rgba(0, 179, 134, 0.20)" : "rgba(87, 163, 255, 0.18)",
+          dayDetection.belowMa20 ? "accumulation" : "warning",
+        ),
+      );
+      weekMarkers.push({
+        id: `wang-week-zone-${weekDetection.candles[weekDetection.zoneEndIndex].time}`,
+        tf: "week",
+        t: weekDetection.candles[weekDetection.zoneEndIndex].time,
+        type: "VOL_ZONE",
+        label: "week.zone",
+        desc: "주봉 최소거래량 이후 형성된 핵심 zone",
+        price: toRoundedNumber((weekDetection.zoneLow + weekDetection.zoneHigh) / 2),
+        volume: 0,
+        strength: weekDetection.inZone || isRecentRetest(weekDetection.candles, weekDetection.latestRetestIndex) ? 92 : 74,
+        position: "belowBar",
+        shape: "square",
+        color: dayDetection.belowMa20 ? "#00b386" : "#57a3ff",
+      });
+    }
+
+    if (weekDetection.latestRetestIndex >= 0) {
+      weekMarkers.push(
+        buildMarker("week", weekDetection.candles, weekDetection.latestRetestIndex, "VOL_RETEST", "주봉 재접근", "주봉 zone 재확인 구간", 88, "belowBar", "arrowUp", "#00d2d3"),
+      );
+      weekRefLevels.push(
+        buildRefLevel("week", weekDetection.candles, weekDetection.latestRetestIndex, weekDetection.candles[weekDetection.latestRetestIndex].close, "retest.ref", "#00d2d3", "dashed"),
+      );
+    }
+  }
+
+  const dayMarkers: WangStrategyMarker[] = [];
+  const dayRefLevels: WangStrategyRefLevel[] = [];
+  const dayZones: WangStrategyZoneOverlay[] = [];
+
+  dailyRebaseIndices.forEach((index, order) => {
+    dayMarkers.push(
       buildMarker(
-        candles,
+        "day",
+        dayDetection.candles,
         index,
         "VOL_BASE",
-        `기준거래량 ${order + 1}`,
-        "반복 가능한 기준거래량 후보",
-        clamp(Math.round((candles[index].volume / referenceVolume) * 35), 40, 90),
+        `일봉 재기준 ${order + 1}`,
+        "일봉에서 다시 기준거래량이 붙는 구간",
+        clamp(Math.round((dayDetection.candles[index].volume / Math.max(dayDetection.referenceVolume, 1)) * 35), 35, 86),
         "aboveBar",
         "circle",
-        "#57a3ff",
+        "#93c5fd",
       ),
+    );
+    dayRefLevels.push(
+      buildRefLevel("day", dayDetection.candles, index, dayDetection.candles[index].close, `day.base.${order + 1}`, "#93c5fd", "solid"),
     );
   });
 
-  risingIndices.forEach((index) => {
-    refLevels.push(buildRefLevel(candles, index, candles[index].close, "rise.ref", "#00b386", "solid"));
-    markers.push(
-      buildMarker(
-        candles,
-        index,
-        "VOL_RISE",
-        "상승거래량",
-        "기준거래량 이후 가격과 거래량이 같이 상승",
-        clamp(Math.round((candles[index].volume / referenceVolume) * 30), 45, 92),
-        "aboveBar",
-        "arrowUp",
-        "#00b386",
-      ),
+  if (dayDetection.minIndex >= 0) {
+    dayMarkers.push(
+      buildMarker("day", dayDetection.candles, dayDetection.minIndex, "VOL_MIN", "일봉 최소거래량", "일봉 미세 조정 최소거래량 후보", 82, "belowBar", "circle", "#67e8f9"),
     );
-  });
-
-  elasticIndices.forEach((index) => {
-    refLevels.push(buildRefLevel(candles, index, candles[index].high, "elastic.ref", "#facc15", "solid"));
-    markers.push(
-      buildMarker(
-        candles,
-        index,
-        "VOL_ELASTIC",
-        "탄력거래량",
-        "심리 전환이 빨라지는 탄력 봉",
-        clamp(Math.round(bodyRatio(candles[index]) * 100), 55, 98),
-        "aboveBar",
-        "square",
-        "#facc15",
-      ),
-    );
-  });
-
-  if (minIndex >= 0) {
-    refLevels.push(buildRefLevel(candles, minIndex, candles[minIndex].low, "min.ref", "#22d3ee", "dashed"));
-    markers.push(
-      buildMarker(
-        candles,
-        minIndex,
-        "VOL_MIN",
-        "최소거래량",
-        "가장 쌀 확률이 높은 후보 봉",
-        95,
-        "belowBar",
-        "circle",
-        "#22d3ee",
-      ),
+    dayRefLevels.push(
+      buildRefLevel("day", dayDetection.candles, dayDetection.minIndex, dayDetection.candles[dayDetection.minIndex].low, "day.min.ref", "#67e8f9", "dashed"),
     );
   }
 
-  if (zoneLow != null && zoneHigh != null && zoneStartIndex >= 0 && zoneEndIndex >= 0) {
-    const tradeZone = buildWangTradeZone(candles, zoneStartIndex, zoneEndIndex, zoneLow, zoneHigh, belowMa20);
-    tradeZone.active = inZone || latestRetestActive;
-    tradeZones.push(tradeZone);
-    zoneOverlays.push({
-      id: tradeZone.id,
-      label: tradeZone.label,
-      low: tradeZone.low,
-      high: tradeZone.high,
-      startTime: tradeZone.startTime,
-      endTime: tradeZone.endTime,
-      color: belowMa20 ? "rgba(0, 179, 134, 0.24)" : "rgba(87, 163, 255, 0.2)",
-      kind: belowMa20 ? "accumulation" : "warning",
-    });
-    markers.push({
-      id: `wang-marker-zone-${tradeZone.startTime}`,
-      t: tradeZone.endTime,
+  if (projectedDayZone != null) {
+    const startTime = dayCandles[projectedDayZone.startIndex].time;
+    const endTime = dayCandles[projectedDayZone.endIndex].time;
+    dayZones.push(
+      buildZoneOverlay(
+        "day",
+        "주봉 zone 투영",
+        mainZoneSource?.tf ?? "week",
+        projectedDayZone.low,
+        projectedDayZone.high,
+        startTime,
+        endTime,
+        "rgba(0, 179, 134, 0.16)",
+        "projection",
+      ),
+    );
+    dayRefLevels.push(
+      buildStaticRefLevel("day", startTime, endTime, projectedDayZone.high, "week.zone.high", "#34d399", "solid"),
+    );
+    dayRefLevels.push(
+      buildStaticRefLevel("day", startTime, endTime, projectedDayZone.low, "week.zone.low", "#2dd4bf", "dashed"),
+    );
+    dayMarkers.push({
+      id: `wang-day-zone-${endTime}`,
+      tf: "day",
+      t: endTime,
       type: "VOL_ZONE",
       label: "zone",
-      desc: "최소거래량 이후 형성된 적립 zone",
-      price: toRoundedNumber((tradeZone.low + tradeZone.high) / 2),
-      volume: 0,
-      strength: tradeZone.active ? 92 : 70,
+      desc: "주봉 zone을 일봉 상세 차트에 투영한 구간",
+      price: toRoundedNumber((projectedDayZone.low + projectedDayZone.high) / 2),
+      volume: Math.round(dayCandles[dayCandles.length - 1]?.volume ?? 0),
+      strength: projectedDayInZone ? 92 : 74,
       position: "belowBar",
       shape: "square",
-      color: belowMa20 ? "#00b386" : "#57a3ff",
+      color: "#34d399",
     });
-  }
-
-  if (latestRetestIndex >= 0) {
-    markers.push(
-      buildMarker(
-        candles,
-        latestRetestIndex,
-        "VOL_RETEST",
-        "재접근",
-        "zone 재확인 봉",
-        88,
-        "belowBar",
-        "arrowUp",
-        "#00d2d3",
+  } else if (dayDetection.zoneLow != null && dayDetection.zoneHigh != null) {
+    dayZones.push(
+      buildZoneOverlay(
+        "day",
+        "일봉 zone",
+        "day",
+        dayDetection.zoneLow,
+        dayDetection.zoneHigh,
+        dayDetection.candles[dayDetection.zoneStartIndex].time,
+        dayDetection.candles[dayDetection.zoneEndIndex].time,
+        "rgba(87, 163, 255, 0.18)",
+        "warning",
       ),
     );
-    refLevels.push(buildRefLevel(candles, latestRetestIndex, candles[latestRetestIndex].close, "retest.ref", "#00d2d3", "dashed"));
   }
+
+  if (projectedDayRetestIndex >= 0) {
+    dayMarkers.push(
+      buildMarker("day", dayDetection.candles, projectedDayRetestIndex, "VOL_RETEST", "일봉 재접근", "주봉 zone 재접근 확인", 90, "belowBar", "arrowUp", "#00d2d3"),
+    );
+    dayRefLevels.push(
+      buildRefLevel("day", dayDetection.candles, projectedDayRetestIndex, dayDetection.candles[projectedDayRetestIndex].close, "day.retest.ref", "#00d2d3", "dashed"),
+    );
+  } else if (dayDetection.latestRetestIndex >= 0) {
+    dayMarkers.push(
+      buildMarker("day", dayDetection.candles, dayDetection.latestRetestIndex, "VOL_RETEST", "일봉 zone 확인", "일봉 자체 zone 재확인", 78, "belowBar", "arrowUp", "#38bdf8"),
+    );
+  }
+
+  const weekMarkersSorted = sortMarkers(weekMarkers);
+  const dayMarkersSorted = sortMarkers(dayMarkers);
+
+  const weekHighlightTime =
+    weekMarkersSorted.find((item) => item.type === "VOL_RETEST")?.t ??
+    weekMarkersSorted.find((item) => item.type === "VOL_MIN")?.t ??
+    weekMarkersSorted[weekMarkersSorted.length - 1]?.t ??
+    null;
+  const dayHighlightTime =
+    dayMarkersSorted.find((item) => item.type === "VOL_RETEST")?.t ??
+    dayMarkersSorted.find((item) => item.type === "VOL_BASE")?.t ??
+    dayMarkersSorted[dayMarkersSorted.length - 1]?.t ??
+    dayCandles[dayCandles.length - 1]?.time ??
+    null;
 
   const phases: WangStrategyPhaseItem[] = [
     buildPhaseItem(
       "LIFE_VOLUME",
       currentPhase,
-      lifeIndex >= 0
-        ? [
-            buildOccurrence(
-              candles,
-              lifeIndex,
-              "최대 거래량이 기준점으로 확정되었습니다.",
-              96,
-            ),
-          ]
+      phaseSource.lifeIndex >= 0
+        ? [buildOccurrence(phaseSource.candles, phaseSource.lifeIndex, "최대 거래량을 기준점으로 잡은 시작 단계입니다.", 96)]
         : [],
-      lifeIndex >= 0
-        ? "인생거래량이 먼저 확인되어 이후 기준거래량을 비교할 절대 기준이 생겼습니다."
-        : "아직 최대 거래량 기준점이 뚜렷하지 않습니다.",
-      "다음 단계는 최대거래량의 10~12% 수준을 반복해서 넘는 기준거래량이 나오는지 확인하는 것입니다.",
+      phaseSource.lifeIndex >= 0
+        ? "인생거래량이 확인돼 이후 기준거래량과 평균거래량 비교의 축이 생겼습니다."
+        : "인생거래량 기준이 아직 약하면 나머지 단계 해석도 임시값에 가깝습니다.",
+      "다음 단계는 최대거래량의 약 10~12% 수준에서 반복되는 기준거래량을 찾는 것입니다.",
     ),
     buildPhaseItem(
       "BASE_VOLUME",
       currentPhase,
-      baseIndices.map((index) =>
+      phaseSource.baseIndices.map((index) =>
         buildOccurrence(
-          candles,
+          phaseSource.candles,
           index,
-          "기준거래량은 여러 번 나올 수 있으므로 반복 횟수 자체를 중요하게 봅니다.",
-          clamp(Math.round((candles[index].volume / referenceVolume) * 35), 40, 90),
+          "기준거래량은 여러 번 반복될 수 있으므로 출현 횟수 자체도 중요한 힌트입니다.",
+          clamp(Math.round((phaseSource.candles[index].volume / Math.max(phaseSource.referenceVolume, 1)) * 35), 40, 90),
         ),
       ),
-      baseIndices.length > 0
-        ? `기준거래량이 ${baseIndices.length}회 확인되어 반복 패턴과 균형가격 추정이 가능해졌습니다.`
-        : "기준거래량이 아직 부족해 현재 구간을 구조적으로 읽기 어렵습니다.",
-      "다음 단계는 기준거래량 이후 가격이 한 단계 위에서 유지되며 상승거래량으로 이어지는지 보는 것입니다.",
+      phaseSource.baseIndices.length > 0
+        ? `기준거래량이 ${phaseSource.baseIndices.length}회 관찰돼 균형가격과 반복 패턴을 읽을 수 있습니다.`
+        : "기준거래량 반복이 아직 약해 구조 설명은 가능하지만 확정감은 낮습니다.",
+      "다음 단계는 기준거래량 이후 실제로 가격과 거래량이 함께 상승하는지 확인하는 것입니다.",
     ),
     buildPhaseItem(
       "RISING_VOLUME",
       currentPhase,
-      risingIndices.map((index) =>
+      phaseSource.risingIndices.map((index) =>
         buildOccurrence(
-          candles,
+          phaseSource.candles,
           index,
-          "기준거래량 위에서 실제 상승 에너지가 붙은 구간입니다.",
-          clamp(Math.round((candles[index].volume / referenceVolume) * 30), 45, 92),
+          "기준거래량 이후 상승거래량이 이어지며 위로 실린 구간입니다.",
+          clamp(Math.round((phaseSource.candles[index].volume / Math.max(phaseSource.referenceVolume, 1)) * 30), 45, 92),
         ),
       ),
-      risingIndices.length > 0
-        ? "상승거래량이 확인되어 단순 기준봉이 아니라 실제 추진 구간으로 넘어갔습니다."
-        : "기준거래량은 보였지만 상승거래량 연결이 약해 아직 관찰 위주입니다.",
-      "다음 단계는 몸통과 상승폭이 함께 커지는 탄력거래량이 나오는지 확인하는 것입니다.",
+      phaseSource.risingIndices.length > 0
+        ? "상승거래량이 나와 단순한 균형이 아니라 위쪽으로 쏠리는 심리 전환이 관찰됩니다."
+        : "기준거래량은 있지만 아직 상승거래량 확장이 약해 관찰 비중이 더 큽니다.",
+      "다음 단계는 거래량이 더 강해지면서 몸통 탄력이 붙는 탄력거래량입니다.",
     ),
     buildPhaseItem(
       "ELASTIC_VOLUME",
       currentPhase,
-      elasticIndices.map((index) =>
+      phaseSource.elasticIndices.map((index) =>
         buildOccurrence(
-          candles,
+          phaseSource.candles,
           index,
-          "심리 전환이 급격히 드러나는 탄력 구간입니다.",
-          clamp(Math.round(bodyRatio(candles[index]) * 100), 55, 98),
+          "거래량과 몸통이 함께 커지며 탄력이 붙는 구간입니다.",
+          clamp(Math.round(bodyRatio(phaseSource.candles[index]) * 100), 55, 98),
         ),
       ),
-      elasticIndices.length > 0
-        ? "탄력거래량이 나타나 심리 전환이 분명해졌습니다."
-        : "탄력거래량이 없어 아직 에너지 확장이 충분히 확인되지 않았습니다.",
-      "다음 단계는 거래량이 급감하는 최소거래량 구간이 나오는지, 즉 가장 싼 확률의 자리로 눌리는지 보는 것입니다.",
+      phaseSource.elasticIndices.length > 0
+        ? "탄력거래량이 확인돼 심리가 쏠린 뒤 다시 눌리는 구간을 기다릴 근거가 생겼습니다."
+        : "탄력 확장이 충분하지 않으면 minimum 구간 해석도 이른 판단일 수 있습니다.",
+      "다음 단계는 거래량이 급감하는 최소거래량 구간과 그 이후 zone 형성 여부입니다.",
     ),
     buildPhaseItem(
       "MIN_VOLUME",
       currentPhase,
-      minIndex >= 0
-        ? [
-            buildOccurrence(
-              candles,
-              minIndex,
-              "거래량이 극단적으로 줄며 가격 부담이 내려온 구간입니다.",
-              95,
-            ),
-          ]
+      phaseSource.minIndex >= 0
+        ? [buildOccurrence(phaseSource.candles, phaseSource.minIndex, "가장 쌀 확률이 높은 자리 후보로 해석하는 최소거래량입니다.", 95)]
         : [],
-      minIndex >= 0
-        ? "최소거래량이 확인되어 가장 쌀 확률이 높은 자리 후보가 생겼습니다."
-        : "최소거래량이 아직 보이지 않아 적립 zone을 만들기 이릅니다.",
-      "다음 단계는 최소거래량 직후 캔들의 고저로 zone을 좁히고, 그 zone을 다시 확인하는 것입니다.",
+      phaseSource.minIndex >= 0
+        ? "최소거래량이 확인돼 가장 싼 자리 후보를 설명할 수 있게 됐습니다."
+        : "최소거래량이 없으면 이후 zone 설명이 아직 약합니다.",
+      "다음 단계는 최소거래량 이후 캔들 고저로 zone을 만들고 그 zone을 다시 확인하는 것입니다.",
     ),
     buildPhaseItem(
       "REACCUMULATION",
       currentPhase,
-      latestRetestIndex >= 0
-        ? [
-            buildOccurrence(
-              candles,
-              latestRetestIndex,
-              "최소거래량 이후 zone을 다시 확인하며 재적립 가능성을 높였습니다.",
-              88,
-            ),
-          ]
+      phaseSource.latestRetestIndex >= 0
+        ? [buildOccurrence(phaseSource.candles, phaseSource.latestRetestIndex, "zone을 다시 확인하는 재축적 구간입니다.", 88)]
         : [],
-      latestRetestIndex >= 0
-        ? "zone 재확인이 발생해 실전 적립 후보 해석이 가능해졌습니다."
-        : "재적립 확인이 아직 없어 교육형 관점에서는 확정 대신 조건부 해석입니다.",
-      "다음 단계는 zone 하단을 이탈하지 않는지, 그리고 재차 기준거래량이 붙는지 확인하는 것입니다.",
+      phaseSource.latestRetestIndex >= 0
+        ? "재축적이 확인돼 관찰만 하던 구조를 실전 적립 후보로 옮겨 볼 수 있습니다."
+        : "재축적 확인 전이므로 아직은 설명 가능한 후보 구간으로 보는 편이 안전합니다.",
+      "다음 단계는 zone 하단을 지키면서 거래량이 다시 붙는지 확인하는 것입니다.",
     ),
   ];
 
-  const chartOverlays: WangStrategyChartOverlays = {
-    ma20Series,
-    refLevels,
-    zones: zoneOverlays,
-  };
-
   const summaryHeadline =
     currentPhase === "NONE"
-      ? "왕장군 전략 phase를 아직 확정하기 어렵습니다."
-      : `${PHASE_LABEL[currentPhase as Exclude<WangStrategyPhase, "NONE">]} 단계로 해석됩니다.`;
+      ? "주봉 phase는 아직 약하지만 일봉 실행 후보를 함께 관찰합니다."
+      : `${weeklyPhaseContext.headline} / ${WANG_EXECUTION_STATE_LABEL[dailyExecutionContext.state]}`;
   const posture =
     interpretation === "ACCUMULATE"
-      ? "최소거래량 zone과 20일선 아래 조건이 겹쳐 분할 적립 후보로 봅니다."
+      ? "주봉 구조와 일봉 실행 조건이 겹쳐 분할 적립 후보로 해석할 수 있습니다."
       : interpretation === "OVERHEAT"
-        ? "탄력 이후 과열 구간으로 보고 추격보다 눌림 재형성을 기다립니다."
+        ? "일봉이 zone 대비 과열이라 추격보다 다음 균형가격 재확인이 우선입니다."
         : interpretation === "CAUTION"
-          ? "상위 타임프레임 또는 zone 이탈 위험이 있어 확정보다 경계가 우선입니다."
-          : "다음 단계 조건이 이어지는지 관찰이 우선입니다.";
+          ? "상위 타임프레임 역풍 또는 zone 이탈 리스크가 있어 방어적으로 접근해야 합니다."
+          : "주봉 phase는 읽히지만 일봉 실행 조건은 아직 관찰 단계입니다.";
+
+  const weekChartOverlays: WangStrategyChartOverlays = {
+    movingAverages: [],
+    refLevels: weekRefLevels,
+    zones: weekZones,
+    highlightTime: weekHighlightTime,
+  };
+
+  const dayChartOverlays: WangStrategyChartOverlays = {
+    movingAverages: [
+      {
+        id: "ma20",
+        label: "MA20",
+        color: "#7dd3fc",
+        lineWidth: 2,
+        points: dayDetection.ma20Series,
+      },
+    ],
+    refLevels: dayRefLevels,
+    zones: dayZones,
+    highlightTime: dayHighlightTime,
+  };
 
   return {
     meta: {
@@ -899,10 +1375,10 @@ export const buildWangStrategyPayload = (params: {
       source: "KIS",
       cacheTtlSec,
       tf: "multi",
-      candleCount: candles.length,
-      maxVolume: Math.round(maxVolume),
-      averageVolume: Math.round(averageVolume),
-      referenceVolume: Math.round(referenceVolume),
+      candleCount: dayCandles.length,
+      maxVolume: Math.round(phaseSource.maxVolume),
+      averageVolume: Math.round(phaseSource.averageVolume),
+      referenceVolume: Math.round(phaseSource.referenceVolume),
     },
     summary: {
       phase: currentPhase,
@@ -912,6 +1388,8 @@ export const buildWangStrategyPayload = (params: {
       headline: summaryHeadline,
       posture,
     },
+    weeklyPhaseContext,
+    dailyExecutionContext,
     phases,
     currentPhase,
     confidence,
@@ -921,24 +1399,87 @@ export const buildWangStrategyPayload = (params: {
     riskNotes,
     tradeZones,
     movingAverageContext: {
-      ma20: ma20 != null ? toRoundedNumber(ma20) : null,
-      close: toRoundedNumber(close),
-      belowMa20,
-      distancePct: ma20DistancePct != null ? toRoundedNumber(ma20DistancePct) : null,
-      verdict: belowMa20 ? "20일선 아래 적립 후보" : "20일선 위 관찰 구간",
-      guidance: belowMa20
-        ? "20일선 아래에서 zone이 겹치면 적극적 분할 적립 후보로 봅니다."
-        : "20일선 위에서는 추격보다 zone 재접근 여부를 우선 확인합니다.",
+      ma20: dayDetection.ma20 != null ? toRoundedNumber(dayDetection.ma20) : null,
+      close: toRoundedNumber(dayDetection.close),
+      belowMa20: dayDetection.belowMa20,
+      distancePct: dayDetection.ma20DistancePct != null ? toRoundedNumber(dayDetection.ma20DistancePct) : null,
+      verdict:
+        dailyExecutionContext.state === "READY_ON_RETEST"
+          ? "20일선 아래 재접근 적립 후보"
+          : dayDetection.belowMa20
+            ? "20일선 아래 적립 후보"
+            : "20일선 위 관찰 구간",
+      guidance: dailyExecutionContext.action,
     },
     multiTimeframe: {
       month: toTimeframeSummary(monthAnalysis),
       week: toTimeframeSummary(weekAnalysis),
       day: toTimeframeSummary(dayAnalysis),
     },
-    chartOverlays,
-    markers,
-    trainingNotes: buildTrainingNotes(referenceVolume, maxVolume),
-    candles,
+    candles: {
+      week: weekCandles,
+      day: dayCandles,
+    },
+    chartOverlays: {
+      week: weekChartOverlays,
+      day: dayChartOverlays,
+    },
+    markers: {
+      week: weekMarkersSorted,
+      day: dayMarkersSorted,
+    },
+    trainingNotes: buildTrainingNotes(phaseSource.referenceVolume, phaseSource.maxVolume),
     warnings,
   };
 };
+
+export const summarizeWangStrategyPayload = (
+  payload: WangStrategyPayload,
+): WangStrategyScreeningSummary => {
+  const currentPhase = payload.currentPhase;
+  const actionBias = payload.summary.interpretation;
+  const executionState = payload.dailyExecutionContext.state;
+  const zoneReady =
+    payload.dailyExecutionContext.hasProjectedZone &&
+    executionState !== "AVOID_BREAKDOWN";
+  const ma20DiscountReady = payload.dailyExecutionContext.belowMa20;
+  const dailyRebaseReady = payload.dailyExecutionContext.dailyRebaseCount > 0;
+  const retestReady = payload.dailyExecutionContext.retestDetected;
+  const phaseReady = currentPhase === "MIN_VOLUME" || currentPhase === "REACCUMULATION";
+  const eligible =
+    actionBias === "ACCUMULATE" &&
+    phaseReady &&
+    zoneReady &&
+    (ma20DiscountReady || retestReady || dailyRebaseReady);
+  const label = eligible
+    ? "적립 후보"
+    : currentPhase !== "NONE" && actionBias !== "CAUTION" && actionBias !== "OVERHEAT"
+      ? "관찰 후보"
+      : "비적합";
+  const weeklyPhaseLabel =
+    payload.weeklyPhaseContext.phase === "NONE"
+      ? "주봉 대기"
+      : WANG_PHASE_LABEL[payload.weeklyPhaseContext.phase];
+
+  return {
+    eligible,
+    label,
+    score: payload.score,
+    confidence: payload.confidence,
+    currentPhase,
+    actionBias,
+    executionState,
+    reasons: payload.reasons.slice(0, 3),
+    weekBias: `${weeklyPhaseLabel} · ${payload.weeklyPhaseContext.headline}`,
+    dayBias: `${WANG_EXECUTION_STATE_LABEL[executionState]} · ${payload.dailyExecutionContext.action}`,
+    zoneReady,
+    ma20DiscountReady,
+    dailyRebaseReady,
+    retestReady,
+  };
+};
+
+export const buildWangStrategyScreeningSummary = (
+  params: Parameters<typeof buildWangStrategyPayload>[0],
+): WangStrategyScreeningSummary =>
+  summarizeWangStrategyPayload(buildWangStrategyPayload(params));

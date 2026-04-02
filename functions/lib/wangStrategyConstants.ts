@@ -1,0 +1,60 @@
+import type { WangStrategyExecutionState, WangStrategyPhase } from "./wangTypes";
+
+export const WANG_STRATEGY_CONSTANTS = {
+  referenceVolumeRatio: 0.11,
+  referenceVolumeLower: 0.1,
+  referenceVolumeUpper: 0.12,
+  baseVolumeMinRatio: 1,
+  risingVolumeMinRatio: 1.15,
+  elasticVolumeMinRatio: 1.35,
+  elasticBodyRatio: 0.55,
+  elasticRisePct: 3.5,
+  minVolumeMaxRatio: 0.85,
+  minVolumeMa20Buffer: 1.08,
+  zoneBuildBars: 3,
+  refLineBars: 6,
+  inZoneTolerancePct: 0.012,
+  breakZoneTolerancePct: 0.015,
+  overheatFromZonePct: 0.12,
+  overheatFromMa20Pct: 0.1,
+  splitPlanWeights: [40, 35, 25] as const,
+  activeRetestLookbackBars: 10,
+  dayRebaseMarkerLimit: 3,
+  dailyRebaseMinRatio: 0.95,
+  dailyRebaseCloseBias: 0.995,
+  weeklyPhaseWeights: {
+    life: 10,
+    base: 18,
+    rising: 14,
+    elastic: 14,
+    min: 20,
+    zone: 14,
+    retest: 10,
+  },
+  dailyExecutionWeights: {
+    weeklyReady: 18,
+    projectedZone: 20,
+    belowMa20: 16,
+    inZone: 18,
+    retest: 16,
+    rebase: 12,
+  },
+} as const;
+
+export const WANG_PHASE_LABEL: Record<Exclude<WangStrategyPhase, "NONE">, string> = {
+  LIFE_VOLUME: "인생거래량",
+  BASE_VOLUME: "기준거래량",
+  RISING_VOLUME: "상승거래량",
+  ELASTIC_VOLUME: "탄력거래량",
+  MIN_VOLUME: "최소거래량",
+  REACCUMULATION: "재축적",
+};
+
+export const WANG_EXECUTION_STATE_LABEL: Record<WangStrategyExecutionState, string> = {
+  WAIT_WEEKLY_STRUCTURE: "주봉 구조 대기",
+  WAIT_PULLBACK: "당김 대기",
+  READY_ON_ZONE: "zone 진입 관찰",
+  READY_ON_RETEST: "재접근 적립 후보",
+  AVOID_BREAKDOWN: "zone 이탈 경계",
+  AVOID_OVERHEAT: "과열 추격 금지",
+};

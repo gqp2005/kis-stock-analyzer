@@ -9,15 +9,13 @@ import {
   type WhitespaceData,
 } from "lightweight-charts";
 import type { Candle } from "../types";
-import type {
-  WangStrategyChartOverlays,
-  WangStrategyMarker,
-} from "./types";
+import type { WangStrategyChartOverlays, WangStrategyMarker } from "./types";
 
 interface WangStrategyChartProps {
   candles: Candle[];
   chartOverlays: WangStrategyChartOverlays;
   markers: WangStrategyMarker[];
+  height?: number;
   onSelectMarker?: (marker: WangStrategyMarker | null) => void;
 }
 
@@ -41,7 +39,7 @@ interface RefLineRect {
   dashed: boolean;
 }
 
-const CHART_HEIGHT = 560;
+const DEFAULT_CHART_HEIGHT = 360;
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) return Math.floor(new Date(value).getTime() / 1000) as Time;
@@ -68,13 +66,13 @@ const toSeriesMarkers = (markers: WangStrategyMarker[]): SeriesMarker<Time>[] =>
     text: marker.label,
   }));
 
-const toLineData = (points: WangStrategyChartOverlays["ma20Series"]): Array<LineData<Time> | WhitespaceData<Time>> =>
+const toLineData = (points: Array<{ time: string; value: number | null }>): Array<LineData<Time> | WhitespaceData<Time>> =>
   points.map((point) =>
     point.value == null ? { time: toChartTime(point.time) } : { time: toChartTime(point.time), value: point.value },
   );
 
 export default function WangStrategyChart(props: WangStrategyChartProps) {
-  const { candles, chartOverlays, markers, onSelectMarker } = props;
+  const { candles, chartOverlays, markers, height = DEFAULT_CHART_HEIGHT, onSelectMarker } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const selectedTimeRef = useRef<string | null>(null);
   const refreshOverlayRef = useRef<(() => void) | null>(null);
@@ -84,12 +82,10 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
   const [selectedX, setSelectedX] = useState<number | null>(null);
 
   useEffect(() => {
-    if (markers.length === 0) {
-      setSelectedTime(null);
-      return;
-    }
-    setSelectedTime((current) => current ?? markers[markers.length - 1].t);
-  }, [markers]);
+    const fallbackTime =
+      chartOverlays.highlightTime ?? markers[markers.length - 1]?.t ?? candles[candles.length - 1]?.time ?? null;
+    setSelectedTime(fallbackTime);
+  }, [candles, chartOverlays.highlightTime, markers]);
 
   const selectedMarker = useMemo(
     () => markers.find((marker) => marker.t === selectedTime) ?? null,
@@ -111,7 +107,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: CHART_HEIGHT,
+      height,
       layout: {
         background: { type: ColorType.Solid, color: "rgba(7, 16, 27, 0.96)" },
         textColor: "#d9e6f4",
@@ -141,21 +137,16 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       priceLineVisible: false,
       lastValueVisible: false,
     });
+
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "",
       scaleMargins: {
-        top: 0.75,
+        top: 0.76,
         bottom: 0,
       },
       lastValueVisible: false,
       priceLineVisible: false,
-    });
-    const ma20Series = chart.addLineSeries({
-      color: "#7dd3fc",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
     });
 
     candleSeries.setData(
@@ -167,14 +158,26 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         close: candle.close,
       })),
     );
+
     volumeSeries.setData(
       candles.map<HistogramData<Time>>((candle) => ({
         time: toChartTime(candle.time),
         value: candle.volume,
-        color: candle.close >= candle.open ? "rgba(0, 179, 134, 0.6)" : "rgba(255, 90, 118, 0.55)",
+        color: candle.close >= candle.open ? "rgba(0, 179, 134, 0.60)" : "rgba(255, 90, 118, 0.55)",
       })),
     );
-    ma20Series.setData(toLineData(chartOverlays.ma20Series));
+
+    const maSeriesList = chartOverlays.movingAverages.map((line) => {
+      const series = chart.addLineSeries({
+        color: line.color,
+        lineWidth: line.lineWidth,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      series.setData(toLineData(line.points));
+      return series;
+    });
+
     candleSeries.setMarkers(toSeriesMarkers(markers));
     chart.timeScale().fitContent();
 
@@ -227,12 +230,14 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       setRefRects(nextRefRects);
       setSelectedX(nextSelectedX);
     };
+
     refreshOverlayRef.current = updateOverlayLayout;
 
     const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({ width: container.clientWidth, height: CHART_HEIGHT });
+      chart.applyOptions({ width: container.clientWidth, height });
       updateOverlayLayout();
     });
+
     resizeObserver.observe(container);
 
     chart.subscribeClick((param) => {
@@ -240,17 +245,22 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       if (!timeKey) return;
       setSelectedTime(timeKey);
     });
-    chart.timeScale().subscribeVisibleTimeRangeChange(updateOverlayLayout);
 
+    chart.timeScale().subscribeVisibleTimeRangeChange(updateOverlayLayout);
     updateOverlayLayout();
 
     return () => {
       refreshOverlayRef.current = null;
       resizeObserver.disconnect();
       chart.timeScale().unsubscribeVisibleTimeRangeChange(updateOverlayLayout);
+      maSeriesList.forEach((series) => series.priceScale());
       chart.remove();
     };
-  }, [candles, chartOverlays, markers]);
+  }, [candles, chartOverlays, height, markers]);
+
+  if (candles.length === 0) {
+    return <p className="plan-note">해당 타임프레임 차트 데이터가 아직 부족합니다.</p>;
+  }
 
   return (
     <div className="wang-chart-shell">
@@ -293,9 +303,16 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         </div>
       </div>
       <div className="wang-chart-legend">
-        <small>MA20</small>
-        <span className="wang-chart-legend-line" />
-        <small>ref.level</small>
+        {chartOverlays.movingAverages.map((line) => (
+          <span key={line.id} className="wang-legend-chip">
+            <i className="wang-chart-legend-line" style={{ borderColor: line.color }} />
+            {line.label}
+          </span>
+        ))}
+        <span className="wang-legend-chip">
+          <i className="wang-chart-legend-ref" />
+          ref.level
+        </span>
         <span className="wang-chart-legend-zone">zone</span>
       </div>
     </div>

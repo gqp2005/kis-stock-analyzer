@@ -160,6 +160,55 @@ const sampleCandidate: ScreenerStoredCandidate = {
       reasons: ["앵커 이후 조정과 재유입이 확인되었습니다."],
       warnings: ["invalidLow 이탈 시 전략 무효입니다."],
     },
+    darvasRetest: {
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      boxHigh: null,
+      boxLow: null,
+      breakoutDate: null,
+      retestDate: null,
+      reasons: ["darvas none"],
+    },
+    nr7InsideBar: {
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      setupDate: null,
+      triggerHigh: null,
+      triggerLow: null,
+      breakoutDate: null,
+      breakoutDirection: "NONE",
+      reasons: ["nr7 none"],
+    },
+    trendTemplate: {
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      nearHigh52wPct: null,
+      reasons: ["trend none"],
+    },
+    rsiDivergence: {
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      neckline: null,
+      breakoutDate: null,
+      reasons: ["rsi none"],
+    },
+    flowPersistence: {
+      detected: false,
+      state: "NONE",
+      score: 0,
+      confidence: 0,
+      upVolumeRatio20: null,
+      obvSlope20: null,
+      reasons: ["flow none"],
+    },
   },
   scoring: {
     all: { score: 80, confidence: 72 },
@@ -168,6 +217,11 @@ const sampleCandidate: ScreenerStoredCandidate = {
     ihs: { score: 78, confidence: 74 },
     vcp: { score: 81, confidence: 79 },
     washoutPullback: { score: 82, confidence: 74 },
+    darvasRetest: { score: 0, confidence: 0 },
+    nr7InsideBar: { score: 0, confidence: 0 },
+    trendTemplate: { score: 0, confidence: 0 },
+    rsiDivergence: { score: 0, confidence: 0 },
+    flowPersistence: { score: 0, confidence: 0 },
   },
   reasons: {
     all: ["테스트 all"],
@@ -176,6 +230,11 @@ const sampleCandidate: ScreenerStoredCandidate = {
     ihs: ["테스트 ihs"],
     vcp: ["테스트 vcp"],
     washoutPullback: ["테스트 washout"],
+    darvasRetest: ["darvas none"],
+    nr7InsideBar: ["nr7 none"],
+    trendTemplate: ["trend none"],
+    rsiDivergence: ["rsi none"],
+    flowPersistence: ["flow none"],
   },
   backtestSummary: {
     all: null,
@@ -184,6 +243,41 @@ const sampleCandidate: ScreenerStoredCandidate = {
     ihs: null,
     vcp: null,
     washoutPullback: null,
+    darvasRetest: null,
+    nr7InsideBar: null,
+    trendTemplate: null,
+    rsiDivergence: null,
+    flowPersistence: null,
+  },
+  wangStrategy: {
+    eligible: true,
+    label: "적립 후보",
+    score: 84,
+    confidence: 79,
+    currentPhase: "REACCUMULATION",
+    actionBias: "ACCUMULATE",
+    executionState: "READY_ON_RETEST",
+    reasons: ["주봉 최소거래량 이후 zone 재확인 구간입니다."],
+    weekBias: "재축적 · 주봉 최소거래량 이후 zone 확인",
+    dayBias: "재접근 적립 후보 · 일봉 zone 재확인",
+    zoneReady: true,
+    ma20DiscountReady: true,
+    dailyRebaseReady: true,
+    retestReady: true,
+  },
+  rs: {
+    benchmark: "KOSPI",
+    ret63Diff: 0.05,
+    label: "STRONG",
+  },
+  tuning: {
+    thresholds: {
+      volume: 60,
+      hs: 68,
+      ihs: 64,
+      vcp: 80,
+    },
+    quality: 74,
   },
 };
 
@@ -341,7 +435,7 @@ describe("/api/screener (cache-only)", () => {
           activeCutoffs: { vcp: number };
         } | null;
       };
-      items: Array<{ code: string }>;
+      items: Array<{ code: string; wangStrategy: { eligible: boolean; label: string; score: number } }>;
     };
 
     expect(response.status).toBe(200);
@@ -352,6 +446,9 @@ describe("/api/screener (cache-only)", () => {
     expect(body.meta.changeSummary?.scoreFallers.length).toBe(0);
     expect(body.meta.validationSummary?.activeCutoffs.vcp).toBe(80);
     expect(body.items[0]?.code).toBe("005930");
+    expect(body.items[0]?.wangStrategy.eligible).toBe(true);
+    expect(body.items[0]?.wangStrategy.label).toBe("적립 후보");
+    expect(body.items[0]?.wangStrategy.score).toBe(84);
   });
 
   it("returns last-success snapshot with rebuildRequired on cache miss", async () => {
@@ -439,5 +536,38 @@ describe("/api/screener (cache-only)", () => {
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.items[0]?.hits.washoutPullback.detected).toBe(true);
     expect(body.items[0]?.hits.washoutPullback.state).toBe("PULLBACK_READY");
+  });
+
+  it("supports wangStrategy validation filters", async () => {
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      return sampleSnapshot as never;
+    });
+
+    const response = await onRequestGet(
+      makeContext(
+        "http://localhost/api/screener?market=ALL&strategy=ALL&wangEligible=YES&wangActionBias=ACCUMULATE&wangPhase=REACCUMULATION&count=30",
+      ),
+    );
+    const body = (await response.json()) as {
+      meta: {
+        filters?: {
+          wangEligible?: string;
+          wangActionBias?: string;
+          wangPhase?: string;
+        };
+      };
+      items: Array<{ code: string; wangStrategy: { eligible: boolean; actionBias: string; currentPhase: string } }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.filters?.wangEligible).toBe("YES");
+    expect(body.meta.filters?.wangActionBias).toBe("ACCUMULATE");
+    expect(body.meta.filters?.wangPhase).toBe("REACCUMULATION");
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(body.items[0]?.wangStrategy.eligible).toBe(true);
+    expect(body.items[0]?.wangStrategy.actionBias).toBe("ACCUMULATE");
+    expect(body.items[0]?.wangStrategy.currentPhase).toBe("REACCUMULATION");
   });
 });

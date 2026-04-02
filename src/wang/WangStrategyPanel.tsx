@@ -4,6 +4,7 @@ import { useFavorites } from "../favorites";
 import WangStrategyChart from "./WangStrategyChart";
 import type {
   WangStrategyChecklistItem,
+  WangStrategyExecutionState,
   WangStrategyInterpretation,
   WangStrategyMarker,
   WangStrategyPhase,
@@ -34,7 +35,7 @@ const PHASE_LABEL: Record<WangStrategyPhase, string> = {
   RISING_VOLUME: "상승거래량",
   ELASTIC_VOLUME: "탄력거래량",
   MIN_VOLUME: "최소거래량",
-  REACCUMULATION: "재적립",
+  REACCUMULATION: "재축적",
   NONE: "미확정",
 };
 
@@ -43,6 +44,15 @@ const INTERPRETATION_LABEL: Record<WangStrategyInterpretation, string> = {
   ACCUMULATE: "적립",
   CAUTION: "경계",
   OVERHEAT: "과열",
+};
+
+const EXECUTION_LABEL: Record<WangStrategyExecutionState, string> = {
+  WAIT_WEEKLY_STRUCTURE: "주봉 구조 대기",
+  WAIT_PULLBACK: "당김 대기",
+  READY_ON_ZONE: "zone 진입 관찰",
+  READY_ON_RETEST: "재접근 적립 후보",
+  AVOID_BREAKDOWN: "zone 이탈 경계",
+  AVOID_OVERHEAT: "과열 추격 금지",
 };
 
 const TF_LABEL = {
@@ -56,9 +66,6 @@ const formatPrice = (value: number | null): string =>
 
 const formatVolume = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}`;
-
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}%`;
 
 const interpretationClassName = (value: WangStrategyInterpretation): string => {
   if (value === "ACCUMULATE") return "badge good";
@@ -78,12 +85,28 @@ const riskClassName = (note: WangStrategyRiskNote): string => {
   return "wang-risk-item info";
 };
 
-const checklistTone = (item: WangStrategyChecklistItem): string => (item.ok ? "reason-tag positive" : "reason-tag negative");
+const checklistTone = (item: WangStrategyChecklistItem): string =>
+  item.ok ? "reason-tag positive" : "reason-tag negative";
+
+const executionClassName = (value: WangStrategyExecutionState): string => {
+  if (value === "READY_ON_ZONE" || value === "READY_ON_RETEST") return "badge good";
+  if (value === "AVOID_BREAKDOWN" || value === "AVOID_OVERHEAT") return "badge caution";
+  return "badge neutral";
+};
 
 const regimeLabel = (value: WangStrategyTimeframeSummary["regime"]): string => {
   if (value === "UP") return "상승";
   if (value === "DOWN") return "하락";
   return "횡보";
+};
+
+const pickDefaultMarker = (markers: WangStrategyMarker[]): WangStrategyMarker | null => {
+  if (markers.length === 0) return null;
+  return (
+    markers.find((marker) => marker.type === "VOL_RETEST") ??
+    markers.find((marker) => marker.type === "VOL_MIN") ??
+    markers[markers.length - 1]
+  );
 };
 
 export default function WangStrategyPanel(props: WangStrategyPanelProps) {
@@ -95,7 +118,8 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
   const [response, setResponse] = useState<WangStrategyResponse | null>(null);
   const [suggestions, setSuggestions] = useState<StockLookup[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedMarker, setSelectedMarker] = useState<WangStrategyMarker | null>(null);
+  const [selectedWeekMarker, setSelectedWeekMarker] = useState<WangStrategyMarker | null>(null);
+  const [selectedDayMarker, setSelectedDayMarker] = useState<WangStrategyMarker | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
   const queryInputRef = useRef<HTMLInputElement | null>(null);
   const { favorites, isFavorite, toggleFavorite } = useFavorites();
@@ -111,11 +135,13 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
       const payload = data as WangStrategyResponse;
       setResponse(payload);
       setQuery(payload.meta.symbol);
-      setSelectedMarker(payload.markers[payload.markers.length - 1] ?? null);
+      setSelectedWeekMarker(pickDefaultMarker(payload.markers.week));
+      setSelectedDayMarker(pickDefaultMarker(payload.markers.day));
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "알 수 없는 오류");
       setResponse(null);
-      setSelectedMarker(null);
+      setSelectedWeekMarker(null);
+      setSelectedDayMarker(null);
     } finally {
       setLoading(false);
     }
@@ -180,12 +206,16 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
     };
   }, [apiBase, query, showSuggestions]);
 
-  const satisfiedChecklist = useMemo(
-    () => (response?.checklist ?? []).filter((item) => item.ok),
+  const structureChecklist = useMemo(
+    () => (response?.checklist ?? []).filter((item) => item.group === "structure"),
     [response],
   );
-  const unsatisfiedChecklist = useMemo(
-    () => (response?.checklist ?? []).filter((item) => !item.ok),
+  const executionChecklist = useMemo(
+    () => (response?.checklist ?? []).filter((item) => item.group === "execution"),
+    [response],
+  );
+  const riskChecklist = useMemo(
+    () => (response?.checklist ?? []).filter((item) => item.group === "risk"),
     [response],
   );
   const activeZone = response?.tradeZones.find((item) => item.active) ?? response?.tradeZones[0] ?? null;
@@ -199,15 +229,20 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
       <div className="card wang-header-card">
         <div className="wang-header-copy">
           <div>
-            <p className="eyebrow">Volume Teaching Workspace</p>
+            <p className="eyebrow">Wang Strategy Workspace</p>
             <h2>왕장군 전략</h2>
             <p className="meta">
-              인생거래량에서 최소거래량, 그리고 재적립 zone까지를 독립 메뉴에서 교육형/실전형 UI로 해석합니다.
+              주봉 메인 + 일봉 상세 구조로 거래량 강의 1~11편 관점의 phase, zone, 재접근, 20일선 위치를 설명형 UI로 보여줍니다.
             </p>
           </div>
           <div className="wang-header-actions">
-            <button type="button" className="preset-btn" onClick={refreshCurrent} disabled={loading || (!response && !query.trim())}>
-              {loading ? "조회 중.." : "빠른 재조회"}
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={refreshCurrent}
+              disabled={loading || (!response && !query.trim())}
+            >
+              {loading ? "조회 중..." : "재조회"}
             </button>
             {response && (
               <FavoriteButton
@@ -274,22 +309,20 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
             <option value={320}>최근 320봉</option>
           </select>
           <button type="submit" disabled={loading}>
-            {loading ? "불러오는 중.." : "전략 해석"}
+            {loading ? "불러오는 중..." : "전략 해석"}
           </button>
         </form>
 
         <div className="wang-favorite-row">
           <span>즐겨찾기</span>
           {favorites.length === 0 ? (
-            <small className="meta">아직 등록된 즐겨찾기가 없습니다.</small>
+            <small className="meta">아직 등록한 즐겨찾기가 없습니다.</small>
           ) : (
             favorites.slice(0, 8).map((item) => (
               <button
                 key={item.code}
                 type="button"
-                className={
-                  response?.meta.symbol === item.code ? "preset-btn active wang-chip-btn" : "preset-btn wang-chip-btn"
-                }
+                className={response?.meta.symbol === item.code ? "preset-btn active wang-chip-btn" : "preset-btn wang-chip-btn"}
                 onClick={() => void fetchStrategy(item.code, count)}
               >
                 {item.name || item.code}
@@ -303,22 +336,22 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
 
       {!response && !loading && !error && (
         <div className="card wang-empty-state">
-          <h3>독립 메뉴 1차 버전 범위</h3>
+          <h3>1차 구현 범위</h3>
           <div className="wang-empty-grid">
             <div className="plan-item">
               <span>1단계</span>
-              <strong>종목 선택</strong>
-              <small className="plan-note">검색, 즐겨찾기, 빠른 재조회</small>
+              <strong>독립 메뉴</strong>
+              <small className="plan-note">종목 분석과 분리된 왕장군 전략 탭</small>
             </div>
             <div className="plan-item">
               <span>2단계</span>
-              <strong>phase 해석</strong>
-              <small className="plan-note">인생거래량 → 최소거래량 → 재적립</small>
+              <strong>주봉/일봉 차트</strong>
+              <small className="plan-note">주봉 메인 + 일봉 상세 2단 구조</small>
             </div>
             <div className="plan-item">
               <span>3단계</span>
-              <strong>zone 실행</strong>
-              <small className="plan-note">20일선 아래 여부와 분할 적립 예시</small>
+              <strong>설명 패널</strong>
+              <small className="plan-note">phase, checklist, zone, risk, MTF 요약</small>
             </div>
           </div>
         </div>
@@ -348,26 +381,85 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
               <p className="meta">{response.summary.posture}</p>
               <div className="wang-kpi-grid">
                 <div className="plan-item">
-                  <span>confidence</span>
-                  <strong>{response.confidence}</strong>
+                  <span>currentPhase</span>
+                  <strong>{PHASE_LABEL[response.currentPhase]}</strong>
                 </div>
                 <div className="plan-item">
-                  <span>score</span>
-                  <strong>{response.score}</strong>
+                  <span>confidence</span>
+                  <strong>{response.confidence}</strong>
                 </div>
                 <div className="plan-item">
                   <span>현재 해석</span>
                   <strong>{INTERPRETATION_LABEL[response.summary.interpretation]}</strong>
                 </div>
                 <div className="plan-item">
-                  <span>20일선</span>
-                  <strong>{formatPrice(response.movingAverageContext.ma20)}</strong>
+                  <span>실행 요약</span>
+                  <strong>{response.movingAverageContext.verdict}</strong>
                 </div>
               </div>
             </article>
 
             <article className="card">
-              <h3>전략 요약</h3>
+              <div className="wang-card-head">
+                <h3>주봉 phase 판단</h3>
+                <small className={phaseClassName(response.weeklyPhaseContext.phase)}>
+                  {PHASE_LABEL[response.weeklyPhaseContext.phase]}
+                </small>
+              </div>
+              <p className="meta">{response.weeklyPhaseContext.headline}</p>
+              <p className="plan-note">{response.weeklyPhaseContext.stageSummary}</p>
+              <div className="wang-kpi-grid wang-kpi-grid-compact">
+                <div className="plan-item">
+                  <span>score</span>
+                  <strong>{response.weeklyPhaseContext.score}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>base 반복</span>
+                  <strong>{response.weeklyPhaseContext.baseRepeatCount}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>최대거래량</span>
+                  <strong>{formatVolume(response.weeklyPhaseContext.maxVolume)}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>기준거래량</span>
+                  <strong>{formatVolume(response.weeklyPhaseContext.referenceVolume)}</strong>
+                </div>
+              </div>
+            </article>
+
+            <article className="card">
+              <div className="wang-card-head">
+                <h3>일봉 실행 판단</h3>
+                <small className={executionClassName(response.dailyExecutionContext.state)}>
+                  {EXECUTION_LABEL[response.dailyExecutionContext.state]}
+                </small>
+              </div>
+              <p className="meta">{response.dailyExecutionContext.headline}</p>
+              <p className="plan-note">{response.dailyExecutionContext.action}</p>
+              <div className="wang-kpi-grid wang-kpi-grid-compact">
+                <div className="plan-item">
+                  <span>score</span>
+                  <strong>{response.dailyExecutionContext.score}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>20일선 아래</span>
+                  <strong>{response.dailyExecutionContext.belowMa20 ? "예" : "아니오"}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>재접근</span>
+                  <strong>{response.dailyExecutionContext.retestDetected ? "확인" : "대기"}</strong>
+                </div>
+                <div className="plan-item">
+                  <span>재기준거래량</span>
+                  <strong>{response.dailyExecutionContext.dailyRebaseCount}</strong>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <article className="card">
+            <h3>전략 요약</h3>
               <ul className="insight-list">
                 {response.reasons.map((reason) => (
                   <li key={reason}>
@@ -375,51 +467,104 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                   </li>
                 ))}
               </ul>
-            </article>
-          </div>
+              {response.warnings.length > 0 && (
+                <div className="warning-box wang-warning-box">
+                  {response.warnings.map((warning) => (
+                    <span key={warning}>{warning}</span>
+                  ))}
+                </div>
+              )}
+          </article>
 
-          <div className="wang-main-grid">
+          <div className="wang-chart-stack">
             <article className="card wang-chart-card">
               <div className="wang-card-head">
                 <div>
-                  <h3>전략 전용 차트</h3>
-                  <p className="meta">캔들 + 거래량 + phase 마커 + zone + ref.level</p>
+                  <h3>주봉 메인 차트</h3>
+                  <p className="meta">캔들 + 거래량 + 인생/기준/상승/탄력/최소거래량 마커 + zone 박스</p>
                 </div>
-                <small className="confidence neutral">평균거래량 참고 {formatVolume(response.meta.averageVolume)}</small>
+                <small className="confidence neutral">메인 해석 축</small>
               </div>
               <WangStrategyChart
-                candles={response.candles}
-                chartOverlays={response.chartOverlays}
-                markers={response.markers}
-                onSelectMarker={setSelectedMarker}
+                candles={response.candles.week}
+                chartOverlays={response.chartOverlays.week}
+                markers={response.markers.week}
+                height={390}
+                onSelectMarker={setSelectedWeekMarker}
               />
-              {selectedMarker ? (
+              {selectedWeekMarker ? (
                 <div className="wang-selected-card">
                   <div className="wang-card-head">
-                    <strong>{selectedMarker.label}</strong>
-                    <small>{selectedMarker.t}</small>
+                    <strong>{selectedWeekMarker.label}</strong>
+                    <small>{selectedWeekMarker.t}</small>
                   </div>
                   <div className="wang-selected-grid">
                     <div className="plan-item">
                       <span>가격</span>
-                      <strong>{formatPrice(selectedMarker.price)}</strong>
+                      <strong>{formatPrice(selectedWeekMarker.price)}</strong>
                     </div>
                     <div className="plan-item">
                       <span>거래량</span>
-                      <strong>{formatVolume(selectedMarker.volume)}</strong>
+                      <strong>{formatVolume(selectedWeekMarker.volume)}</strong>
                     </div>
                     <div className="plan-item">
                       <span>강도</span>
-                      <strong>{selectedMarker.strength}</strong>
+                      <strong>{selectedWeekMarker.strength}</strong>
                     </div>
                   </div>
-                  <p className="plan-note">{selectedMarker.desc}</p>
+                  <p className="plan-note">{selectedWeekMarker.desc}</p>
                 </div>
               ) : (
-                <p className="plan-note">차트 마커를 클릭하면 선택 캔들 해석이 강조됩니다.</p>
+                <p className="plan-note">주봉 마커를 클릭하면 해당 단계의 의미를 바로 읽을 수 있습니다.</p>
               )}
             </article>
 
+            <article className="card wang-chart-card">
+              <div className="wang-card-head">
+                <div>
+                  <h3>일봉 상세 차트</h3>
+                  <p className="meta">주봉 zone 투영 + 일봉 재기준거래량 + MA20 + ref.level + 선택 캔들 하이라이트</p>
+                </div>
+                <small className={response.movingAverageContext.belowMa20 ? "confidence good" : "confidence neutral"}>
+                  {response.movingAverageContext.verdict}
+                </small>
+              </div>
+              <WangStrategyChart
+                candles={response.candles.day}
+                chartOverlays={response.chartOverlays.day}
+                markers={response.markers.day}
+                height={350}
+                onSelectMarker={setSelectedDayMarker}
+              />
+              {selectedDayMarker ? (
+                <div className="wang-selected-card">
+                  <div className="wang-card-head">
+                    <strong>{selectedDayMarker.label}</strong>
+                    <small>{selectedDayMarker.t}</small>
+                  </div>
+                  <div className="wang-selected-grid">
+                    <div className="plan-item">
+                      <span>가격</span>
+                      <strong>{formatPrice(selectedDayMarker.price)}</strong>
+                    </div>
+                    <div className="plan-item">
+                      <span>거래량</span>
+                      <strong>{formatVolume(selectedDayMarker.volume)}</strong>
+                    </div>
+                    <div className="plan-item">
+                      <span>강도</span>
+                      <strong>{selectedDayMarker.strength}</strong>
+                    </div>
+                  </div>
+                  <p className="plan-note">{selectedDayMarker.desc}</p>
+                </div>
+              ) : (
+                <p className="plan-note">{response.movingAverageContext.guidance}</p>
+              )}
+            </article>
+          </div>
+
+          <div className="wang-main-grid">
             <article className="card">
               <h3>단계별 해석</h3>
               <div className="wang-phase-stack">
@@ -427,7 +572,15 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                   <div key={phase.phase} className="wang-phase-item">
                     <div className="wang-phase-head">
                       <strong>{phase.title}</strong>
-                      <small className={phase.status === "active" ? "badge good" : phase.status === "completed" ? "badge neutral" : "badge caution"}>
+                      <small
+                        className={
+                          phase.status === "active"
+                            ? "badge good"
+                            : phase.status === "completed"
+                              ? "badge neutral"
+                              : "badge caution"
+                        }
+                      >
                         {phase.status === "active" ? "현재" : phase.status === "completed" ? "통과" : "대기"}
                       </small>
                     </div>
@@ -444,7 +597,7 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                         ))}
                       </ul>
                     ) : (
-                      <p className="plan-note">아직 이 단계의 핵심 봉이 감지되지 않았습니다.</p>
+                      <p className="plan-note">아직 해당 단계가 명확하게 관찰되지 않았습니다.</p>
                     )}
                     <p className="insight-opinion">
                       <small className="reason-tag neutral">다음 조건</small>
@@ -454,19 +607,17 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                 ))}
               </div>
             </article>
-          </div>
 
-          <div className="wang-secondary-grid">
             <article className="card">
               <h3>체크리스트</h3>
               <div className="wang-checklist-columns">
                 <div>
-                  <h4>충족 조건</h4>
+                  <h4>구조 판정</h4>
                   <ul className="insight-list">
-                    {satisfiedChecklist.map((item) => (
+                    {structureChecklist.map((item) => (
                       <li key={item.id}>
                         <span>
-                          <small className={checklistTone(item)}>충족</small> {item.label}
+                          <small className={checklistTone(item)}>{item.ok ? "충족" : "미충족"}</small> {item.label}
                         </span>
                         <small>{item.detail}</small>
                       </li>
@@ -474,12 +625,25 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                   </ul>
                 </div>
                 <div>
-                  <h4>미충족 조건</h4>
+                  <h4>실행 판정</h4>
                   <ul className="insight-list">
-                    {unsatisfiedChecklist.map((item) => (
+                    {executionChecklist.map((item) => (
                       <li key={item.id}>
                         <span>
-                          <small className={checklistTone(item)}>미충족</small> {item.label}
+                          <small className={checklistTone(item)}>{item.ok ? "충족" : "미충족"}</small> {item.label}
+                        </span>
+                        <small>{item.detail}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <h4>리스크 판정</h4>
+                  <ul className="insight-list">
+                    {riskChecklist.map((item) => (
+                      <li key={item.id}>
+                        <span>
+                          <small className={checklistTone(item)}>{item.ok ? "충족" : "미충족"}</small> {item.label}
                         </span>
                         <small>{item.detail}</small>
                       </li>
@@ -488,7 +652,9 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                 </div>
               </div>
             </article>
+          </div>
 
+          <div className="wang-secondary-grid">
             <article className="card">
               <h3>실전 적립 구간</h3>
               {activeZone ? (
@@ -501,6 +667,10 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                       </strong>
                     </div>
                     <div className="plan-item">
+                      <span>source</span>
+                      <strong>{activeZone.sourceTf === "week" ? "주봉" : "일봉"}</strong>
+                    </div>
+                    <div className="plan-item">
                       <span>20일선 이하</span>
                       <strong>{response.movingAverageContext.belowMa20 ? "예" : "아니오"}</strong>
                     </div>
@@ -510,6 +680,12 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                     </div>
                   </div>
                   <p className="plan-note">{activeZone.scenario}</p>
+                  <p className="insight-opinion">
+                    <small className={executionClassName(response.dailyExecutionContext.state)}>
+                      {EXECUTION_LABEL[response.dailyExecutionContext.state]}
+                    </small>
+                    {response.dailyExecutionContext.action}
+                  </p>
                   <ul className="insight-list">
                     {activeZone.splitPlan.map((item) => (
                       <li key={item.label}>
@@ -522,12 +698,10 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                   </ul>
                 </>
               ) : (
-                <p className="meta">최소거래량 이후 zone이 아직 형성되지 않았습니다.</p>
+                <p className="meta">아직 최소거래량 이후 zone이 명확하게 형성되지 않았습니다.</p>
               )}
             </article>
-          </div>
 
-          <div className="wang-tertiary-grid">
             <article className="card">
               <h3>리스크 / 주의</h3>
               <div className="wang-risk-stack">
@@ -539,9 +713,11 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                 ))}
               </div>
             </article>
+          </div>
 
+          <div className="wang-tertiary-grid">
             <article className="card">
-              <h3>멀티 타임프레임</h3>
+              <h3>멀티 타임프레임 요약</h3>
               <div className="wang-timeframe-grid">
                 {timeframeSummaries.map((item) => (
                   <div key={item.tf} className="wang-timeframe-item">
@@ -574,7 +750,15 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
                   <div key={note.id} className="wang-training-item">
                     <div className="wang-card-head">
                       <strong>{note.title}</strong>
-                      <small className={note.emphasis === "core" ? "reason-tag positive" : note.emphasis === "warning" ? "reason-tag negative" : "reason-tag neutral"}>
+                      <small
+                        className={
+                          note.emphasis === "core"
+                            ? "reason-tag positive"
+                            : note.emphasis === "warning"
+                              ? "reason-tag negative"
+                              : "reason-tag neutral"
+                        }
+                      >
                         {note.emphasis === "core" ? "핵심" : note.emphasis === "warning" ? "주의" : "실전"}
                       </small>
                     </div>

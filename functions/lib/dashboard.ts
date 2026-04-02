@@ -68,6 +68,8 @@ export interface MarketTemperatureSummary {
   trendTemplateCount: number;
   rsiDivergenceCount: number;
   flowPersistenceCount: number;
+  wangEligibleCount: number;
+  wangAccumulateCount: number;
   heatScore: number;
   heatLabel: "강세" | "중립" | "혼조" | "위축";
   summary: string;
@@ -101,6 +103,26 @@ const average = (values: number[]): number | null => {
 
 const round = (value: number | null): number | null =>
   value == null || !Number.isFinite(value) ? null : Math.round(value * 100) / 100;
+
+const fallbackWangStrategy = () => ({
+  eligible: false,
+  label: "비적합" as const,
+  score: 0,
+  confidence: 0,
+  currentPhase: "NONE" as const,
+  actionBias: "WATCH" as const,
+  executionState: "WAIT_WEEKLY_STRUCTURE" as const,
+  reasons: ["왕장군 검증 데이터가 없습니다."],
+  weekBias: "주봉 미평가",
+  dayBias: "일봉 미평가",
+  zoneReady: false,
+  ma20DiscountReady: false,
+  dailyRebaseReady: false,
+  retestReady: false,
+});
+
+const getWangStrategy = (candidate: ScreenerStoredCandidate) =>
+  candidate.wangStrategy ?? fallbackWangStrategy();
 
 export const loadLatestScreenerSnapshot = async (
   env: Env,
@@ -147,6 +169,7 @@ const patternStateLabel = (state: string): string => {
 };
 
 const buildFavoriteAlert = (candidate: ScreenerStoredCandidate): FavoriteAlertItem => {
+  const wangStrategy = getWangStrategy(candidate);
   if (candidate.hits.hs.state === "CONFIRMED") {
     return {
       code: candidate.code,
@@ -158,6 +181,19 @@ const buildFavoriteAlert = (candidate: ScreenerStoredCandidate): FavoriteAlertIt
       title: "하락 패턴 경고",
       summary: "H&S 확정 신호가 있어 신규 접근보다 방어 대응이 우선입니다.",
       reasons: candidate.reasons.hs.slice(0, 2),
+    };
+  }
+  if (wangStrategy.eligible) {
+    return {
+      code: candidate.code,
+      name: candidate.name,
+      market: candidate.market,
+      lastDate: candidate.lastDate,
+      lastClose: candidate.lastClose,
+      severity: "positive",
+      title: "왕장군 적립 후보",
+      summary: wangStrategy.dayBias,
+      reasons: wangStrategy.reasons.slice(0, 2),
     };
   }
   if (candidate.hits.washoutPullback.state === "REBOUND_CONFIRMED") {
@@ -245,16 +281,28 @@ const buildMarketTemperature = (candidates: ScreenerStoredCandidate[]): MarketTe
   const trendTemplateCount = candidates.filter((item) => item.hits.trendTemplate.detected).length;
   const rsiDivergenceCount = candidates.filter((item) => item.hits.rsiDivergence.detected).length;
   const flowPersistenceCount = candidates.filter((item) => item.hits.flowPersistence.detected).length;
+  const wangEligibleCount = candidates.filter((item) => getWangStrategy(item).eligible).length;
+  const wangAccumulateCount = candidates.filter(
+    (item) => getWangStrategy(item).actionBias === "ACCUMULATE",
+  ).length;
   const avgScore = round(average(scores));
   const avgConfidence = round(average(confidences));
   const strongRatio = total > 0 ? strongCount / total : 0;
   const cautionRatio = total > 0 ? cautionCount / total : 0;
   const rsRatio = total > 0 ? rsStrongCount / total : 0;
+  const wangRatio = total > 0 ? wangEligibleCount / total : 0;
   const heatScore = Math.max(
     0,
     Math.min(
       100,
-      Math.round((avgScore ?? 0) * 0.5 + (avgConfidence ?? 0) * 0.2 + strongRatio * 20 + rsRatio * 15 - cautionRatio * 15),
+      Math.round(
+        (avgScore ?? 0) * 0.48 +
+          (avgConfidence ?? 0) * 0.18 +
+          strongRatio * 18 +
+          rsRatio * 14 +
+          wangRatio * 12 -
+          cautionRatio * 15,
+      ),
     ),
   );
   const heatLabel =
@@ -284,6 +332,8 @@ const buildMarketTemperature = (candidates: ScreenerStoredCandidate[]): MarketTe
     trendTemplateCount,
     rsiDivergenceCount,
     flowPersistenceCount,
+    wangEligibleCount,
+    wangAccumulateCount,
     heatScore,
     heatLabel,
     summary,
@@ -315,6 +365,15 @@ const STRATEGY_RANKING_DEFS = [
     score: (item: ScreenerStoredCandidate) => item.scoring.washoutPullback.score,
     confidence: (item: ScreenerStoredCandidate) => item.scoring.washoutPullback.confidence,
     backtest: (item: ScreenerStoredCandidate) => item.backtestSummary.washoutPullback,
+  },
+  {
+    key: "wangStrategy",
+    label: "왕장군 검증",
+    detected: (item: ScreenerStoredCandidate) =>
+      getWangStrategy(item).currentPhase !== "NONE" || getWangStrategy(item).score > 0,
+    score: (item: ScreenerStoredCandidate) => getWangStrategy(item).score,
+    confidence: (item: ScreenerStoredCandidate) => getWangStrategy(item).confidence,
+    backtest: () => null,
   },
   {
     key: "darvasRetest",
@@ -441,6 +500,21 @@ const buildTimeline = (candidates: ScreenerStoredCandidate[]): StrategyTimelineE
   const events: StrategyTimelineEvent[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates.slice(0, 120)) {
+    const wangStrategy = getWangStrategy(candidate);
+    if (wangStrategy.currentPhase !== "NONE") {
+      pushTimelineEvent(events, seen, {
+        date: candidate.lastDate,
+        code: candidate.code,
+        name: candidate.name,
+        market: candidate.market,
+        strategyKey: "wangStrategy",
+        strategyLabel: "왕장군 검증",
+        stateLabel: wangStrategy.label,
+        score: wangStrategy.score,
+        confidence: wangStrategy.confidence,
+        summary: wangStrategy.reasons[0] ?? wangStrategy.dayBias,
+      });
+    }
     pushTimelineEvent(events, seen, {
       date: candidate.lastDate,
       code: candidate.code,

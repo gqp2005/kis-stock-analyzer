@@ -3325,8 +3325,21 @@ h2 {
   gap: 12px;
 }
 
+.wang-summary-grid > .card,
+.wang-chart-stack > .card,
+.wang-main-grid > .card,
+.wang-secondary-grid > .card,
+.wang-tertiary-grid > .card {
+  margin-bottom: 0;
+}
+
+.wang-chart-stack {
+  display: grid;
+  gap: 12px;
+}
+
 .wang-summary-grid {
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns: 1.35fr repeat(2, minmax(0, 1fr));
 }
 
 .wang-kpi-grid,
@@ -3342,6 +3355,10 @@ h2 {
   margin-top: 12px;
 }
 
+.wang-kpi-grid-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .wang-summary-headline {
   margin: 10px 0 6px;
   color: #eef7ff;
@@ -3353,6 +3370,10 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
   gap: 12px;
+}
+
+.wang-chart-card {
+  margin-bottom: 0;
 }
 
 .wang-chart-shell {
@@ -3428,10 +3449,29 @@ h2 {
   font-size: 12px;
 }
 
+.wang-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  background: rgba(12, 24, 36, 0.45);
+}
+
 .wang-chart-legend-line {
+  display: inline-block;
   width: 24px;
   height: 0;
   border-top: 2px solid #7dd3fc;
+}
+
+.wang-chart-legend-ref {
+  display: inline-block;
+  width: 24px;
+  height: 0;
+  border-top: 2px dashed rgba(87, 163, 255, 0.85);
 }
 
 .wang-chart-legend-zone {
@@ -3445,6 +3485,10 @@ h2 {
   background: rgba(0, 179, 134, 0.14);
   color: #aef4e2;
   padding: 0 10px;
+}
+
+.wang-warning-box {
+  margin-top: 12px;
 }
 
 .wang-selected-card {
@@ -3478,7 +3522,7 @@ h2 {
 
 .wang-checklist-columns {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 

@@ -18,9 +18,12 @@ import {
 } from "../lib/screenerStore";
 import type {
   Env,
+  ScreenerBooleanFilter,
   ScreenerMarketFilter,
   ScreenerPayload,
   ScreenerStrategyFilter,
+  ScreenerWangActionBiasFilter,
+  ScreenerWangPhaseFilter,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
 } from "../lib/types";
@@ -78,6 +81,41 @@ const parseWashoutState = (raw: string | null): ScreenerWashoutStateFilter => {
 const parseWashoutPosition = (raw: string | null): ScreenerWashoutPositionFilter => {
   const normalized = (raw ?? "ALL").toUpperCase();
   if (normalized === "IN_ZONE" || normalized === "ABOVE_ZONE" || normalized === "BELOW_ZONE") {
+    return normalized;
+  }
+  return "ALL";
+};
+
+const parseBooleanFilter = (raw: string | null): ScreenerBooleanFilter => {
+  const normalized = (raw ?? "ALL").toUpperCase();
+  if (normalized === "YES" || normalized === "NO") return normalized;
+  return "ALL";
+};
+
+const parseWangActionBias = (raw: string | null): ScreenerWangActionBiasFilter => {
+  const normalized = (raw ?? "ALL").toUpperCase();
+  if (
+    normalized === "ACCUMULATE" ||
+    normalized === "WATCH" ||
+    normalized === "CAUTION" ||
+    normalized === "OVERHEAT"
+  ) {
+    return normalized;
+  }
+  return "ALL";
+};
+
+const parseWangPhase = (raw: string | null): ScreenerWangPhaseFilter => {
+  const normalized = (raw ?? "ALL").toUpperCase();
+  if (
+    normalized === "LIFE_VOLUME" ||
+    normalized === "BASE_VOLUME" ||
+    normalized === "RISING_VOLUME" ||
+    normalized === "ELASTIC_VOLUME" ||
+    normalized === "MIN_VOLUME" ||
+    normalized === "REACCUMULATION" ||
+    normalized === "NONE"
+  ) {
     return normalized;
   }
   return "ALL";
@@ -198,6 +236,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const washoutState = parseWashoutState(url.searchParams.get("state"));
     const washoutPosition = parseWashoutPosition(url.searchParams.get("position"));
     const washoutRiskMax = parseWashoutRiskMax(url);
+    const wangEligible = parseBooleanFilter(url.searchParams.get("wangEligible"));
+    const wangActionBias = parseWangActionBias(url.searchParams.get("wangActionBias"));
+    const wangPhase = parseWangPhase(url.searchParams.get("wangPhase"));
+    const wangZoneReady = parseBooleanFilter(url.searchParams.get("wangZoneReady"));
+    const wangMa20DiscountReady = parseBooleanFilter(
+      url.searchParams.get("wangMa20DiscountReady"),
+    );
     const autoBootstrapEnabled = parseBooleanEnv(
       context.env.SCREENER_AUTO_BOOTSTRAP,
       true,
@@ -409,9 +454,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       count,
       snapshot.validationSummary?.activeCutoffs ?? null,
       {
-        state: washoutState,
-        position: washoutPosition,
-        riskPctMax: washoutRiskMax,
+        washout: {
+          state: washoutState,
+          position: washoutPosition,
+          riskPctMax: washoutRiskMax,
+        },
+        wang: {
+          eligible: wangEligible,
+          actionBias: wangActionBias,
+          phase: wangPhase,
+          zoneReady: wangZoneReady,
+          ma20DiscountReady: wangMa20DiscountReady,
+        },
       },
     );
 
@@ -529,11 +583,25 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               totalRetries: snapshot.rebuildMeta?.retryStats.totalRetries ?? 0,
             },
         filters:
-          strategy === "WASHOUT_PULLBACK"
+          strategy === "WASHOUT_PULLBACK" ||
+          wangEligible !== "ALL" ||
+          wangActionBias !== "ALL" ||
+          wangPhase !== "ALL" ||
+          wangZoneReady !== "ALL" ||
+          wangMa20DiscountReady !== "ALL"
             ? {
-                washoutState,
-                washoutPosition,
-                washoutRiskMax,
+                ...(strategy === "WASHOUT_PULLBACK"
+                  ? {
+                      washoutState,
+                      washoutPosition,
+                      washoutRiskMax,
+                    }
+                  : {}),
+                wangEligible,
+                wangActionBias,
+                wangPhase,
+                wangZoneReady,
+                wangMa20DiscountReady,
               }
             : undefined,
       },
