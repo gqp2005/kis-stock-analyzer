@@ -2131,6 +2131,78 @@ h2 {
   margin-bottom: 12px;
 }
 
+.screener-preset-row {
+  display: grid;
+  gap: 8px;
+  margin-top: -2px;
+}
+
+.screener-preset-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.screener-preset-head strong {
+  font-size: 13px;
+  color: #dce9f7;
+}
+
+.screener-preset-head small {
+  color: #8fa7c0;
+  font-size: 12px;
+}
+
+.screener-preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.screener-preset-chip {
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  background: rgba(12, 24, 36, 0.58);
+  color: #d8e8f8;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.screener-preset-chip span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.screener-preset-chip small {
+  color: #96adc5;
+  font-size: 11px;
+}
+
+.screener-preset-chip:hover {
+  border-color: rgba(87, 163, 255, 0.4);
+  background: rgba(15, 33, 49, 0.78);
+}
+
+.screener-preset-chip:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.screener-preset-chip.active {
+  border-color: rgba(87, 163, 255, 0.6);
+  background: linear-gradient(180deg, rgba(18, 48, 70, 0.92), rgba(11, 26, 40, 0.92));
+  box-shadow: inset 0 0 0 1px rgba(87, 163, 255, 0.18);
+}
+
+.screener-preset-chip.active small {
+  color: #b6d2ec;
+}
+
 .screener-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
@@ -2332,6 +2404,18 @@ h2 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.screener-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.screener-card-actions button {
+  flex: 1 1 0;
+  min-height: 38px;
 }
 
 .screener-detail-head {
@@ -2558,6 +2642,10 @@ h2 {
 
   .screener-controls-primary button {
     grid-column: 1 / -1;
+  }
+
+  .screener-preset-chip {
+    flex: 1 1 calc(50% - 8px);
   }
 
   .strategy-head {
@@ -2802,8 +2890,7 @@ h2 {
     align-items: flex-start;
   }
 
-  .screener-card > button:last-child {
-    width: 100%;
+  .screener-card-actions button {
     min-height: 40px;
   }
 

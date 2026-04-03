@@ -32,6 +32,7 @@ import {
 interface ScreenerPanelProps {
   apiBase: string;
   onSelectSymbol: (code: string) => void;
+  onSelectWangStrategy: (code: string) => void;
 }
 
 const FAVORITE_NOTIFY_KEY = "kis-favorite-notify-enabled";
@@ -58,6 +59,19 @@ interface ScreenerCompactItem {
   label: string;
   value: string;
 }
+
+type WangFilterState = Pick<
+  ScreenerQueryState,
+  "wangEligible" | "wangActionBias" | "wangPhase" | "wangZoneReady" | "wangMa20DiscountReady"
+>;
+
+type WangPresetId =
+  | "ACCUMULATE"
+  | "REACCUMULATION"
+  | "MIN_VOLUME"
+  | "ZONE_READY"
+  | "MA20_DISCOUNT"
+  | "CLEAR";
 
 const overallLabel = (overall: Overall): string => {
   if (overall === "GOOD") return "양호";
@@ -278,6 +292,84 @@ const booleanFilterLabel = (value: ScreenerBooleanFilter): string => {
   if (value === "NO") return "NO";
   return "ALL";
 };
+
+const isWangSortKey = (value: SortKey): boolean =>
+  value === "WANG_SCORE" || value === "WANG_CONFIDENCE";
+
+const WANG_FILTER_DEFAULTS: WangFilterState = {
+  wangEligible: "ALL",
+  wangActionBias: "ALL",
+  wangPhase: "ALL",
+  wangZoneReady: "ALL",
+  wangMa20DiscountReady: "ALL",
+};
+
+const WANG_PRESETS: Array<{
+  id: WangPresetId;
+  label: string;
+  summary: string;
+  filters: WangFilterState;
+  sortKey: SortKey;
+}> = [
+  {
+    id: "ACCUMULATE",
+    label: "적립 후보",
+    summary: "적합도 YES + 적립 바이어스",
+    filters: {
+      ...WANG_FILTER_DEFAULTS,
+      wangEligible: "YES",
+      wangActionBias: "ACCUMULATE",
+    },
+    sortKey: "WANG_SCORE",
+  },
+  {
+    id: "REACCUMULATION",
+    label: "재축적",
+    summary: "주봉 재축적 phase",
+    filters: {
+      ...WANG_FILTER_DEFAULTS,
+      wangPhase: "REACCUMULATION",
+    },
+    sortKey: "WANG_SCORE",
+  },
+  {
+    id: "MIN_VOLUME",
+    label: "최소거래량",
+    summary: "최소거래량 phase",
+    filters: {
+      ...WANG_FILTER_DEFAULTS,
+      wangPhase: "MIN_VOLUME",
+    },
+    sortKey: "WANG_SCORE",
+  },
+  {
+    id: "ZONE_READY",
+    label: "Zone Ready",
+    summary: "zone 진입 준비 완료",
+    filters: {
+      ...WANG_FILTER_DEFAULTS,
+      wangZoneReady: "YES",
+    },
+    sortKey: "WANG_SCORE",
+  },
+  {
+    id: "MA20_DISCOUNT",
+    label: "MA20 할인",
+    summary: "20일선 이하 할인 구간",
+    filters: {
+      ...WANG_FILTER_DEFAULTS,
+      wangMa20DiscountReady: "YES",
+    },
+    sortKey: "WANG_SCORE",
+  },
+  {
+    id: "CLEAR",
+    label: "왕장군 해제",
+    summary: "왕장군 필터 초기화",
+    filters: WANG_FILTER_DEFAULTS,
+    sortKey: "SCORE",
+  },
+];
 
 const verdictClass = (value: ScreenerVerdict): string => {
   if (value === "매수 검토") return "signal-tag positive";
@@ -553,7 +645,7 @@ const sortItems = (
 };
 
 export default function ScreenerPanel(props: ScreenerPanelProps) {
-  const { apiBase, onSelectSymbol } = props;
+  const { apiBase, onSelectSymbol, onSelectWangStrategy } = props;
   const [isMobileView, setIsMobileView] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 860px)").matches;
@@ -705,6 +797,12 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
   }, [isMobileView]);
 
   useEffect(() => {
+    if (!hasActiveWangFilters) return;
+    if (isWangSortKey(sortKey)) return;
+    setSortKey("WANG_SCORE");
+  }, [hasActiveWangFilters, sortKey]);
+
+  useEffect(() => {
     if (!dashboard || !favoriteNotificationsEnabled) return;
     if (typeof window === "undefined" || typeof Notification === "undefined") return;
     if (Notification.permission !== "granted") return;
@@ -786,6 +884,42 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       wangPhase: "ALL",
       wangZoneReady: "ALL",
       wangMa20DiscountReady: "ALL",
+    });
+  };
+
+  const setWangFilterState = (next: WangFilterState) => {
+    setWangEligible(next.wangEligible);
+    setWangActionBias(next.wangActionBias);
+    setWangPhase(next.wangPhase);
+    setWangZoneReady(next.wangZoneReady);
+    setWangMa20DiscountReady(next.wangMa20DiscountReady);
+  };
+
+  const hasActiveWangFilters =
+    wangEligible !== "ALL" ||
+    wangActionBias !== "ALL" ||
+    wangPhase !== "ALL" ||
+    wangZoneReady !== "ALL" ||
+    wangMa20DiscountReady !== "ALL";
+
+  const activeWangPresetId = useMemo(() => {
+    const matched = WANG_PRESETS.find((preset) =>
+      preset.filters.wangEligible === wangEligible &&
+      preset.filters.wangActionBias === wangActionBias &&
+      preset.filters.wangPhase === wangPhase &&
+      preset.filters.wangZoneReady === wangZoneReady &&
+      preset.filters.wangMa20DiscountReady === wangMa20DiscountReady,
+    );
+    return matched?.id ?? null;
+  }, [wangActionBias, wangEligible, wangMa20DiscountReady, wangPhase, wangZoneReady]);
+
+  const applyWangPreset = (presetId: WangPresetId) => {
+    const preset = WANG_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setWangFilterState(preset.filters);
+    setSortKey(preset.sortKey);
+    void fetchScreener({
+      ...preset.filters,
     });
   };
 
@@ -1097,6 +1231,34 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
           <button type="submit" disabled={loading}>
             {loading ? "조회 중..." : "스크리너 조회"}
           </button>
+        </div>
+
+        <div className="screener-preset-row">
+          <div className="screener-preset-head">
+            <strong>왕장군 빠른 프리셋</strong>
+            <small>
+              {activeWangPresetId
+                ? `${WANG_PRESETS.find((preset) => preset.id === activeWangPresetId)?.label ?? "왕장군"} 적용 중`
+                : hasActiveWangFilters
+                  ? "사용자 지정 왕장군 필터"
+                  : "클릭 시 즉시 재조회 · 왕장군 정렬 기본 적용"}
+            </small>
+          </div>
+          <div className="screener-preset-buttons">
+            {WANG_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`screener-preset-chip${activeWangPresetId === preset.id ? " active" : ""}`}
+                onClick={() => applyWangPreset(preset.id)}
+                disabled={loading}
+                title={preset.summary}
+              >
+                <span>{preset.label}</span>
+                <small>{preset.summary}</small>
+              </button>
+            ))}
+          </div>
         </div>
 
         {isMobileView ? (
@@ -1913,9 +2075,14 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                       <small>MDD {formatPercent(item.backtestSummary.MDD)}</small>
                     </div>
                   )}
-                  <button type="button" onClick={() => onSelectSymbol(item.code)}>
-                    {isMobileView ? "상세 분석" : "상세 분석으로 이동"}
-                  </button>
+                  <div className="screener-card-actions">
+                    <button type="button" onClick={() => onSelectSymbol(item.code)}>
+                      {isMobileView ? "상세 분석" : "상세 분석으로 이동"}
+                    </button>
+                    <button type="button" onClick={() => onSelectWangStrategy(item.code)}>
+                      {isMobileView ? "왕장군" : "왕장군 전략 보기"}
+                    </button>
+                  </div>
                 </article>
               );
             })}

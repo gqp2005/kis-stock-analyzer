@@ -15,6 +15,7 @@ import type {
 
 interface WangStrategyPanelProps {
   apiBase: string;
+  initialQuery?: string;
 }
 
 interface StockLookup {
@@ -110,7 +111,7 @@ const pickDefaultMarker = (markers: WangStrategyMarker[]): WangStrategyMarker | 
 };
 
 export default function WangStrategyPanel(props: WangStrategyPanelProps) {
-  const { apiBase } = props;
+  const { apiBase, initialQuery } = props;
   const [query, setQuery] = useState("");
   const [count, setCount] = useState(240);
   const [loading, setLoading] = useState(false);
@@ -174,6 +175,14 @@ export default function WangStrategyPanel(props: WangStrategyPanelProps) {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  useEffect(() => {
+    const normalized = initialQuery?.trim() ?? "";
+    if (!normalized) return;
+    setQuery((current) => (current === normalized ? current : normalized));
+    setShowSuggestions(false);
+    void fetchStrategy(normalized, count);
+  }, [initialQuery]);
 
   useEffect(() => {
     if (!showSuggestions) return;

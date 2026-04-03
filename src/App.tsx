@@ -584,6 +584,7 @@ export default function App() {
     "analysis" | "screener" | "strategy" | "wangStrategy" | "glossary" | "autotrade" | "account" | "admin"
   >("analysis");
   const [query, setQuery] = useState("");
+  const [wangStrategyQuery, setWangStrategyQuery] = useState("");
   const [days, setDays] = useState(180);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -772,6 +773,13 @@ export default function App() {
       backtestTargetMode,
       backtestExitMode,
     );
+  };
+
+  const openWangStrategy = (code?: string) => {
+    const normalized = (code ?? query).trim();
+    if (normalized) setWangStrategyQuery(normalized);
+    setPageMode("wangStrategy");
+    setShowSuggestions(false);
   };
 
   useEffect(() => {
@@ -3527,7 +3535,7 @@ export default function App() {
           <button
             type="button"
             className={pageMode === "wangStrategy" ? "tab active" : "tab"}
-            onClick={() => setPageMode("wangStrategy")}
+            onClick={() => openWangStrategy()}
           >
             왕장군 전략
           </button>
@@ -5258,11 +5266,15 @@ export default function App() {
             )}
           </>
         ) : pageMode === "screener" ? (
-          <ScreenerPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
+          <ScreenerPanel
+            apiBase={apiBase}
+            onSelectSymbol={moveToAnalysisWithSymbol}
+            onSelectWangStrategy={openWangStrategy}
+          />
         ) : pageMode === "strategy" ? (
           <StrategyPanel apiBase={apiBase} onSelectSymbol={moveToAnalysisWithSymbol} />
         ) : pageMode === "wangStrategy" ? (
-          <WangStrategyPanel apiBase={apiBase} />
+          <WangStrategyPanel apiBase={apiBase} initialQuery={wangStrategyQuery} />
         ) : pageMode === "glossary" ? (
           <GlossaryPanel />
         ) : pageMode === "autotrade" ? (
@@ -5286,7 +5298,7 @@ export default function App() {
         <button
           type="button"
           className={pageMode === "wangStrategy" ? "active" : ""}
-          onClick={() => setPageMode("wangStrategy")}
+          onClick={() => openWangStrategy()}
         >
           왕장군
         </button>
