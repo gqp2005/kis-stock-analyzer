@@ -281,6 +281,30 @@ const wangActionBiasLabel = (value: WangStrategyActionBias): string => {
   return "관찰";
 };
 
+const dashboardStrategyLabel = (key: string): string => {
+  if (key === "wangStrategy") return "왕장군 검증";
+  if (key === "washoutPullback") return "설거지+눌림목";
+  if (key === "darvasRetest") return "다르바스";
+  if (key === "nr7InsideBar") return "NR7";
+  if (key === "trendTemplate") return "추세 템플릿";
+  if (key === "rsiDivergence") return "RSI 다이버전스";
+  if (key === "flowPersistence") return "수급 지속성";
+  if (key === "volume") return "거래량";
+  if (key === "vcp") return "VCP";
+  if (key === "ihs") return "IHS";
+  if (key === "hs") return "H&S";
+  if (key.startsWith("wangActionBias:")) {
+    return `행동 · ${wangActionBiasLabel(key.replace("wangActionBias:", "") as WangStrategyActionBias)}`;
+  }
+  if (key.startsWith("wangPhase:")) {
+    return `phase · ${wangPhaseLabel(key.replace("wangPhase:", "") as WangStrategyPhase)}`;
+  }
+  return key;
+};
+
+const dashboardScoreModeLabel = (scoreMode: "primary" | "validation" | undefined): string =>
+  scoreMode === "validation" ? "보조 검증" : "본 전략";
+
 const wangBadgeClass = (wang: WangStrategyScreeningSummary): string => {
   if (wang.eligible) return "badge good";
   if (wang.actionBias === "CAUTION" || wang.actionBias === "OVERHEAT") return "badge caution";
@@ -1069,26 +1093,73 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
           {dashboard.marketTemperature.cautionCount}
         </p>
         <p>
-          RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들 {dashboard.marketTemperature.cupHandleCount} · 설거지{" "}
-          {dashboard.marketTemperature.washoutCount} · 왕장군 {dashboard.marketTemperature.wangEligibleCount}
+          본 전략: RS 강세 {dashboard.marketTemperature.rsStrongCount} · 컵앤핸들{" "}
+          {dashboard.marketTemperature.cupHandleCount} · 설거지 {dashboard.marketTemperature.washoutCount}
+        </p>
+        <p>
+          왕장군 보조 검증: 적립 {dashboard.marketTemperature.wangEligibleCount} · 관찰{" "}
+          {dashboard.marketTemperature.wangWatchCount} · 비적합 {dashboard.marketTemperature.wangIneligibleCount}
         </p>
         <p>{dashboard.marketTemperature.summary}</p>
       </article>
 
       <article className="strategy-mini-item">
         <div className="strategy-mini-head">
-          <strong>전략별 성과 랭킹</strong>
+          <strong>본 전략 랭킹</strong>
           <small className="signal-tag neutral">상위 5개</small>
         </div>
         <ul className="insight-list">
-          {dashboard.strategyRanking.slice(0, 5).map((item) => (
+          {dashboard.strategyRanking
+            .filter((item) => item.scoreMode !== "validation")
+            .slice(0, 5)
+            .map((item) => (
             <li key={`rank-${item.key}`}>
               <span>
-                {item.label} · 후보 {item.candidateCount}개 · 품질 {item.qualityScore ?? "-"}
+                {dashboardStrategyLabel(item.key)} · 후보 {item.candidateCount}개 · 품질 {item.qualityScore ?? "-"}
               </span>
+              <small className={`signal-tag ${item.scoreMode === "validation" ? "neutral" : "positive"}`}>
+                {dashboardScoreModeLabel(item.scoreMode)}
+              </small>
               <small className="signal-tag neutral">
                 승률 {formatNullable(item.avgWinRate)} / PF {formatNullable(item.avgPf)}
               </small>
+            </li>
+          ))}
+        </ul>
+      </article>
+
+      <article className="strategy-mini-item">
+        <div className="strategy-mini-head">
+          <strong>왕장군 검증 분포</strong>
+          <small className="signal-tag neutral">{dashboard.wangValidation.totalValidated}건</small>
+        </div>
+        <p>{dashboard.wangValidation.summary}</p>
+        <p>
+          적립 후보 {dashboard.wangValidation.distribution.eligible} · 관찰 후보{" "}
+          {dashboard.wangValidation.distribution.watchCandidate} · 비적합{" "}
+          {dashboard.wangValidation.distribution.notEligible}
+        </p>
+        <p>
+          행동축: 적립 {dashboard.wangValidation.distribution.byActionBias.ACCUMULATE} · 관찰{" "}
+          {dashboard.wangValidation.distribution.byActionBias.WATCH} · 경계{" "}
+          {dashboard.wangValidation.distribution.byActionBias.CAUTION}
+        </p>
+        <ul className="insight-list">
+          {dashboard.wangValidation.ranking.byPhase.slice(0, 3).map((item) => (
+            <li key={`wang-phase-${item.key}`}>
+              <span>
+                {dashboardStrategyLabel(item.key)} · 후보 {item.candidateCount}개 · 평균{" "}
+                {formatNullable(item.avgScore)}
+              </span>
+              <small className="signal-tag neutral">{dashboardScoreModeLabel(item.scoreMode)}</small>
+            </li>
+          ))}
+          {dashboard.wangValidation.ranking.byActionBias.slice(0, 2).map((item) => (
+            <li key={`wang-bias-${item.key}`}>
+              <span>
+                {dashboardStrategyLabel(item.key)} · 신뢰도 {formatNullable(item.avgConfidence)}
+              </span>
+              <small className="signal-tag neutral">{dashboardScoreModeLabel(item.scoreMode)}</small>
             </li>
           ))}
         </ul>
@@ -1108,9 +1179,15 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                   {items.slice(0, 3).map((item) => (
                     <li key={`${date}-${item.code}-${item.strategyKey}`}>
                       <span>
-                        {item.name}({item.code}) · {item.strategyLabel}
+                        {item.name}({item.code}) · {dashboardStrategyLabel(item.strategyKey)}
                       </span>
-                      <small className="signal-tag neutral">{item.stateLabel}</small>
+                      <small className={`signal-tag ${item.scoreMode === "validation" ? "neutral" : "positive"}`}>
+                        {item.strategyKey === "wangStrategy" && item.wangPhase && item.wangActionBias
+                          ? `${wangActionBiasLabel(item.wangActionBias as WangStrategyActionBias)} · ${wangPhaseLabel(
+                              item.wangPhase as WangStrategyPhase,
+                            )}`
+                          : item.stateLabel}
+                      </small>
                     </li>
                   ))}
                 </ul>
@@ -1479,6 +1556,12 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                     <small className={`reason-tag ${item.severity === "warning" ? "negative" : item.severity === "positive" ? "positive" : "neutral"}`}>
                       {item.summary}
                     </small>
+                    {item.wangActionBias ? (
+                      <small className="reason-tag neutral">
+                        {wangActionBiasLabel(item.wangActionBias as WangStrategyActionBias)}
+                        {item.wangPhase ? ` · ${wangPhaseLabel(item.wangPhase as WangStrategyPhase)}` : ""}
+                      </small>
+                    ) : null}
                   </li>
                 ))}
               </ul>

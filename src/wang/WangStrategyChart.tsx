@@ -50,11 +50,36 @@ const fromChartTimeKey = (value: unknown): string | null => {
   if (!value) return null;
   if (typeof value === "string") return value;
   if (typeof value === "number") return new Date(value * 1000).toISOString().slice(0, 10);
-  if (typeof value === "object" && value !== null && "year" in value && "month" in value && "day" in value) {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "year" in value &&
+    "month" in value &&
+    "day" in value
+  ) {
     const businessDay = value as { year: number; month: number; day: number };
     return `${businessDay.year}-${String(businessDay.month).padStart(2, "0")}-${String(businessDay.day).padStart(2, "0")}`;
   }
   return null;
+};
+
+const formatOverlayLabel = (label: string): string => {
+  switch (label) {
+    case "week.min.region":
+      return "최소거래량 구간";
+    case "week.min.low":
+      return "최소거래량 저가";
+    case "week.min.high":
+      return "최소거래량 고가";
+    case "week.projected.zone":
+      return "주봉 zone 투영";
+    case "week.zone.high":
+      return "주봉 zone 상단";
+    case "week.zone.low":
+      return "주봉 zone 하단";
+    default:
+      return label;
+  }
 };
 
 const toSeriesMarkers = (markers: WangStrategyMarker[]): SeriesMarker<Time>[] =>
@@ -66,7 +91,9 @@ const toSeriesMarkers = (markers: WangStrategyMarker[]): SeriesMarker<Time>[] =>
     text: marker.label,
   }));
 
-const toLineData = (points: Array<{ time: string; value: number | null }>): Array<LineData<Time> | WhitespaceData<Time>> =>
+const toLineData = (
+  points: Array<{ time: string; value: number | null }>,
+): Array<LineData<Time> | WhitespaceData<Time>> =>
   points.map((point) =>
     point.value == null ? { time: toChartTime(point.time) } : { time: toChartTime(point.time), value: point.value },
   );
@@ -167,7 +194,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       })),
     );
 
-    const maSeriesList = chartOverlays.movingAverages.map((line) => {
+    chartOverlays.movingAverages.forEach((line) => {
       const series = chart.addLineSeries({
         color: line.color,
         lineWidth: line.lineWidth,
@@ -175,7 +202,6 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         lastValueVisible: false,
       });
       series.setData(toLineData(line.points));
-      return series;
     });
 
     candleSeries.setMarkers(toSeriesMarkers(markers));
@@ -193,7 +219,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         return [
           {
             id: zone.id,
-            label: zone.label,
+            label: formatOverlayLabel(zone.label),
             left: Math.min(startX, endX),
             top: Math.min(highY, lowY),
             width: Math.max(Math.abs(endX - startX), 24),
@@ -211,7 +237,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         return [
           {
             id: line.id,
-            label: line.label,
+            label: formatOverlayLabel(line.label),
             left: Math.min(startX, endX),
             top: y,
             width: Math.max(Math.abs(endX - startX), 20),
@@ -253,7 +279,6 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       refreshOverlayRef.current = null;
       resizeObserver.disconnect();
       chart.timeScale().unsubscribeVisibleTimeRangeChange(updateOverlayLayout);
-      maSeriesList.forEach((series) => series.priceScale());
       chart.remove();
     };
   }, [candles, chartOverlays, height, markers]);
@@ -297,9 +322,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
               <span>{rect.label}</span>
             </div>
           ))}
-          {selectedX != null && (
-            <div className="wang-chart-selection" style={{ left: `${selectedX}px` }} />
-          )}
+          {selectedX != null && <div className="wang-chart-selection" style={{ left: `${selectedX}px` }} />}
         </div>
       </div>
       <div className="wang-chart-legend">
@@ -311,7 +334,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
         ))}
         <span className="wang-legend-chip">
           <i className="wang-chart-legend-ref" />
-          ref.level
+          기준선
         </span>
         <span className="wang-chart-legend-zone">zone</span>
       </div>

@@ -39,10 +39,18 @@ interface WangCycleDetection {
   belowMa20: boolean;
   ma20DistancePct: number | null;
   lifeIndex: number;
+  primaryVolumeIndex: number;
   baseIndices: number[];
   risingIndices: number[];
   elasticIndices: number[];
   minIndex: number;
+  minVolume: number | null;
+  relativeShortVolumeScore: number;
+  cooldownBarsFromLife: number | null;
+  cooldownReady: boolean;
+  secondSurgeIndex: number;
+  halfExitIndex: number;
+  recentHalfExitWarning: boolean;
   zoneStartIndex: number;
   zoneEndIndex: number;
   zoneLow: number | null;
@@ -87,14 +95,38 @@ const isLocalVolumePivot = (candles: Candle[], index: number, span = 2): boolean
   return true;
 };
 
-const isLocalVolumeTrough = (candles: Candle[], index: number, span = 1): boolean => {
-  const target = candles[index]?.volume ?? 0;
-  if (!target) return false;
-  for (let offset = 1; offset <= span; offset += 1) {
-    if (candles[index - offset] && candles[index - offset].volume < target) return false;
-    if (candles[index + offset] && candles[index + offset].volume < target) return false;
+const findMajorVolumePivotIndices = (candles: Candle[], averageVolume: number): number[] =>
+  candles
+    .map((candle, index) => ({ candle, index }))
+    .filter(({ candle, index }) => {
+      if (!isLocalVolumePivot(candles, index)) return false;
+      return candle.volume >= averageVolume * WANG_STRATEGY_CONSTANTS.majorVolumePivotAverageMultiple;
+    })
+    .map(({ index }) => index);
+
+const findLowestVolumeIndexAfter = (candles: Candle[], startIndex: number): number => {
+  if (startIndex < 0 || startIndex >= candles.length - 1) return -1;
+
+  let selectedIndex = -1;
+  for (let index = startIndex + 1; index < candles.length; index += 1) {
+    const volume = candles[index]?.volume ?? 0;
+    if (volume <= 0) continue;
+    if (selectedIndex < 0 || volume < candles[selectedIndex].volume) {
+      selectedIndex = index;
+      continue;
+    }
+    if (volume === candles[selectedIndex].volume && index > selectedIndex) {
+      selectedIndex = index;
+    }
   }
-  return true;
+
+  return selectedIndex;
+};
+
+const computeRelativeShortVolumeScore = (minVolume: number | null, averageVolume: number): number => {
+  if (minVolume == null || averageVolume <= 0) return 0;
+  const compression = minVolume / averageVolume;
+  return clamp(Math.round((1 - Math.min(compression, 1)) * 100), 0, 100);
 };
 
 const toRoundedNumber = (value: number): number => round2(value) ?? value;
@@ -125,10 +157,18 @@ const detectVolumeCycle = (
       belowMa20: false,
       ma20DistancePct: null,
       lifeIndex: -1,
+      primaryVolumeIndex: -1,
       baseIndices: [],
       risingIndices: [],
       elasticIndices: [],
       minIndex: -1,
+      minVolume: null,
+      relativeShortVolumeScore: 0,
+      cooldownBarsFromLife: null,
+      cooldownReady: false,
+      secondSurgeIndex: -1,
+      halfExitIndex: -1,
+      recentHalfExitWarning: false,
       zoneStartIndex: -1,
       zoneEndIndex: -1,
       zoneLow: null,
@@ -150,11 +190,13 @@ const detectVolumeCycle = (
   const averageVolume = average(candles.map((candle) => candle.volume));
   const referenceVolume = maxVolume * WANG_STRATEGY_CONSTANTS.referenceVolumeRatio;
   const lifeIndex = candles.findIndex((candle) => candle.volume === maxVolume);
+  const majorVolumePivotIndices = findMajorVolumePivotIndices(candles, averageVolume);
+  const primaryVolumeIndex = majorVolumePivotIndices[0] ?? lifeIndex;
 
   const baseIndices = candles
     .map((candle, index) => ({ candle, index }))
     .filter(({ candle, index }) => {
-      if (index <= lifeIndex) return false;
+      if (index <= primaryVolumeIndex) return false;
       if (!isLocalVolumePivot(candles, index)) return false;
       if (candle.volume < referenceVolume * WANG_STRATEGY_CONSTANTS.baseVolumeMinRatio) return false;
       if (candle.volume >= maxVolume * 0.98) return false;
@@ -194,21 +236,62 @@ const detectVolumeCycle = (
     .slice(-2);
 
   const latestElasticIndex = elasticIndices.length > 0 ? elasticIndices[elasticIndices.length - 1] : -1;
-  const minSearchStartIndex = Math.max(latestElasticIndex, latestRisingIndex, latestBaseIndex);
+  const minSearchStartIndex =
+    latestElasticIndex >= 0 ? latestElasticIndex : latestRisingIndex >= 0 ? latestRisingIndex : latestBaseIndex;
 
-  const minIndices = candles
-    .map((candle, index) => ({ candle, index }))
-    .filter(({ candle, index }) => {
-      if (index <= minSearchStartIndex) return false;
-      if (!isLocalVolumeTrough(candles, index)) return false;
-      if (candle.volume > referenceVolume * WANG_STRATEGY_CONSTANTS.minVolumeMaxRatio) return false;
-      const ma20Point = ma20Series[index]?.value ?? null;
-      return ma20Point == null || candle.close <= ma20Point * WANG_STRATEGY_CONSTANTS.minVolumeMa20Buffer;
-    })
-    .sort((left, right) => left.candle.volume - right.candle.volume || right.index - left.index)
-    .map(({ index }) => index);
-
-  const minIndex = minIndices.length > 0 ? minIndices[0] : -1;
+  // In Wang lecture terminology, minimum volume is the absolute lowest weekly turnover
+  // after the active reference/rising/elastic sequence, not only a local trough candidate.
+  const minIndex = findLowestVolumeIndexAfter(candles, minSearchStartIndex);
+  const minVolume = minIndex >= 0 ? candles[minIndex].volume : null;
+  const relativeShortVolumeScore = computeRelativeShortVolumeScore(minVolume, averageVolume);
+  const cooldownBarsFromLife =
+    minIndex >= 0 && primaryVolumeIndex >= 0 && minIndex > primaryVolumeIndex ? minIndex - primaryVolumeIndex : null;
+  const cooldownReady =
+    cooldownBarsFromLife != null &&
+    cooldownBarsFromLife >= WANG_STRATEGY_CONSTANTS.minCooldownBarsAfterLife;
+  const surgeSearchStartIndex = Math.max(primaryVolumeIndex, minIndex);
+  const secondSurgeIndex =
+    primaryVolumeIndex >= 0
+      ? candles
+          .map((candle, index) => ({ candle, index }))
+          .filter(({ candle, index }) => {
+            if (index <= surgeSearchStartIndex) return false;
+            if (!isLocalVolumePivot(candles, index)) return false;
+            if (
+              candle.volume <
+              candles[primaryVolumeIndex].volume * WANG_STRATEGY_CONSTANTS.secondSurgeBreakoutRatio
+            ) {
+              return false;
+            }
+            return (
+              candle.close >=
+              candles[primaryVolumeIndex].high * (1 + WANG_STRATEGY_CONSTANTS.secondSurgePriceBufferPct)
+            );
+          })
+          .map(({ index }) => index)[0] ?? -1
+      : -1;
+  const halfExitIndex =
+    primaryVolumeIndex >= 0
+      ? candles
+          .map((candle, index) => ({ candle, index }))
+          .filter(({ candle, index }) => {
+            if (index <= surgeSearchStartIndex) return false;
+            if (!isLocalVolumePivot(candles, index)) return false;
+            if (
+              candle.volume <
+                candles[primaryVolumeIndex].volume * WANG_STRATEGY_CONSTANTS.halfMaxExitLowerRatio ||
+              candle.volume >
+                candles[primaryVolumeIndex].volume * WANG_STRATEGY_CONSTANTS.halfMaxExitUpperRatio
+            ) {
+              return false;
+            }
+            return secondSurgeIndex < 0 || index >= secondSurgeIndex;
+          })
+          .map(({ index }) => index)
+          .slice(-1)[0] ?? -1
+      : -1;
+  const recentHalfExitWarning =
+    halfExitIndex >= 0 && candles.length - 1 - halfExitIndex <= WANG_STRATEGY_CONSTANTS.halfMaxExitRecentBars;
   const zoneStartIndex = minIndex >= 0 ? Math.min(candles.length - 1, minIndex + 1) : -1;
   const zoneEndIndex =
     zoneStartIndex >= 0
@@ -262,10 +345,18 @@ const detectVolumeCycle = (
     belowMa20,
     ma20DistancePct,
     lifeIndex,
+    primaryVolumeIndex,
     baseIndices,
     risingIndices,
     elasticIndices,
     minIndex,
+    minVolume,
+    relativeShortVolumeScore,
+    cooldownBarsFromLife,
+    cooldownReady,
+    secondSurgeIndex,
+    halfExitIndex,
+    recentHalfExitWarning,
     zoneStartIndex,
     zoneEndIndex,
     zoneLow,
@@ -536,7 +627,13 @@ const buildWeeklyPhaseContext = (
       (detection.elasticIndices.length > 0 ? weights.elastic : 0) +
       (detection.minIndex >= 0 ? weights.min : 0) +
       (detection.zoneLow != null && detection.zoneHigh != null ? weights.zone : 0) +
-      (detection.latestRetestIndex >= 0 ? weights.retest : 0),
+      (detection.latestRetestIndex >= 0 ? weights.retest : 0) +
+      (detection.relativeShortVolumeScore >= WANG_STRATEGY_CONSTANTS.shortVolumeEntryScoreThreshold
+        ? weights.shortVolume
+        : 0) +
+      (detection.cooldownReady ? weights.cooldown : 0) +
+      (detection.secondSurgeIndex >= 0 ? weights.breakout : 0) -
+      (detection.recentHalfExitWarning ? weights.halfExitPenalty : 0),
     0,
     100,
   );
@@ -555,7 +652,7 @@ const buildWeeklyPhaseContext = (
     detection.currentPhase === "REACCUMULATION"
       ? "주봉 minimum 이후 zone을 다시 확인하는 단계입니다."
       : detection.currentPhase === "MIN_VOLUME"
-        ? "주봉 최소거래량이 확인돼 가장 쌀 확률이 높은 자리 후보를 설명할 수 있습니다."
+        ? "주봉 기준거래량 이후 절대 최저 거래량이 확인돼 최소거래량 구간을 설명할 수 있습니다."
         : detection.currentPhase === "ELASTIC_VOLUME"
           ? "주봉 탄력거래량 단계까지는 왔지만 minimum 확인 전이라 실행보다 구조 해석이 우선입니다."
           : detection.currentPhase === "RISING_VOLUME"
@@ -580,12 +677,25 @@ const buildWeeklyPhaseContext = (
     referenceVolume: Math.round(detection.referenceVolume),
     averageVolume: Math.round(detection.averageVolume),
     maxVolume: Math.round(detection.maxVolume),
+    minVolume: detection.minVolume != null ? Math.round(detection.minVolume) : null,
     baseRepeatCount: detection.baseIndices.length,
     risingCount: detection.risingIndices.length,
     elasticCount: detection.elasticIndices.length,
     hasMinVolume: detection.minIndex >= 0,
     hasWeeklyZone: detection.zoneLow != null && detection.zoneHigh != null,
-    anchorTime: detection.lifeIndex >= 0 ? detection.candles[detection.lifeIndex].time : null,
+    relativeShortVolumeScore: detection.relativeShortVolumeScore,
+    cooldownBarsFromLife: detection.cooldownBarsFromLife,
+    cooldownReady: detection.cooldownReady,
+    breakoutReady: detection.secondSurgeIndex >= 0,
+    recentHalfExitWarning: detection.recentHalfExitWarning,
+    secondSurgeTime: detection.secondSurgeIndex >= 0 ? detection.candles[detection.secondSurgeIndex].time : null,
+    halfExitTime: detection.halfExitIndex >= 0 ? detection.candles[detection.halfExitIndex].time : null,
+    anchorTime:
+      detection.primaryVolumeIndex >= 0
+        ? detection.candles[detection.primaryVolumeIndex].time
+        : detection.lifeIndex >= 0
+          ? detection.candles[detection.lifeIndex].time
+          : null,
   };
 };
 
@@ -838,7 +948,7 @@ export const buildWangStrategyPayload = (params: {
       id: "week-min",
       label: "주봉 최소거래량 확인",
       ok: weeklyPhaseContext.hasMinVolume,
-      detail: "가장 쌀 확률이 높은 자리 후보로 보는 minimum이 주봉에서 먼저 잡혀야 합니다.",
+      detail: "왕장군 기준에서는 활성 기준거래량 이후 주봉 거래량이 최저치를 찍는 구간을 minimum으로 읽습니다.",
       group: "structure",
       weight: 16,
     },
@@ -900,6 +1010,42 @@ export const buildWangStrategyPayload = (params: {
     },
   ];
 
+  checklist.splice(5, 0,
+    {
+      id: "week-short-volume",
+      label: "주봉 상대 최저 거래량 압축",
+      ok: weeklyPhaseContext.relativeShortVolumeScore >= WANG_STRATEGY_CONSTANTS.shortVolumeEntryScoreThreshold,
+      detail: "1편 기준으로는 상대적으로 가장 짧은 거래량일수록 저평가 진입 구간 설명이 쉬워집니다.",
+      group: "structure",
+      weight: 10,
+    },
+    {
+      id: "week-cooldown",
+      label: "인생거래량 이후 기간 조정",
+      ok: weeklyPhaseContext.cooldownReady,
+      detail: "인생거래량 직후보다 일정 기간 조정을 거친 뒤 minimum을 읽는 흐름이 1편 원리에 가깝습니다.",
+      group: "structure",
+      weight: 8,
+    },
+    {
+      id: "week-breakout-reset",
+      label: "2차 거래량 신고가 조건",
+      ok: weeklyPhaseContext.breakoutReady,
+      detail: "1편에서는 2차 거래량이 1차 최대 거래량을 넘어야 신고가 재출발 가능성을 더 높게 봅니다.",
+      group: "structure",
+      weight: 4,
+    },
+  );
+
+  checklist.push({
+    id: "half-max-warning",
+    label: "최대거래량 절반 재출현 경계 없음",
+    ok: !weeklyPhaseContext.recentHalfExitWarning,
+    detail: "1편에서는 최대 거래량의 절반 수준 거래량이 다시 크게 붙으면 시세 마무리 경고로 읽습니다.",
+    group: "risk",
+    weight: 5,
+  });
+
   const score = clamp(
     Math.round(weeklyPhaseContext.score * 0.58 + dailyExecutionContext.score * 0.42),
     0,
@@ -934,6 +1080,20 @@ export const buildWangStrategyPayload = (params: {
     reasons.push("월봉이 하락 정렬이라도 이번 버전에서는 교육형 보수 해석으로만 반영합니다.");
   }
 
+  if (weeklyPhaseContext.minVolume != null) {
+    reasons.push(
+      `1편 기준 상대 최저 거래량 압축 점수는 ${weeklyPhaseContext.relativeShortVolumeScore}점이며 최소거래량은 ${weeklyPhaseContext.minVolume.toLocaleString("ko-KR")}입니다.`,
+    );
+  }
+  if (weeklyPhaseContext.cooldownBarsFromLife != null) {
+    reasons.push(
+      `인생거래량 이후 ${weeklyPhaseContext.cooldownBarsFromLife}주가 지나 minimum을 읽고 있어 기간 조정 여부를 함께 반영합니다.`,
+    );
+  }
+  if (weeklyPhaseContext.breakoutReady && weeklyPhaseContext.secondSurgeTime) {
+    reasons.push(`2차 거래량이 1차 최대 거래량을 넘긴 주봉 신호가 ${weeklyPhaseContext.secondSurgeTime}에 확인됐습니다.`);
+  }
+
   const riskNotes: WangStrategyRiskNote[] = [];
   if (!weeklyPhaseContext.hasMinVolume) {
     riskNotes.push({
@@ -949,6 +1109,14 @@ export const buildWangStrategyPayload = (params: {
       title: "주봉 zone 미완성",
       detail: "minimum 이후 zone이 아직 약하면 적립 구간 설명은 가능해도 확정 위치로 보기 어렵습니다.",
       severity: "warning",
+    });
+  }
+  if (!weeklyPhaseContext.cooldownReady && weeklyPhaseContext.hasMinVolume) {
+    riskNotes.push({
+      id: "risk-short-cooldown",
+      title: "기간 조정 부족",
+      detail: "1편 기준으로는 인생거래량 이후 충분한 시간 조정을 거친 minimum이 더 안정적입니다.",
+      severity: "info",
     });
   }
   if (dailyExecutionContext.state === "AVOID_BREAKDOWN" && projectedDayZone != null) {
@@ -973,6 +1141,14 @@ export const buildWangStrategyPayload = (params: {
       title: "20일선 위 실행",
       detail: "20일선 위에서는 적립보다 관찰과 zone 재접근 확인이 먼저입니다.",
       severity: "info",
+    });
+  }
+  if (weeklyPhaseContext.recentHalfExitWarning && weeklyPhaseContext.halfExitTime) {
+    riskNotes.push({
+      id: "risk-half-max-exit",
+      title: "최대거래량 절반 재출현",
+      detail: `${weeklyPhaseContext.halfExitTime} 주봉에서 최대거래량 절반 수준이 다시 붙어 1편 기준 시세 마무리 경고로 읽습니다.`,
+      severity: "warning",
     });
   }
   if (weekAnalysis?.regime === "DOWN" || monthAnalysis?.regime === "DOWN") {
@@ -1086,10 +1262,77 @@ export const buildWangStrategyPayload = (params: {
 
     if (weekDetection.minIndex >= 0) {
       weekMarkers.push(
-        buildMarker("week", weekDetection.candles, weekDetection.minIndex, "VOL_MIN", "최소거래량", "주봉 최소거래량 후보", 95, "belowBar", "circle", "#22d3ee"),
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          weekDetection.minIndex,
+          "VOL_MIN",
+          "최소거래량",
+          "활성 기준거래량 이후 절대 최저 주봉 거래량",
+          95,
+          "belowBar",
+          "circle",
+          "#22d3ee",
+        ),
       );
       weekRefLevels.push(
         buildRefLevel("week", weekDetection.candles, weekDetection.minIndex, weekDetection.candles[weekDetection.minIndex].low, "min.ref", "#22d3ee", "dashed"),
+      );
+    }
+
+    if (weekDetection.secondSurgeIndex >= 0) {
+      weekMarkers.push(
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          weekDetection.secondSurgeIndex,
+          "VOL_BREAKOUT",
+          "2차 거래량",
+          "1편 기준 1차 최대 거래량을 넘겨 신고가 재출발을 확인하는 구간",
+          90,
+          "aboveBar",
+          "arrowUp",
+          "#a78bfa",
+        ),
+      );
+      weekRefLevels.push(
+        buildRefLevel(
+          "week",
+          weekDetection.candles,
+          weekDetection.secondSurgeIndex,
+          weekDetection.candles[weekDetection.secondSurgeIndex].high,
+          "breakout.ref",
+          "#a78bfa",
+          "solid",
+        ),
+      );
+    }
+
+    if (weekDetection.halfExitIndex >= 0) {
+      weekMarkers.push(
+        buildMarker(
+          "week",
+          weekDetection.candles,
+          weekDetection.halfExitIndex,
+          "VOL_HALF",
+          "절반 거래량",
+          "1편 기준 최대거래량 절반 수준 재출현으로 시세 마무리 경고 구간",
+          weekDetection.recentHalfExitWarning ? 88 : 72,
+          "aboveBar",
+          "arrowDown",
+          "#fb7185",
+        ),
+      );
+      weekRefLevels.push(
+        buildRefLevel(
+          "week",
+          weekDetection.candles,
+          weekDetection.halfExitIndex,
+          weekDetection.candles[weekDetection.halfExitIndex].close,
+          "half.ref",
+          "#fb7185",
+          "dashed",
+        ),
       );
     }
 
@@ -1159,7 +1402,18 @@ export const buildWangStrategyPayload = (params: {
 
   if (dayDetection.minIndex >= 0) {
     dayMarkers.push(
-      buildMarker("day", dayDetection.candles, dayDetection.minIndex, "VOL_MIN", "일봉 최소거래량", "일봉 미세 조정 최소거래량 후보", 82, "belowBar", "circle", "#67e8f9"),
+      buildMarker(
+        "day",
+        dayDetection.candles,
+        dayDetection.minIndex,
+        "VOL_MIN",
+        "일봉 최소거래량",
+        "활성 구간 이후 절대 최저 일봉 거래량",
+        82,
+        "belowBar",
+        "circle",
+        "#67e8f9",
+      ),
     );
     dayRefLevels.push(
       buildRefLevel("day", dayDetection.candles, dayDetection.minIndex, dayDetection.candles[dayDetection.minIndex].low, "day.min.ref", "#67e8f9", "dashed"),

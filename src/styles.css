@@ -3593,24 +3593,57 @@ h2 {
 
 .wang-phase-stack,
 .wang-risk-stack,
-.wang-training-stack {
+.wang-training-stack,
+.wang-explainer-stack {
   display: grid;
   gap: 10px;
 }
 
 .wang-phase-item,
 .wang-timeframe-item,
-.wang-training-item {
+.wang-training-item,
+.wang-explainer-card {
   border: 1px solid rgba(87, 163, 255, 0.18);
   border-radius: 12px;
   background: rgba(12, 24, 36, 0.48);
   padding: 10px;
 }
 
+.wang-explainer-card strong,
+.wang-marker-guide-title {
+  display: block;
+  margin-bottom: 6px;
+  color: #eef7ff;
+}
+
+.wang-explainer-card p,
+.wang-marker-guide p {
+  margin: 0;
+  color: #c3d7ec;
+  line-height: 1.55;
+}
+
+.wang-marker-guide {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(87, 163, 255, 0.18);
+  background: rgba(11, 23, 36, 0.44);
+}
+
 .wang-checklist-columns {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.wang-phase-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .wang-risk-item {

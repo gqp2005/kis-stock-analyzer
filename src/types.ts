@@ -1288,11 +1288,14 @@ export interface DashboardFavoriteAlert {
   title: string;
   summary: string;
   reasons: string[];
+  wangPhase?: string | null;
+  wangActionBias?: string | null;
 }
 
 export interface StrategyRankingItem {
   key: string;
   label: string;
+  scoreMode?: "primary" | "validation";
   candidateCount: number;
   avgScore: number | null;
   avgConfidence: number | null;
@@ -1314,6 +1317,30 @@ export interface StrategyTimelineEvent {
   score: number;
   confidence: number | null;
   summary: string;
+  wangPhase?: string | null;
+  wangActionBias?: string | null;
+  scoreMode?: "primary" | "validation";
+}
+
+export interface WangValidationDistribution {
+  eligible: number;
+  watchCandidate: number;
+  notEligible: number;
+  byActionBias: Record<"ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT", number>;
+  byPhase: Array<{
+    phase: string;
+    count: number;
+  }>;
+}
+
+export interface WangValidationOverview {
+  totalValidated: number;
+  summary: string;
+  distribution: WangValidationDistribution;
+  ranking: {
+    byActionBias: StrategyRankingItem[];
+    byPhase: StrategyRankingItem[];
+  };
 }
 
 export interface DashboardOverviewResponse {
@@ -1344,11 +1371,14 @@ export interface DashboardOverviewResponse {
     flowPersistenceCount: number;
     wangEligibleCount: number;
     wangAccumulateCount: number;
+    wangWatchCount: number;
+    wangIneligibleCount: number;
     heatScore: number;
     heatLabel: "강세" | "중립" | "혼조" | "위축";
     summary: string;
   };
   strategyRanking: StrategyRankingItem[];
+  wangValidation: WangValidationOverview;
   timeline: StrategyTimelineEvent[];
   favorites: {
     trackedCount: number;

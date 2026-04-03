@@ -23,11 +23,14 @@ export interface FavoriteAlertItem {
   title: string;
   summary: string;
   reasons: string[];
+  wangPhase?: string | null;
+  wangActionBias?: string | null;
 }
 
 export interface StrategyRankingItem {
   key: string;
   label: string;
+  scoreMode?: "primary" | "validation";
   candidateCount: number;
   avgScore: number | null;
   avgConfidence: number | null;
@@ -49,6 +52,30 @@ export interface StrategyTimelineEvent {
   score: number;
   confidence: number | null;
   summary: string;
+  wangPhase?: string | null;
+  wangActionBias?: string | null;
+  scoreMode?: "primary" | "validation";
+}
+
+export interface WangValidationDistribution {
+  eligible: number;
+  watchCandidate: number;
+  notEligible: number;
+  byActionBias: Record<"ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT", number>;
+  byPhase: Array<{
+    phase: string;
+    count: number;
+  }>;
+}
+
+export interface WangValidationOverview {
+  totalValidated: number;
+  summary: string;
+  distribution: WangValidationDistribution;
+  ranking: {
+    byActionBias: StrategyRankingItem[];
+    byPhase: StrategyRankingItem[];
+  };
 }
 
 export interface MarketTemperatureSummary {
@@ -70,6 +97,8 @@ export interface MarketTemperatureSummary {
   flowPersistenceCount: number;
   wangEligibleCount: number;
   wangAccumulateCount: number;
+  wangWatchCount: number;
+  wangIneligibleCount: number;
   heatScore: number;
   heatLabel: "강세" | "중립" | "혼조" | "위축";
   summary: string;
@@ -86,6 +115,7 @@ export interface DashboardOverviewPayload {
   };
   marketTemperature: MarketTemperatureSummary;
   strategyRanking: StrategyRankingItem[];
+  wangValidation: WangValidationOverview;
   timeline: StrategyTimelineEvent[];
   favorites: {
     trackedCount: number;
@@ -123,6 +153,35 @@ const fallbackWangStrategy = () => ({
 
 const getWangStrategy = (candidate: ScreenerStoredCandidate) =>
   candidate.wangStrategy ?? fallbackWangStrategy();
+
+const isWangWatchCandidate = (candidate: ScreenerStoredCandidate): boolean => {
+  const wang = getWangStrategy(candidate);
+  return !wang.eligible && wang.label !== "비적합";
+};
+
+const wangValidationSummaryLabel = (candidate: ScreenerStoredCandidate): string => {
+  const wang = getWangStrategy(candidate);
+  if (wang.eligible) return "적립 후보";
+  if (isWangWatchCandidate(candidate)) return "관찰 후보";
+  return "비적합";
+};
+
+const wangPhaseLabel = (phase: string): string => {
+  if (phase === "LIFE_VOLUME") return "인생거래량";
+  if (phase === "BASE_VOLUME") return "기준거래량";
+  if (phase === "RISING_VOLUME") return "상승거래량";
+  if (phase === "ELASTIC_VOLUME") return "탄력거래량";
+  if (phase === "MIN_VOLUME") return "최소거래량";
+  if (phase === "REACCUMULATION") return "재축적";
+  return "미감지";
+};
+
+const wangActionBiasLabel = (bias: string): string => {
+  if (bias === "ACCUMULATE") return "적립";
+  if (bias === "CAUTION") return "경계";
+  if (bias === "OVERHEAT") return "과열";
+  return "관찰";
+};
 
 export const loadLatestScreenerSnapshot = async (
   env: Env,
@@ -192,8 +251,10 @@ const buildFavoriteAlert = (candidate: ScreenerStoredCandidate): FavoriteAlertIt
       lastClose: candidate.lastClose,
       severity: "positive",
       title: "왕장군 적립 후보",
-      summary: wangStrategy.dayBias,
+      summary: `${wangActionBiasLabel(wangStrategy.actionBias)} · ${wangPhaseLabel(wangStrategy.currentPhase)} · ${wangStrategy.dayBias}`,
       reasons: wangStrategy.reasons.slice(0, 2),
+      wangPhase: wangStrategy.currentPhase,
+      wangActionBias: wangStrategy.actionBias,
     };
   }
   if (candidate.hits.washoutPullback.state === "REBOUND_CONFIRMED") {
@@ -251,6 +312,8 @@ const buildFavoriteAlert = (candidate: ScreenerStoredCandidate): FavoriteAlertIt
         ? "종합 점수와 신뢰도가 유지돼 관심종목 관찰 우선순위가 높습니다."
         : "현재는 강한 확정 신호보다 점수 변화를 관찰할 구간입니다.",
     reasons: candidate.reasons.all.slice(0, 2),
+    wangPhase: wangStrategy.currentPhase,
+    wangActionBias: wangStrategy.actionBias,
   };
 };
 
@@ -285,6 +348,13 @@ const buildMarketTemperature = (candidates: ScreenerStoredCandidate[]): MarketTe
   const wangAccumulateCount = candidates.filter(
     (item) => getWangStrategy(item).actionBias === "ACCUMULATE",
   ).length;
+  const wangWatchCount = candidates.filter((item) => {
+    const wang = getWangStrategy(item);
+    return !wang.eligible && wang.label !== "비적합";
+  }).length;
+  const wangIneligibleCount = Math.max(total - wangEligibleCount - wangWatchCount, 0);
+  const wangWatchCountNormalized = candidates.filter((item) => isWangWatchCandidate(item)).length;
+  const wangIneligibleCountNormalized = Math.max(total - wangEligibleCount - wangWatchCountNormalized, 0);
   const avgScore = round(average(scores));
   const avgConfidence = round(average(confidences));
   const strongRatio = total > 0 ? strongCount / total : 0;
@@ -334,6 +404,8 @@ const buildMarketTemperature = (candidates: ScreenerStoredCandidate[]): MarketTe
     flowPersistenceCount,
     wangEligibleCount,
     wangAccumulateCount,
+    wangWatchCount: wangWatchCountNormalized,
+    wangIneligibleCount: wangIneligibleCountNormalized,
     heatScore,
     heatLabel,
     summary,
@@ -473,6 +545,7 @@ const buildStrategyRanking = (candidates: ScreenerStoredCandidate[]): StrategyRa
     return {
       key: definition.key,
       label: definition.label,
+      scoreMode: definition.key === "wangStrategy" ? "validation" : "primary",
       candidateCount: matched.length,
       avgScore,
       avgConfidence,
@@ -483,6 +556,117 @@ const buildStrategyRanking = (candidates: ScreenerStoredCandidate[]): StrategyRa
       topSymbols: matched.slice(0, 3).map((item) => `${item.name}(${item.code})`),
     };
   }).sort((a, b) => (b.qualityScore ?? -1) - (a.qualityScore ?? -1) || b.candidateCount - a.candidateCount);
+
+const buildWangValidationOverview = (candidates: ScreenerStoredCandidate[]): WangValidationOverview => {
+  const wangItems = candidates.map((candidate) => ({ candidate, wang: getWangStrategy(candidate) }));
+  const totalValidated = wangItems.filter(({ wang }) => wang.currentPhase !== "NONE" || wang.score > 0).length;
+  const eligible = wangItems.filter(({ wang }) => wang.eligible).length;
+  const watchCandidate = wangItems.filter(({ candidate }) => isWangWatchCandidate(candidate)).length;
+  const notEligible = Math.max(wangItems.length - eligible - watchCandidate, 0);
+
+  const actionBiasOrder = [
+    ["ACCUMULATE", "행동 · 적립"],
+    ["WATCH", "행동 · 관찰"],
+    ["CAUTION", "행동 · 경계"],
+    ["OVERHEAT", "행동 · 과열"],
+  ] as const;
+
+  const byActionBias = actionBiasOrder.reduce<
+    Record<"ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT", number>
+  >(
+    (acc, [key]) => {
+      acc[key] = wangItems.filter(({ wang }) => wang.actionBias === key).length;
+      return acc;
+    },
+    {
+      ACCUMULATE: 0,
+      WATCH: 0,
+      CAUTION: 0,
+      OVERHEAT: 0,
+    },
+  );
+
+  const phaseEntries = new Map<string, { count: number; items: typeof wangItems }>();
+  for (const entry of wangItems) {
+    const current = phaseEntries.get(entry.wang.currentPhase);
+    if (current) {
+      current.count += 1;
+      current.items.push(entry);
+    } else {
+      phaseEntries.set(entry.wang.currentPhase, { count: 1, items: [entry] });
+    }
+  }
+
+  const makeValidationRanking = (
+    key: string,
+    label: string,
+    items: typeof wangItems,
+  ): StrategyRankingItem => {
+    const avgScore = round(average(items.map(({ wang }) => wang.score).filter(Number.isFinite)));
+    const avgConfidence = round(
+      average(items.map(({ wang }) => wang.confidence).filter(Number.isFinite)),
+    );
+    const qualityScore =
+      items.length === 0
+        ? null
+        : Math.max(
+            0,
+            Math.min(100, Math.round((avgScore ?? 0) * 0.6 + (avgConfidence ?? 0) * 0.4)),
+          );
+    return {
+      key,
+      label,
+      scoreMode: "validation",
+      candidateCount: items.length,
+      avgScore,
+      avgConfidence,
+      avgWinRate: null,
+      avgPf: null,
+      avgMdd: null,
+      qualityScore,
+      topSymbols: items.slice(0, 3).map(({ candidate }) => `${candidate.name}(${candidate.code})`),
+    };
+  };
+
+  const actionBiasRanking = actionBiasOrder
+    .map(([actionBias, label]) =>
+      makeValidationRanking(
+        `wangActionBias:${actionBias}`,
+        label,
+        wangItems.filter(({ wang }) => wang.actionBias === actionBias),
+      ),
+    )
+    .filter((item) => item.candidateCount > 0)
+    .sort((a, b) => (b.qualityScore ?? -1) - (a.qualityScore ?? -1) || b.candidateCount - a.candidateCount);
+
+  const phaseRanking = Array.from(phaseEntries.entries())
+    .map(([phase, entry]) =>
+      makeValidationRanking(`wangPhase:${phase}`, `phase · ${wangPhaseLabel(phase)}`, entry.items),
+    )
+    .filter((item) => item.candidateCount > 0)
+    .sort((a, b) => (b.qualityScore ?? -1) - (a.qualityScore ?? -1) || b.candidateCount - a.candidateCount);
+
+  return {
+    totalValidated,
+    summary: `왕장군 검증 ${totalValidated}건 · 적립 ${eligible} · 관찰 ${watchCandidate} · 비적합 ${notEligible}`,
+    distribution: {
+      eligible,
+      watchCandidate,
+      notEligible,
+      byActionBias,
+      byPhase: Array.from(phaseEntries.entries())
+        .map(([phase, entry]) => ({
+          phase,
+          count: entry.count,
+        }))
+        .sort((a, b) => b.count - a.count),
+    },
+    ranking: {
+      byActionBias: actionBiasRanking.slice(0, 4),
+      byPhase: phaseRanking.slice(0, 6),
+    },
+  };
+};
 
 const pushTimelineEvent = (
   events: StrategyTimelineEvent[],
@@ -509,10 +693,13 @@ const buildTimeline = (candidates: ScreenerStoredCandidate[]): StrategyTimelineE
         market: candidate.market,
         strategyKey: "wangStrategy",
         strategyLabel: "왕장군 검증",
-        stateLabel: wangStrategy.label,
+        stateLabel: `${wangValidationSummaryLabel(candidate)} · ${wangActionBiasLabel(wangStrategy.actionBias)}`,
         score: wangStrategy.score,
         confidence: wangStrategy.confidence,
-        summary: wangStrategy.reasons[0] ?? wangStrategy.dayBias,
+        summary: `${wangPhaseLabel(wangStrategy.currentPhase)} · ${wangStrategy.weekBias} · ${wangStrategy.dayBias}`,
+        wangPhase: wangStrategy.currentPhase,
+        wangActionBias: wangStrategy.actionBias,
+        scoreMode: "validation",
       });
     }
     pushTimelineEvent(events, seen, {
@@ -640,6 +827,7 @@ export const buildDashboardOverview = async (
     },
     marketTemperature: buildMarketTemperature(candidates),
     strategyRanking: buildStrategyRanking(candidates).slice(0, 8),
+    wangValidation: buildWangValidationOverview(candidates),
     timeline,
     favorites: {
       trackedCount: favoriteCodeSet.size,

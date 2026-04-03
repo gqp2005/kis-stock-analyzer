@@ -27,6 +27,7 @@ import {
   resampleDayToMonthCandles,
   resampleDayToWeekCandles,
 } from "../functions/lib/kis";
+import { makeLectureMinimumWeekCandles } from "./fixtures/wang/weekly";
 
 const fetchMock = vi.mocked(fetchTimeframeCandles);
 const resampleWeekMock = vi.mocked(resampleDayToWeekCandles);
@@ -194,6 +195,80 @@ describe("/api/wang-strategy", () => {
     expect(response.status).toBe(200);
     expect(fetchMock.mock.calls.some((call) => call[3] === "week" && call[4] === 200)).toBe(true);
     expect(fetchMock.mock.calls.some((call) => call[3] === "month" && call[4] === 80)).toBe(true);
+  });
+
+  it("marks weekly minimum volume as the absolute lowest bar after the active sequence", async () => {
+    const weekCandles = makeLectureMinimumWeekCandles(200);
+
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") {
+        return {
+          name: "삼성전자",
+          candles: makeWangCandles(360),
+          cacheTtlSec: 60,
+        };
+      }
+      throw new Error(`unexpected tf=${tf}`);
+    });
+    resampleWeekMock.mockReturnValue(weekCandles);
+    resampleMonthMock.mockReturnValue(makeWangCandles(80));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/wang-strategy?query=005930&tf=multi&count=240"),
+    );
+    const body = (await response.json()) as {
+      currentPhase: string;
+      markers: {
+        week: Array<{ type: string; volume: number; t: string }>;
+      };
+    };
+
+    const minMarker = body.markers.week.find((marker) => marker.type === "VOL_MIN");
+
+    expect(response.status).toBe(200);
+    expect(body.currentPhase).toBe("MIN_VOLUME");
+    expect(minMarker).toBeDefined();
+    expect(minMarker?.volume).toBe(13500);
+    expect(minMarker?.t).toBe(weekCandles[198].time);
+  });
+
+  it("adds lecture-1 short-volume and cooldown context to weekly payload", async () => {
+    const weekCandles = makeLectureMinimumWeekCandles(200);
+
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") {
+        return {
+          name: "?쇱꽦?꾩옄",
+          candles: makeWangCandles(360),
+          cacheTtlSec: 60,
+        };
+      }
+      throw new Error(`unexpected tf=${tf}`);
+    });
+    resampleWeekMock.mockReturnValue(weekCandles);
+    resampleMonthMock.mockReturnValue(makeWangCandles(80));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/wang-strategy?query=005930&tf=multi&count=240"),
+    );
+    const body = (await response.json()) as {
+      weeklyPhaseContext: {
+        minVolume: number | null;
+        relativeShortVolumeScore: number;
+        cooldownBarsFromLife: number | null;
+        cooldownReady: boolean;
+      };
+      checklist: Array<{ id: string; ok: boolean }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.weeklyPhaseContext.minVolume).toBe(13500);
+    expect(body.weeklyPhaseContext.relativeShortVolumeScore).toBeGreaterThan(0);
+    expect(body.weeklyPhaseContext.cooldownBarsFromLife).toBeGreaterThanOrEqual(8);
+    expect(body.weeklyPhaseContext.cooldownReady).toBe(true);
+    expect(body.checklist.some((item) => item.id === "week-short-volume")).toBe(true);
+    expect(body.checklist.some((item) => item.id === "week-cooldown" && item.ok)).toBe(true);
+    expect(body.checklist.some((item) => item.id === "week-breakout-reset")).toBe(true);
   });
 
   it("returns 400 when query is missing", async () => {
