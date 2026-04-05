@@ -305,6 +305,53 @@ const dashboardStrategyLabel = (key: string): string => {
 const dashboardScoreModeLabel = (scoreMode: "primary" | "validation" | undefined): string =>
   scoreMode === "validation" ? "보조 검증" : "본 전략";
 
+const normalizeDashboard = (dashboard: DashboardOverviewResponse): DashboardOverviewResponse => ({
+  ...dashboard,
+  marketTemperature: {
+    ...dashboard.marketTemperature,
+    wangWatchCount: dashboard.marketTemperature.wangWatchCount ?? 0,
+    wangIneligibleCount: dashboard.marketTemperature.wangIneligibleCount ?? 0,
+  },
+  strategyRanking: (dashboard.strategyRanking ?? []).map((item) => ({
+    ...item,
+    scoreMode: item.scoreMode ?? (item.key === "wangStrategy" ? "validation" : "primary"),
+  })),
+  wangValidation: dashboard.wangValidation ?? {
+    totalValidated: 0,
+    summary: "왕장군 검증 데이터가 아직 없습니다.",
+    distribution: {
+      eligible: 0,
+      watchCandidate: 0,
+      notEligible: 0,
+      byActionBias: {
+        ACCUMULATE: 0,
+        WATCH: 0,
+        CAUTION: 0,
+        OVERHEAT: 0,
+      },
+      byPhase: [],
+    },
+    ranking: {
+      byActionBias: [],
+      byPhase: [],
+    },
+  },
+  timeline: (dashboard.timeline ?? []).map((item) => ({
+    ...item,
+    scoreMode: item.scoreMode ?? (item.strategyKey === "wangStrategy" ? "validation" : "primary"),
+  })),
+  favorites: {
+    trackedCount: dashboard.favorites?.trackedCount ?? 0,
+    activeCount: dashboard.favorites?.activeCount ?? 0,
+    missingCodes: dashboard.favorites?.missingCodes ?? [],
+    alerts: (dashboard.favorites?.alerts ?? []).map((item) => ({
+      ...item,
+      wangPhase: item.wangPhase ?? null,
+      wangActionBias: item.wangActionBias ?? null,
+    })),
+  },
+});
+
 const wangBadgeClass = (wang: WangStrategyScreeningSummary): string => {
   if (wang.eligible) return "badge good";
   if (wang.actionBias === "CAUTION" || wang.actionBias === "OVERHEAT") return "badge caution";
@@ -715,7 +762,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       const result = await fetch(url);
       const data = (await result.json()) as DashboardOverviewResponse | { error?: string };
       if (!result.ok) throw new Error("error" in data && data.error ? data.error : "대시보드 조회 실패");
-      setDashboard(data as DashboardOverviewResponse);
+      setDashboard(normalizeDashboard(data as DashboardOverviewResponse));
     } catch (e) {
       setDashboardError(e instanceof Error ? e.message : "대시보드 조회 실패");
       setDashboard(null);
