@@ -952,6 +952,13 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     }
   }, [isMobileView]);
 
+  const hasActiveWangFilters =
+    wangEligible !== "ALL" ||
+    wangActionBias !== "ALL" ||
+    wangPhase !== "ALL" ||
+    wangZoneReady !== "ALL" ||
+    wangMa20DiscountReady !== "ALL";
+
   useEffect(() => {
     if (!hasActiveWangFilters) return;
     if (isWangSortKey(sortKey)) return;
@@ -1050,13 +1057,6 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
     setWangZoneReady(next.wangZoneReady);
     setWangMa20DiscountReady(next.wangMa20DiscountReady);
   };
-
-  const hasActiveWangFilters =
-    wangEligible !== "ALL" ||
-    wangActionBias !== "ALL" ||
-    wangPhase !== "ALL" ||
-    wangZoneReady !== "ALL" ||
-    wangMa20DiscountReady !== "ALL";
 
   const activeWangPresetId = useMemo(() => {
     const matched = WANG_PRESETS.find((preset) =>
