@@ -19,6 +19,7 @@ import type {
   ScreenerStrategyFilter,
   VolumePatternType,
   WangStrategyActionBias,
+  WangStrategyExecutionState,
   WangStrategyPhase,
   WangStrategyScreeningSummary,
 } from "./types";
@@ -305,6 +306,31 @@ const dashboardStrategyLabel = (key: string): string => {
 const dashboardScoreModeLabel = (scoreMode: "primary" | "validation" | undefined): string =>
   scoreMode === "validation" ? "보조 검증" : "본 전략";
 
+const normalizeWangStrategy = (
+  wang: WangStrategyScreeningSummary | null | undefined,
+): WangStrategyScreeningSummary => ({
+  eligible: wang?.eligible ?? false,
+  label: wang?.label ?? "비적합",
+  score: wang?.score ?? 0,
+  confidence: wang?.confidence ?? 0,
+  currentPhase: wang?.currentPhase ?? "NONE",
+  actionBias: wang?.actionBias ?? "WATCH",
+  executionState: wang?.executionState ?? ("WAIT_WEEKLY_STRUCTURE" as WangStrategyExecutionState),
+  reasons: wang?.reasons ?? [],
+  weekBias: wang?.weekBias ?? "주봉 미평가",
+  dayBias: wang?.dayBias ?? "일봉 미평가",
+  zoneReady: wang?.zoneReady ?? false,
+  ma20DiscountReady: wang?.ma20DiscountReady ?? false,
+  dailyRebaseReady: wang?.dailyRebaseReady ?? false,
+  retestReady: wang?.retestReady ?? false,
+});
+
+const normalizeScreenerItem = (item: ScreenerItem): ScreenerItem => ({
+  ...item,
+  reasons: item.reasons ?? [],
+  wangStrategy: normalizeWangStrategy(item.wangStrategy),
+});
+
 const normalizeDashboard = (dashboard: DashboardOverviewResponse): DashboardOverviewResponse => ({
   ...dashboard,
   marketTemperature: {
@@ -350,6 +376,65 @@ const normalizeDashboard = (dashboard: DashboardOverviewResponse): DashboardOver
       wangActionBias: item.wangActionBias ?? null,
     })),
   },
+});
+
+const normalizeScreenerResponse = (response: ScreenerResponse): ScreenerResponse => ({
+  ...response,
+  meta: {
+    ...response.meta,
+    changeSummary: response.meta.changeSummary
+      ? {
+          ...response.meta.changeSummary,
+          added: response.meta.changeSummary.added ?? [],
+          removed: response.meta.changeSummary.removed ?? [],
+          risers: response.meta.changeSummary.risers ?? [],
+          fallers: response.meta.changeSummary.fallers ?? [],
+          scoreRisers: response.meta.changeSummary.scoreRisers ?? [],
+          scoreFallers: response.meta.changeSummary.scoreFallers ?? [],
+        }
+      : null,
+    validationSummary: response.meta.validationSummary
+      ? {
+          ...response.meta.validationSummary,
+          activeCutoffs: response.meta.validationSummary.activeCutoffs ?? {
+            all: 0,
+            volume: 0,
+            hs: 0,
+            ihs: 0,
+            vcp: 0,
+          },
+          latestRuns: response.meta.validationSummary.latestRuns ?? {
+            weekly: null,
+            monthly: null,
+          },
+        }
+      : null,
+    lastRebuildStatus: response.meta.lastRebuildStatus
+      ? {
+          ...response.meta.lastRebuildStatus,
+          inProgress: response.meta.lastRebuildStatus.inProgress ?? false,
+          processed: response.meta.lastRebuildStatus.processed ?? 0,
+          total: response.meta.lastRebuildStatus.total ?? 0,
+          updatedAt: response.meta.lastRebuildStatus.updatedAt ?? null,
+          failedCount: response.meta.lastRebuildStatus.failedCount ?? 0,
+          retriedSymbols: response.meta.lastRebuildStatus.retriedSymbols ?? 0,
+          totalRetries: response.meta.lastRebuildStatus.totalRetries ?? 0,
+        }
+      : null,
+    filters: response.meta.filters
+      ? {
+          ...response.meta.filters,
+          wangEligible: response.meta.filters.wangEligible ?? "ALL",
+          wangActionBias: response.meta.filters.wangActionBias ?? "ALL",
+          wangPhase: response.meta.filters.wangPhase ?? "ALL",
+          wangZoneReady: response.meta.filters.wangZoneReady ?? "ALL",
+          wangMa20DiscountReady: response.meta.filters.wangMa20DiscountReady ?? "ALL",
+        }
+      : undefined,
+  },
+  items: (response.items ?? []).map(normalizeScreenerItem),
+  warningItems: (response.warningItems ?? []).map(normalizeScreenerItem),
+  warnings: response.warnings ?? [],
 });
 
 const wangBadgeClass = (wang: WangStrategyScreeningSummary): string => {
@@ -818,7 +903,7 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
       const result = await fetch(url);
       const data = (await result.json()) as ScreenerResponse | { error: string };
       if (!result.ok) throw new Error("error" in data ? data.error : "스크리너 조회 실패");
-      setResponse(data as ScreenerResponse);
+      setResponse(normalizeScreenerResponse(data as ScreenerResponse));
       setExpandedCards({});
       setLastLoadedAt(new Date().toISOString());
       void fetchDashboard();
