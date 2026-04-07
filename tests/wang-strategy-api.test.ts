@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candle } from "../functions/lib/types";
 
 vi.mock("../functions/lib/cache", () => ({
@@ -86,6 +86,10 @@ const makeWangCandles = (count: number): Candle[] => {
 
   return candles;
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("/api/wang-strategy", () => {
   beforeEach(() => {
@@ -269,6 +273,84 @@ describe("/api/wang-strategy", () => {
     expect(body.checklist.some((item) => item.id === "week-short-volume")).toBe(true);
     expect(body.checklist.some((item) => item.id === "week-cooldown" && item.ok)).toBe(true);
     expect(body.checklist.some((item) => item.id === "week-breakout-reset")).toBe(true);
+  });
+
+  it("ignores the current week even after market close when picking weekly minimum volume", async () => {
+    const weekCandles = makeLectureMinimumWeekCandles(200);
+    weekCandles[weekCandles.length - 1] = {
+      ...weekCandles[weekCandles.length - 1],
+      volume: 1000,
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(`${weekCandles[weekCandles.length - 1].time}T08:00:00Z`));
+
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") {
+        return {
+          name: "?쇱꽦?꾩옄",
+          candles: makeWangCandles(360),
+          cacheTtlSec: 60,
+        };
+      }
+      throw new Error(`unexpected tf=${tf}`);
+    });
+    resampleWeekMock.mockReturnValue(weekCandles);
+    resampleMonthMock.mockReturnValue(makeWangCandles(80));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/wang-strategy?query=005930&tf=multi&count=240"),
+    );
+    const body = (await response.json()) as {
+      markers: {
+        week: Array<{ type: string; volume: number; t: string }>;
+      };
+    };
+
+    const minMarker = body.markers.week.find((marker) => marker.type === "VOL_MIN");
+
+    expect(response.status).toBe(200);
+    expect(minMarker).toBeDefined();
+    expect(minMarker?.volume).toBe(13500);
+    expect(minMarker?.t).toBe(weekCandles[198].time);
+  });
+
+  it("ignores the current day even after market close when picking daily minimum volume", async () => {
+    const dayCandles = makeWangCandles(360);
+    dayCandles[dayCandles.length - 1] = {
+      ...dayCandles[dayCandles.length - 1],
+      volume: 1000,
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(`${dayCandles[dayCandles.length - 1].time}T08:00:00Z`));
+
+    fetchMock.mockImplementation(async (_env, _cache, _symbol, tf) => {
+      if (tf === "day") {
+        return {
+          name: "?쇱꽦?꾩옄",
+          candles: dayCandles,
+          cacheTtlSec: 60,
+        };
+      }
+      throw new Error(`unexpected tf=${tf}`);
+    });
+    resampleWeekMock.mockReturnValue(makeLectureMinimumWeekCandles(200));
+    resampleMonthMock.mockReturnValue(makeWangCandles(80));
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/wang-strategy?query=005930&tf=multi&count=240"),
+    );
+    const body = (await response.json()) as {
+      markers: {
+        day: Array<{ type: string; volume: number; t: string }>;
+      };
+    };
+
+    const minMarker = body.markers.day.find((marker) => marker.type === "VOL_MIN");
+
+    expect(response.status).toBe(200);
+    expect(minMarker).toBeDefined();
+    expect(minMarker?.volume).toBe(7200);
+    expect(minMarker?.t).toBe(dayCandles[222].time);
   });
 
   it("returns 400 when query is missing", async () => {

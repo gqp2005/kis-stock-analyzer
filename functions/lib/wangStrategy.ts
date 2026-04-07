@@ -27,6 +27,8 @@ import {
   WANG_STRATEGY_CONSTANTS,
 } from "./wangStrategyConstants";
 
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
 interface WangCycleDetection {
   tf: WangStrategyChartTimeframe;
   candles: Candle[];
@@ -68,6 +70,33 @@ const average = (values: number[]): number => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
+const toKstDate = (date: Date): Date => new Date(date.getTime() + KST_OFFSET_MS);
+
+const formatKstDate = (date = new Date()): string => {
+  const kst = toKstDate(date);
+  const y = kst.getUTCFullYear();
+  const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(kst.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const currentKstDayInfo = (date = new Date()): { ymd: string } => {
+  const kst = toKstDate(date);
+  return {
+    ymd: formatKstDate(date),
+  };
+};
+
+const isoWeekId = (dateText: string): string => {
+  const [y, m, d] = dateText.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+};
+
 const bodyRatio = (candle: Candle): number => {
   const range = Math.max(candle.high - candle.low, 0.0001);
   return Math.abs(candle.close - candle.open) / range;
@@ -104,11 +133,38 @@ const findMajorVolumePivotIndices = (candles: Candle[], averageVolume: number): 
     })
     .map(({ index }) => index);
 
-const findLowestVolumeIndexAfter = (candles: Candle[], startIndex: number): number => {
-  if (startIndex < 0 || startIndex >= candles.length - 1) return -1;
+const shouldExcludeLatestMinCandidate = (
+  tf: WangStrategyChartTimeframe,
+  candles: Candle[],
+  now = new Date(),
+): boolean => {
+  if (candles.length === 0) return false;
+  const latestTime = candles[candles.length - 1]?.time?.slice(0, 10);
+  if (!latestTime) return false;
+
+  const { ymd } = currentKstDayInfo(now);
+
+  if (tf === "day") {
+    return latestTime === ymd;
+  }
+
+  if (tf === "week") {
+    return isoWeekId(latestTime) === isoWeekId(ymd);
+  }
+
+  return false;
+};
+
+const findLowestVolumeIndexAfter = (
+  candles: Candle[],
+  startIndex: number,
+  options?: { excludeLastIndex?: boolean },
+): number => {
+  const endExclusive = options?.excludeLastIndex ? candles.length - 1 : candles.length;
+  if (startIndex < 0 || startIndex >= endExclusive - 1) return -1;
 
   let selectedIndex = -1;
-  for (let index = startIndex + 1; index < candles.length; index += 1) {
+  for (let index = startIndex + 1; index < endExclusive; index += 1) {
     const volume = candles[index]?.volume ?? 0;
     if (volume <= 0) continue;
     if (selectedIndex < 0 || volume < candles[selectedIndex].volume) {
@@ -238,10 +294,13 @@ const detectVolumeCycle = (
   const latestElasticIndex = elasticIndices.length > 0 ? elasticIndices[elasticIndices.length - 1] : -1;
   const minSearchStartIndex =
     latestElasticIndex >= 0 ? latestElasticIndex : latestRisingIndex >= 0 ? latestRisingIndex : latestBaseIndex;
+  const excludeLatestMinCandidate = shouldExcludeLatestMinCandidate(tf, candles);
 
   // In Wang lecture terminology, minimum volume is the absolute lowest weekly turnover
   // after the active reference/rising/elastic sequence, not only a local trough candidate.
-  const minIndex = findLowestVolumeIndexAfter(candles, minSearchStartIndex);
+  const minIndex = findLowestVolumeIndexAfter(candles, minSearchStartIndex, {
+    excludeLastIndex: excludeLatestMinCandidate,
+  });
   const minVolume = minIndex >= 0 ? candles[minIndex].volume : null;
   const relativeShortVolumeScore = computeRelativeShortVolumeScore(minVolume, averageVolume);
   const cooldownBarsFromLife =
