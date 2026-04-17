@@ -4188,6 +4188,121 @@ button {
   box-shadow: var(--shadow-soft);
 }
 
+.strategy-mini-item,
+.backtest-opinion,
+.backtest-table-wrap,
+.suggestions {
+  border-color: rgba(123, 145, 166, 0.22);
+  background: var(--surface-soft);
+  box-shadow: 0 10px 24px rgba(58, 92, 122, 0.06);
+}
+
+.vcp-card {
+  border-color: rgba(213, 139, 61, 0.28);
+  background: linear-gradient(180deg, rgba(255, 248, 236, 0.94), rgba(255, 252, 246, 0.92));
+}
+
+.washout-card {
+  border-color: rgba(11, 141, 101, 0.24);
+  background: linear-gradient(180deg, rgba(241, 251, 247, 0.94), rgba(255, 255, 255, 0.92));
+}
+
+.washout-kpi-row small,
+.vcp-kpi-row small {
+  color: var(--muted);
+  background: var(--surface-accent);
+}
+
+.washout-kpi-row small {
+  border-color: rgba(11, 141, 101, 0.24);
+}
+
+.vcp-kpi-row small {
+  border-color: rgba(213, 139, 61, 0.24);
+}
+
+.sticky-summary-main strong,
+.sticky-summary-price span,
+.meta.current-quote,
+.plan-item strong,
+.confluence-head strong,
+.trade-option-guide-card strong,
+.auto-candidate-head h4,
+.strategy-mini-head strong,
+.screener-preset-head strong,
+.screener-mobile-drawer summary,
+.screener-mobile-drawer summary strong,
+.suggestion-main em,
+.backtest-table thead th,
+.timeline-group strong {
+  color: var(--heading);
+}
+
+.sticky-summary-main p,
+.summary-text,
+.decision-card-note,
+.decision-score-box span,
+.confluence-head small,
+.confluence-item p,
+.plan-item span,
+.strategy-mini-item p,
+.trade-option-guide-card p,
+.trade-option-guide-card small,
+.strategy-line,
+.strategy-reasons li,
+.screener-note,
+.screener-controls label,
+.admin-controls label,
+.checkbox-label,
+.screener-preset-head small,
+.screener-preset-chip small,
+.screener-mobile-drawer summary small,
+.screener-rebuild-progress small,
+.washout-warning,
+.suggestion-item small {
+  color: var(--muted);
+}
+
+.analysis-warning-shell strong,
+.warning-box span {
+  color: #8f3148;
+}
+
+.warning-box span {
+  border-color: rgba(196, 84, 110, 0.24);
+  background: rgba(196, 84, 110, 0.1);
+}
+
+.screener-opinion,
+.strategy-one-liner,
+.backtest-opinion {
+  color: var(--text);
+}
+
+.suggestions {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.suggestion-item {
+  color: var(--heading);
+}
+
+.suggestion-item:hover {
+  background: rgba(47, 122, 209, 0.08);
+}
+
+.suggestion-main strong {
+  color: #2f7ad1;
+}
+
+.backtest-table thead th {
+  background: rgba(236, 244, 250, 0.96);
+}
+
+.screener-preset-chip.active small {
+  color: rgba(255, 255, 255, 0.88);
+}
+
 @media (max-width: 860px) {
   .mobile-bottom-nav {
     border-color: rgba(210, 223, 235, 0.96);
