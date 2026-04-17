@@ -4,6 +4,9 @@ export interface Env {
   KIS_BASE_URL?: string;
   KIS_ENV?: "real" | "demo";
   SITE_AUTH_PASSWORD?: string;
+  SITE_AUTH_USERNAME?: string;
+  SITE_AUTH_TEST_PASSWORD?: string;
+  SITE_AUTH_TEST_USERNAME?: string;
   SITE_AUTH_COOKIE_SECRET?: string;
   KIS_ACCOUNT_NO?: string;
   KIS_ACCOUNT_PRDT_CD?: string;

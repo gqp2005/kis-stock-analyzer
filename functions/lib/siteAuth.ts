@@ -2,7 +2,7 @@ import type { Env } from "./types";
 
 type SiteAuthEnv = Pick<
   Env,
-  "ADMIN_TOKEN" | "SITE_AUTH_PASSWORD" | "SITE_AUTH_COOKIE_SECRET"
+  "ADMIN_TOKEN" | "SITE_AUTH_PASSWORD" | "SITE_AUTH_TEST_PASSWORD" | "SITE_AUTH_COOKIE_SECRET"
 >;
 
 type SessionPayload = {
@@ -70,8 +70,14 @@ const getSigningKey = (secret: string): Promise<CryptoKey> => {
   return cachedSigningKeyPromise;
 };
 
+const trimOptional = (value: string | undefined): string => value?.trim() ?? "";
+
 const getAuthSecret = (env: SiteAuthEnv): string =>
-  env.SITE_AUTH_COOKIE_SECRET?.trim() || env.ADMIN_TOKEN?.trim() || env.SITE_AUTH_PASSWORD?.trim() || "";
+  trimOptional(env.SITE_AUTH_COOKIE_SECRET) ||
+  trimOptional(env.ADMIN_TOKEN) ||
+  trimOptional(env.SITE_AUTH_PASSWORD) ||
+  trimOptional(env.SITE_AUTH_TEST_PASSWORD) ||
+  "";
 
 const verifySessionToken = async (token: string, secret: string): Promise<SessionPayload | null> => {
   try {

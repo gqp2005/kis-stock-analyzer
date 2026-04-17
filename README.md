@@ -165,6 +165,12 @@ npm run build
 npm run cf:dev
 ```
 
+## Site Auth Test Account
+
+- `SITE_AUTH_PASSWORD` / `SITE_AUTH_USERNAME` 는 기존 owner 로그인입니다.
+- `SITE_AUTH_TEST_PASSWORD` / `SITE_AUTH_TEST_USERNAME` 를 추가로 설정하면 owner 계정을 유지한 채 테스트 로그인 1쌍을 더 열 수 있습니다.
+- `SITE_AUTH_TEST_USERNAME` 을 비우면 기본값은 `test` 입니다.
+
 ## Cloudflare Pages 배포
 
 1. Pages 프로젝트 생성 (Git 연동)

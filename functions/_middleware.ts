@@ -6,6 +6,8 @@ type MiddlewareEnv = {
   ADMIN_TOKEN?: string;
   SITE_AUTH_PASSWORD?: string;
   SITE_AUTH_USERNAME?: string;
+  SITE_AUTH_TEST_PASSWORD?: string;
+  SITE_AUTH_TEST_USERNAME?: string;
   SITE_AUTH_COOKIE_SECRET?: string;
   SITE_AUTH_SESSION_HOURS?: string;
   SITE_AUTH_DEBUG?: string;
@@ -15,6 +17,12 @@ type SessionPayload = {
   sub: string;
   iat: number;
   exp: number;
+};
+
+type AuthCredential = {
+  password: string;
+  sessionSubject: string;
+  username?: string;
 };
 
 const AUTH_COOKIE_NAME = "kis_auth_session";
@@ -40,6 +48,8 @@ const toPositiveInt = (value: string | undefined, fallback: number): number => {
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(1, Math.floor(parsed));
 };
+
+const trimOptional = (value: string | undefined): string => value?.trim() ?? "";
 
 const withCors = (response: Response): Response => {
   const headers = new Headers(response.headers);
@@ -248,11 +258,62 @@ const renderLoginPage = (
 };
 
 const isAuthEnabled = (env: MiddlewareEnv): boolean => {
-  return !!env.SITE_AUTH_PASSWORD?.trim();
+  return getAuthCredentials(env).length > 0;
 };
 
 const getAuthSecret = (env: MiddlewareEnv): string => {
-  return env.SITE_AUTH_COOKIE_SECRET?.trim() || env.ADMIN_TOKEN?.trim() || env.SITE_AUTH_PASSWORD?.trim() || "";
+  return (
+    trimOptional(env.SITE_AUTH_COOKIE_SECRET) ||
+    trimOptional(env.ADMIN_TOKEN) ||
+    trimOptional(env.SITE_AUTH_PASSWORD) ||
+    trimOptional(env.SITE_AUTH_TEST_PASSWORD) ||
+    ""
+  );
+};
+
+const getAuthCredentials = (env: MiddlewareEnv): AuthCredential[] => {
+  const credentials: AuthCredential[] = [];
+  const primaryPassword = trimOptional(env.SITE_AUTH_PASSWORD);
+  const primaryUsername = trimOptional(env.SITE_AUTH_USERNAME);
+  if (primaryPassword) {
+    credentials.push({
+      password: primaryPassword,
+      sessionSubject: primaryUsername || "owner",
+      username: primaryUsername || undefined,
+    });
+  }
+
+  const testPassword = trimOptional(env.SITE_AUTH_TEST_PASSWORD);
+  if (testPassword) {
+    const testUsername = trimOptional(env.SITE_AUTH_TEST_USERNAME) || "test";
+    credentials.push({
+      username: testUsername,
+      password: testPassword,
+      sessionSubject: testUsername,
+    });
+  }
+
+  return credentials;
+};
+
+const findMatchingCredential = (
+  credentials: AuthCredential[],
+  usernameInput: string,
+  passwordInput: string,
+): AuthCredential | null => {
+  for (const credential of credentials) {
+    if (!credential.username) continue;
+    if (secureEquals(usernameInput, credential.username) && secureEquals(passwordInput, credential.password)) {
+      return credential;
+    }
+  }
+
+  for (const credential of credentials) {
+    if (credential.username) continue;
+    if (secureEquals(passwordInput, credential.password)) return credential;
+  }
+
+  return null;
 };
 
 const hasValidSession = async (request: Request, env: MiddlewareEnv): Promise<boolean> => {
@@ -295,12 +356,9 @@ const handleAuthRoutes = async (
     const usernameInput = String(form.get("username") ?? "").trim();
     const passwordInput = String(form.get("password") ?? "");
     const nextPath = normalizeRedirectPath(String(form.get("redirect") ?? "/"));
-    const expectedPassword = env.SITE_AUTH_PASSWORD?.trim() ?? "";
-    const expectedUsername = env.SITE_AUTH_USERNAME?.trim();
-    const usernameOk = expectedUsername ? secureEquals(usernameInput, expectedUsername) : true;
-    const passwordOk = secureEquals(passwordInput, expectedPassword);
+    const matchedCredential = findMatchingCredential(getAuthCredentials(env), usernameInput, passwordInput);
 
-    if (!usernameOk || !passwordOk) {
+    if (!matchedCredential) {
       return renderLoginPage(context.request, nextPath, {
         error: "아이디 또는 비밀번호가 올바르지 않습니다.",
         usernamePrefill: usernameInput,
@@ -312,7 +370,7 @@ const handleAuthRoutes = async (
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await makeSessionToken(
       {
-        sub: expectedUsername || "owner",
+        sub: matchedCredential.sessionSubject,
         iat: nowSec,
         exp: nowSec + maxAgeSec,
       },
