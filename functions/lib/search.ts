@@ -38,6 +38,7 @@ const CHOSEONG = [
 const stocks = stockList as StockEntry[];
 
 const normalize = (value: string): string => value.replace(/\s+/g, "").toUpperCase();
+const isChoseongOnlyQuery = (value: string): boolean => /^[ㄱ-ㅎ]+$/u.test(value.trim());
 
 const toChoseong = (value: string): string => {
   let result = "";
@@ -60,6 +61,7 @@ export const searchStocks = (rawQuery: string, limit = 8): SearchResultItem[] =>
   const qCode = query.toUpperCase();
   const qName = normalize(query);
   const qCho = toChoseong(query);
+  const choseongOnlyQuery = isChoseongOnlyQuery(query);
 
   const matched = stocks
     .map((stock) => {
@@ -70,13 +72,16 @@ export const searchStocks = (rawQuery: string, limit = 8): SearchResultItem[] =>
 
       if (code === qCode) rank = 0;
       else if (name === qName) rank = 1;
-      else if (cho === qCho && qCho) rank = 2;
-      else if (code.startsWith(qCode)) rank = 3;
-      else if (name.startsWith(qName)) rank = 4;
-      else if (cho.startsWith(qCho) && qCho) rank = 5;
+      else if (code.startsWith(qCode)) rank = 2;
+      else if (name.startsWith(qName)) rank = 3;
+      else if (choseongOnlyQuery && cho === qCho && qCho) rank = 4;
+      else if (choseongOnlyQuery && cho.startsWith(qCho) && qCho) rank = 5;
       else if (code.includes(qCode)) rank = 6;
       else if (name.includes(qName)) rank = 7;
-      else if (cho.includes(qCho) && qCho) rank = 8;
+      else if (!choseongOnlyQuery && cho === qCho && qCho) rank = 8;
+      else if (!choseongOnlyQuery && cho.startsWith(qCho) && qCho) rank = 9;
+      else if (choseongOnlyQuery && cho.includes(qCho) && qCho) rank = 10;
+      else if (!choseongOnlyQuery && cho.includes(qCho) && qCho) rank = 11;
       else return null;
 
       return {
