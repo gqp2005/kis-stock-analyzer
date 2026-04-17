@@ -219,16 +219,16 @@ const renderLoginPage = (
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
   <style>
-    body { margin:0; min-height:100vh; display:grid; place-items:center; background:#081521; color:#e4efff; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-    .panel { width:min(92vw, 420px); border:1px solid rgba(87,163,255,.35); border-radius:14px; background:rgba(14,28,44,.85); padding:20px; box-shadow:0 8px 30px rgba(0,0,0,.3); }
-    h1 { margin:0 0 8px; font-size:22px; }
-    p.meta { margin:0 0 14px; color:#9db4cc; font-size:13px; }
-    label { display:block; margin:10px 0 6px; font-size:13px; color:#b8cee6; }
-    input { width:100%; box-sizing:border-box; height:42px; border-radius:10px; border:1px solid rgba(87,163,255,.4); background:#0d1f31; color:#e7f1ff; padding:0 12px; }
-    button { width:100%; margin-top:14px; height:42px; border:none; border-radius:10px; background:linear-gradient(90deg,#1f6fb6,#0fa3a3); color:#ecf7ff; font-weight:700; cursor:pointer; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; background:radial-gradient(960px 520px at 90% -10%, rgba(47,122,209,.14), transparent 62%), radial-gradient(760px 420px at -10% 20%, rgba(11,141,101,.1), transparent 58%), linear-gradient(180deg, #eef5fb 0%, #f6fbff 74%); color:#173149; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+    .panel { width:min(92vw, 420px); border:1px solid rgba(210,223,235,.96); border-radius:18px; background:rgba(255,255,255,.92); padding:22px; box-shadow:0 18px 40px rgba(49,89,124,.14); }
+    h1 { margin:0 0 8px; font-size:22px; color:#10263b; }
+    p.meta { margin:0 0 14px; color:#5d748a; font-size:13px; line-height:1.5; }
+    label { display:block; margin:10px 0 6px; font-size:13px; color:#4d657c; }
+    input { width:100%; box-sizing:border-box; height:42px; border-radius:10px; border:1px solid rgba(123,145,166,.34); background:rgba(255,255,255,.92); color:#173149; padding:0 12px; }
+    button { width:100%; margin-top:14px; height:42px; border:none; border-radius:10px; background:linear-gradient(90deg,#2f7ad1,#169e86); color:#f5fbff; font-weight:700; cursor:pointer; box-shadow:0 10px 24px rgba(21,92,148,.18); }
     .msg { margin:8px 0 0; font-size:13px; }
-    .msg.error { color:#ffd0d9; }
-    .msg.ok { color:#b7ffe9; }
+    .msg.error { color:#9a3b53; }
+    .msg.ok { color:#0b6e50; }
   </style>
 </head>
 <body>

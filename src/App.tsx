@@ -150,6 +150,13 @@ const PROFILE_WEIGHT_CONFIG: Record<
   },
 };
 
+const CHART_THEME = {
+  background: "#fbfdff",
+  textColor: "#5f7890",
+  gridColor: "#d9e4ee",
+  borderColor: "#c7d7e6",
+};
+
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month"];
 const DEFAULT_PRICE_CHART_HEIGHT = 420;
@@ -898,18 +905,18 @@ export default function App() {
       width: mainContainer.clientWidth,
       height: priceChartHeight,
       layout: {
-        background: { type: ColorType.Solid, color: "#0f1722" },
-        textColor: "#9fb2c7",
+        background: { type: ColorType.Solid, color: CHART_THEME.background },
+        textColor: CHART_THEME.textColor,
       },
       grid: {
-        vertLines: { color: "#1e2d3f" },
-        horzLines: { color: "#1e2d3f" },
+        vertLines: { color: CHART_THEME.gridColor },
+        horzLines: { color: CHART_THEME.gridColor },
       },
       rightPriceScale: {
-        borderColor: "#30445a",
+        borderColor: CHART_THEME.borderColor,
       },
       timeScale: {
-        borderColor: "#30445a",
+        borderColor: CHART_THEME.borderColor,
         timeVisible: false,
         secondsVisible: false,
       },
@@ -939,7 +946,7 @@ export default function App() {
           enabled: showMa1,
           series: active.indicators.ma.ma1,
           period: active.indicators.ma.ma1Period,
-          color: "#ffcc66",
+          color: "#d58b3d",
         },
         {
           enabled: showMa2,
@@ -951,7 +958,7 @@ export default function App() {
           enabled: showMa3 && active.indicators.ma.ma3Period != null,
           series: active.indicators.ma.ma3,
           period: active.indicators.ma.ma3Period ?? 0,
-          color: "#c792ea",
+          color: "#db6e5c",
         },
       ];
 
@@ -1028,7 +1035,7 @@ export default function App() {
       for (const line of levelLines) {
         candleSeries.createPriceLine({
           price: line.price,
-          color: line.color ?? "rgba(87,163,255,0.9)",
+          color: line.color ?? "rgba(47, 122, 209, 0.82)",
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
@@ -1040,7 +1047,7 @@ export default function App() {
       for (const line of zoneLines) {
         candleSeries.createPriceLine({
           price: line.price,
-          color: line.color ?? "rgba(155,176,198,0.85)",
+          color: line.color ?? "rgba(106, 129, 152, 0.72)",
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
           axisLabelVisible: true,
@@ -1059,16 +1066,16 @@ export default function App() {
     for (const segment of segmentVisible) {
       const color =
         segment.kind === "trendlineUp"
-          ? "#00b386"
-          : segment.kind === "trendlineDown"
-            ? "#ff5a76"
-            : segment.kind === "channelLow"
-              ? "#4db5ff"
-              : segment.kind === "channelHigh"
-                ? "#9f7aea"
-                : segment.kind === "fanlineUp"
-                  ? "#7ee787"
-                  : "#ff9db4";
+            ? "#00b386"
+            : segment.kind === "trendlineDown"
+              ? "#ff5a76"
+              : segment.kind === "channelLow"
+                ? "#4db5ff"
+                : segment.kind === "channelHigh"
+                  ? "#d5862f"
+                  : segment.kind === "fanlineUp"
+                    ? "#5ea67f"
+                    : "#d9738c";
       const segmentSeries = mainChart.addLineSeries({
         color,
         lineWidth: segment.score >= 75 ? 2 : 1,
@@ -1103,7 +1110,7 @@ export default function App() {
       const endIndex = Math.min(active.candles.length - 1, selectedCandleIndex + 10);
       const refLevel = selectedPattern.details.refLevel;
       const refSeries = mainChart.addLineSeries({
-        color: "rgba(246, 199, 95, 0.95)",
+        color: "rgba(213, 139, 61, 0.92)",
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
@@ -1130,7 +1137,7 @@ export default function App() {
         {
           time: toChartTime(selectedCandle.time),
           value: 1,
-          color: "rgba(87, 163, 255, 0.25)",
+          color: "rgba(47, 122, 209, 0.18)",
         },
       ]);
     }
@@ -1148,7 +1155,7 @@ export default function App() {
       active.candles.map((c) => ({
         time: toChartTime(c.time),
         value: c.volume,
-        color: c.close >= c.open ? "rgba(0,179,134,0.45)" : "rgba(255,90,118,0.45)",
+        color: c.close >= c.open ? "rgba(11, 141, 101, 0.28)" : "rgba(196, 84, 110, 0.28)",
       })),
     );
 
@@ -1187,31 +1194,31 @@ export default function App() {
         width: rsiContainer.clientWidth,
         height: 180,
         layout: {
-          background: { type: ColorType.Solid, color: "#0f1722" },
-          textColor: "#9fb2c7",
+          background: { type: ColorType.Solid, color: CHART_THEME.background },
+          textColor: CHART_THEME.textColor,
         },
         grid: {
-          vertLines: { color: "#1e2d3f" },
-          horzLines: { color: "#1e2d3f" },
+          vertLines: { color: CHART_THEME.gridColor },
+          horzLines: { color: CHART_THEME.gridColor },
         },
         rightPriceScale: {
-          borderColor: "#30445a",
+          borderColor: CHART_THEME.borderColor,
         },
         timeScale: {
-          borderColor: "#30445a",
+          borderColor: CHART_THEME.borderColor,
           timeVisible: false,
           secondsVisible: false,
         },
       });
 
       const rsiSeries = rsiChart.addLineSeries({
-        color: "#7ee787",
+        color: "#1f9d74",
         lineWidth: 2,
       });
       rsiSeries.setData(toLineData(rsiPoints));
       rsiSeries.createPriceLine({
         price: 70,
-        color: "rgba(255,90,118,0.7)",
+        color: "rgba(196, 84, 110, 0.55)",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -1219,7 +1226,7 @@ export default function App() {
       });
       rsiSeries.createPriceLine({
         price: 50,
-        color: "rgba(159,178,199,0.75)",
+        color: "rgba(106, 129, 152, 0.55)",
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
         axisLabelVisible: true,
@@ -1227,7 +1234,7 @@ export default function App() {
       });
       rsiSeries.createPriceLine({
         price: 30,
-        color: "rgba(87,163,255,0.75)",
+        color: "rgba(47, 122, 209, 0.55)",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,

@@ -48,6 +48,12 @@ interface AnalysisStrategyChartStackProps {
 
 const DESKTOP_CHART_HEIGHT = 232;
 const MOBILE_CHART_HEIGHT = 200;
+const CHART_THEME = {
+  background: "#fbfdff",
+  textColor: "#5f7890",
+  gridColor: "#d9e4ee",
+  borderColor: "#c7d7e6",
+};
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) {
@@ -79,18 +85,18 @@ function StrategyOverlayChart(props: {
       width: container.clientWidth,
       height,
       layout: {
-        background: { type: ColorType.Solid, color: "#0f1722" },
-        textColor: "#9fb2c7",
+        background: { type: ColorType.Solid, color: CHART_THEME.background },
+        textColor: CHART_THEME.textColor,
       },
       grid: {
-        vertLines: { color: "#1e2d3f" },
-        horzLines: { color: "#1e2d3f" },
+        vertLines: { color: CHART_THEME.gridColor },
+        horzLines: { color: CHART_THEME.gridColor },
       },
       rightPriceScale: {
-        borderColor: "#30445a",
+        borderColor: CHART_THEME.borderColor,
       },
       timeScale: {
-        borderColor: "#30445a",
+        borderColor: CHART_THEME.borderColor,
         timeVisible: false,
         secondsVisible: false,
       },

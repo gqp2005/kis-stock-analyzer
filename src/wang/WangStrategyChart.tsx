@@ -40,6 +40,14 @@ interface RefLineRect {
 }
 
 const DEFAULT_CHART_HEIGHT = 360;
+const CHART_THEME = {
+  background: "#fbfdff",
+  textColor: "#5f7890",
+  gridColor: "rgba(199, 215, 230, 0.68)",
+  borderColor: "rgba(190, 206, 221, 0.92)",
+  crosshairStrong: "rgba(47, 122, 209, 0.32)",
+  crosshairSoft: "rgba(95, 120, 144, 0.22)",
+};
 
 const toChartTime = (value: string): Time => {
   if (value.includes("T")) return Math.floor(new Date(value).getTime() / 1000) as Time;
@@ -136,22 +144,22 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       width: container.clientWidth,
       height,
       layout: {
-        background: { type: ColorType.Solid, color: "rgba(7, 16, 27, 0.96)" },
-        textColor: "#d9e6f4",
+        background: { type: ColorType.Solid, color: CHART_THEME.background },
+        textColor: CHART_THEME.textColor,
       },
       grid: {
-        vertLines: { color: "rgba(87, 163, 255, 0.08)" },
-        horzLines: { color: "rgba(87, 163, 255, 0.08)" },
+        vertLines: { color: CHART_THEME.gridColor },
+        horzLines: { color: CHART_THEME.gridColor },
       },
       rightPriceScale: {
-        borderColor: "rgba(87, 163, 255, 0.18)",
+        borderColor: CHART_THEME.borderColor,
       },
       timeScale: {
-        borderColor: "rgba(87, 163, 255, 0.18)",
+        borderColor: CHART_THEME.borderColor,
       },
       crosshair: {
-        vertLine: { color: "rgba(255,255,255,0.28)" },
-        horzLine: { color: "rgba(255,255,255,0.18)" },
+        vertLine: { color: CHART_THEME.crosshairStrong },
+        horzLine: { color: CHART_THEME.crosshairSoft },
       },
     });
 
@@ -190,7 +198,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
       candles.map<HistogramData<Time>>((candle) => ({
         time: toChartTime(candle.time),
         value: candle.volume,
-        color: candle.close >= candle.open ? "rgba(0, 179, 134, 0.60)" : "rgba(255, 90, 118, 0.55)",
+        color: candle.close >= candle.open ? "rgba(11, 141, 101, 0.28)" : "rgba(196, 84, 110, 0.28)",
       })),
     );
 
