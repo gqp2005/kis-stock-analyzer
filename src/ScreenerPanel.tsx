@@ -1928,55 +1928,55 @@ export default function ScreenerPanel(props: ScreenerPanelProps) {
                 >
                   <div className={`screener-card-head${isMobileView ? " compact" : ""}`}>
                     <div className="screener-card-title">
-                      <h3>
-                        {item.name} ({item.code})
-                      </h3>
-                      <p className="meta">
+                      <div className="screener-card-title-row">
+                        <h3>
+                          {item.name} ({item.code})
+                        </h3>
+                        <div className="screener-card-primary">
+                          <span className={primaryStatusClass}>{primaryStatusLabel}</span>
+                          <FavoriteButton
+                            small
+                            active={isFavorite(item.code)}
+                            onClick={() => toggleFavorite({ code: item.code, name: item.name })}
+                          />
+                        </div>
+                      </div>
+                      <p className="meta screener-card-meta">
                         {item.market} · {item.lastDate} · 종가 {formatPrice(item.lastClose)}
                       </p>
                     </div>
-                    <div className="final-badges">
-                      <FavoriteButton
-                        small
-                        active={isFavorite(item.code)}
-                        onClick={() => toggleFavorite({ code: item.code, name: item.name })}
-                      />
-                      <span className={wangBadgeClass(item.wangStrategy)}>
-                        왕장군 {wangActionBiasLabel(item.wangStrategy.actionBias)} · {item.wangStrategy.score}
-                      </span>
-                      {isMobileView ? (
-                        <span className={primaryStatusClass}>{primaryStatusLabel}</span>
-                      ) : strategy === "WASHOUT_PULLBACK" ? (
-                        <>
-                          <span className={washoutStateBadgeClass(item.hits.washoutPullback.state)}>
-                            {washoutStateLabel(item.hits.washoutPullback.state)}
-                          </span>
-                          <span className="confidence neutral">
-                            점수 {item.hits.washoutPullback.score}
-                          </span>
-                          <span className="confidence good">
-                            신뢰도 {item.hits.washoutPullback.confidence}
-                          </span>
-                        </>
-                      ) : strategy === "VCP" ? (
-                        <>
-                          <span className="confidence neutral">VCPScore {item.hits.vcp.score}</span>
-                          <span className={item.hits.vcp.pivot.label === "BREAKOUT_CONFIRMED" ? "badge good" : "badge neutral"}>
-                            {pivotLabel(item.hits.vcp.pivot.label)}
-                          </span>
-                          <span className={item.hits.vcp.state === "CONFIRMED" ? "badge good" : "badge neutral"}>
-                            {vcpStateLabel(item.hits.vcp.state)}
-                          </span>
-                          {item.hits.vcp.score >= 92 && <span className="reason-tag positive">Strong</span>}
-                        </>
-                      ) : (
-                        <>
-                          <span className={overallClass(item.overallLabel)}>{overallLabel(item.overallLabel)}</span>
-                          <span className="confidence neutral">점수 {item.scoreTotal}</span>
-                          <span className="confidence good">신뢰도 {item.confidence}</span>
-                        </>
-                      )}
-                    </div>
+                  </div>
+
+                  <div className="screener-card-context">
+                    <span className={wangBadgeClass(item.wangStrategy)}>
+                      왕장군 {wangActionBiasLabel(item.wangStrategy.actionBias)} · {item.wangStrategy.score}
+                    </span>
+                    {strategy === "WASHOUT_PULLBACK" ? (
+                      <>
+                        <small className="reason-tag neutral">
+                          Risk {formatRiskPercent(item.hits.washoutPullback.riskPct)}
+                        </small>
+                        <small className="reason-tag neutral">
+                          {washoutPositionLabel(item.hits.washoutPullback.position)}
+                        </small>
+                      </>
+                    ) : strategy === "VCP" ? (
+                      <>
+                        <small
+                          className={
+                            item.hits.vcp.pivot.label === "BREAKOUT_CONFIRMED" ? "reason-tag positive" : "reason-tag neutral"
+                          }
+                        >
+                          {pivotLabel(item.hits.vcp.pivot.label)}
+                        </small>
+                        <small className="reason-tag neutral">
+                          DryUp {dryUpStrengthLabel(item.hits.vcp.volume.dryUpStrength)}
+                        </small>
+                        {item.hits.vcp.score >= 92 && <small className="reason-tag positive">Strong</small>}
+                      </>
+                    ) : (
+                      <small className="reason-tag neutral">신뢰도 {item.confidence}</small>
+                    )}
                   </div>
 
                   <div className="screener-kpi-grid">

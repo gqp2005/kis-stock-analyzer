@@ -58,6 +58,15 @@ interface SearchResponse {
   items: StockLookup[];
 }
 
+type PageMode = "analysis" | "screener" | "strategy" | "wangStrategy" | "glossary" | "autotrade" | "account" | "admin";
+
+const MOBILE_MORE_ITEMS: Array<{ id: PageMode; label: string }> = [
+  { id: "glossary", label: "용어 안내" },
+  { id: "autotrade", label: "자동매매" },
+  { id: "account", label: "계좌" },
+  { id: "admin", label: "운영" },
+];
+
 const scoreClass = (score: number): string => {
   if (score >= 70) return "score good";
   if (score >= 45) return "score neutral";
@@ -580,9 +589,8 @@ const coreReasonTone = (analysis: TimeframeAnalysis, index: number): ReasonTone 
 
 export default function App() {
   const ANALYSIS_PROFILE: InvestmentProfile = "short";
-  const [pageMode, setPageMode] = useState<
-    "analysis" | "screener" | "strategy" | "wangStrategy" | "glossary" | "autotrade" | "account" | "admin"
-  >("analysis");
+  const [pageMode, setPageMode] = useState<PageMode>("analysis");
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [wangStrategyQuery, setWangStrategyQuery] = useState("");
   const [days, setDays] = useState(180);
@@ -781,6 +789,10 @@ export default function App() {
     setPageMode("wangStrategy");
     setShowSuggestions(false);
   };
+
+  useEffect(() => {
+    setMobileMoreOpen(false);
+  }, [pageMode]);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
@@ -3501,6 +3513,8 @@ export default function App() {
     if (!exists) setSelectedPattern(null);
   }, [activeAnalysis, selectedPattern]);
 
+  const mobileMoreActive = mobileMoreOpen || MOBILE_MORE_ITEMS.some((item) => item.id === pageMode);
+
   return (
     <div className="page">
       <main className="panel">
@@ -5285,6 +5299,18 @@ export default function App() {
           <AdminOpsPanel apiBase={apiBase} />
         )}
       </main>
+      <div id="mobile-more-sheet" className={`mobile-more-sheet${mobileMoreOpen ? " open" : ""}`} aria-hidden={!mobileMoreOpen}>
+        {MOBILE_MORE_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={pageMode === item.id ? "active" : ""}
+            onClick={() => setPageMode(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       <nav className="mobile-bottom-nav" aria-label="모바일 빠른 메뉴">
         <button type="button" className={pageMode === "analysis" ? "active" : ""} onClick={() => setPageMode("analysis")}>
           분석
@@ -5302,14 +5328,14 @@ export default function App() {
         >
           왕장군
         </button>
-        <button type="button" className={pageMode === "glossary" ? "active" : ""} onClick={() => setPageMode("glossary")}>
-          용어
-        </button>
-        <button type="button" className={pageMode === "autotrade" ? "active" : ""} onClick={() => setPageMode("autotrade")}>
-          자동
-        </button>
-        <button type="button" className={pageMode === "account" ? "active" : ""} onClick={() => setPageMode("account")}>
-          계좌
+        <button
+          type="button"
+          className={mobileMoreActive ? "active" : ""}
+          aria-expanded={mobileMoreOpen}
+          aria-controls="mobile-more-sheet"
+          onClick={() => setMobileMoreOpen((prev) => !prev)}
+        >
+          더보기
         </button>
       </nav>
     </div>

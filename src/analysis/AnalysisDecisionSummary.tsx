@@ -64,6 +64,24 @@ export default function AnalysisDecisionSummary(props: AnalysisDecisionSummaryPr
     reasonNote,
   } = props;
 
+  const focusSteps = [
+    {
+      step: "1",
+      title: "매매 계획",
+      description: "진입, 손절, 목표가부터 먼저 확인합니다.",
+    },
+    {
+      step: "2",
+      title: "핵심 점수",
+      description: `현재 ${activeTfLabel} 기준 강도와 신뢰도를 판단합니다.`,
+    },
+    {
+      step: "3",
+      title: "근거·차트",
+      description: "세부 근거와 차트는 아래에서 이어서 확인합니다.",
+    },
+  ];
+
   return (
     <section className="analysis-summary-shell">
       <div className="sticky-summary-bar analysis-sticky-summary">
@@ -89,12 +107,31 @@ export default function AnalysisDecisionSummary(props: AnalysisDecisionSummaryPr
 
       <p className="meta summary-meta-bottom">{metaLine}</p>
 
-      {warnings.length > 0 && (
-        <div className="warning-box">
-          {warnings.map((warning) => (
-            <span key={warning}>{warning}</span>
+      <section className="analysis-reading-guide" aria-label="분석 읽는 순서">
+        <div className="analysis-reading-copy">
+          <strong>읽는 순서</strong>
+          <p>첫 화면은 판단부터 보고, 세부 차트와 보조 지표는 그다음에 보는 흐름으로 정리했습니다.</p>
+        </div>
+        <div className="analysis-reading-steps">
+          {focusSteps.map((item) => (
+            <div key={item.step} className="analysis-reading-step">
+              <span>{item.step}</span>
+              <strong>{item.title}</strong>
+              <small>{item.description}</small>
+            </div>
           ))}
         </div>
+      </section>
+
+      {warnings.length > 0 && (
+        <section className="analysis-warning-shell" aria-label="주의 사항">
+          <strong>체크할 점</strong>
+          <div className="warning-box analysis-warning-box">
+            {warnings.map((warning) => (
+              <span key={warning}>{warning}</span>
+            ))}
+          </div>
+        </section>
       )}
 
       <div className="analysis-decision-grid">
