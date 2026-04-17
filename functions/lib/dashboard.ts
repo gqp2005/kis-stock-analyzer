@@ -1,13 +1,12 @@
-import { getCachedJson } from "./cache";
-import { listPersistedByPrefix, getPersistedJson } from "./screenerPersistence";
+import { listPersistedByPrefix } from "./screenerPersistence";
+import {
+  loadScreenerSnapshotBundle,
+  sanitizeUserScreenerWarnings,
+} from "./screenerSnapshot";
 import {
   type ScreenerChangeSummary,
   type ScreenerSnapshot,
   persistChangeHistoryPrefix,
-  persistScreenerDateKey,
-  persistScreenerLastSuccessKey,
-  screenerDateKey,
-  screenerLastSuccessKey,
 } from "./screenerStore";
 import type { Env } from "./types";
 import type { ScreenerStoredCandidate } from "./screener";
@@ -188,21 +187,12 @@ export const loadLatestScreenerSnapshot = async (
   cache: Cache,
 ): Promise<{ snapshot: ScreenerSnapshot | null; warnings: string[] }> => {
   const today = nowIsoKst().slice(0, 10);
-  const todayKey = screenerDateKey(today);
-  const lastSuccessKey = screenerLastSuccessKey();
-
-  let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
+  const { snapshot, isToday } = await loadScreenerSnapshotBundle(env, cache, today);
   const warnings: string[] = [];
   if (!snapshot) {
-    const cachedLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, lastSuccessKey);
-    const persistedToday = await getPersistedJson<ScreenerSnapshot>(env, persistScreenerDateKey(today));
-    const persistedLastSuccess = await getPersistedJson<ScreenerSnapshot>(env, persistScreenerLastSuccessKey());
-    snapshot = cachedLastSuccess ?? persistedToday ?? persistedLastSuccess;
-    if (!snapshot) {
-      warnings.push("스크리너 스냅샷이 없어 대시보드 집계를 생성하지 못했습니다.");
-    } else if (snapshot.date !== today) {
-      warnings.push("오늘 스냅샷이 없어 마지막 성공 스냅샷 기준으로 대시보드를 표시합니다.");
-    }
+    warnings.push("스크리너 스냅샷이 없어 대시보드 집계를 생성하지 못했습니다.");
+  } else if (!isToday) {
+    warnings.push("오늘 스냅샷이 없어 마지막 성공 스냅샷 기준으로 대시보드를 표시합니다.");
   }
   return { snapshot, warnings };
 };
@@ -835,7 +825,7 @@ export const buildDashboardOverview = async (
       missingCodes,
       alerts: favoriteAlerts.slice(0, 12),
     },
-    warnings: [...warnings, ...(snapshot?.warnings ?? []).slice(0, 4)],
+    warnings: sanitizeUserScreenerWarnings([...warnings, ...(snapshot?.warnings ?? [])], 4),
   };
 };
 

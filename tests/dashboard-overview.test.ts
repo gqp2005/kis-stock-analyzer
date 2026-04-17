@@ -1,13 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getCachedJson } from "../functions/lib/cache";
+import { nowIsoKst } from "../functions/lib/market";
+import { getCachedJson, putCachedJson } from "../functions/lib/cache";
 import { buildDashboardOverview } from "../functions/lib/dashboard";
+import {
+  getPersistedJson,
+  listPersistedByPrefix,
+} from "../functions/lib/screenerPersistence";
 import type { ScreenerSnapshot } from "../functions/lib/screenerStore";
 
 vi.mock("../functions/lib/cache", () => ({
   getCachedJson: vi.fn(async () => null),
+  putCachedJson: vi.fn(async () => undefined),
+}));
+
+vi.mock("../functions/lib/screenerPersistence", () => ({
+  getPersistedJson: vi.fn(async () => null),
+  listPersistedByPrefix: vi.fn(async () => []),
 }));
 
 const mockedGetCachedJson = vi.mocked(getCachedJson);
+const mockedPutCachedJson = vi.mocked(putCachedJson);
+const mockedGetPersistedJson = vi.mocked(getPersistedJson);
+const mockedListPersistedByPrefix = vi.mocked(listPersistedByPrefix);
 
 const makeCandidate = ({
   code,
@@ -84,6 +98,8 @@ const makeCandidate = ({
 describe("buildDashboardOverview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedGetPersistedJson.mockResolvedValue(null);
+    mockedListPersistedByPrefix.mockResolvedValue([]);
   });
 
   it("adds wang validation distribution, ranking, timeline, and favorite state", async () => {
@@ -188,5 +204,76 @@ describe("buildDashboardOverview", () => {
 
     expect(result.favorites.alerts[0]?.wangPhase).toBe("MIN_VOLUME");
     expect(result.favorites.alerts[0]?.wangActionBias).toBe("ACCUMULATE");
+  });
+
+  it("restores today's persisted snapshot and hides noisy operational warnings", async () => {
+    const today = nowIsoKst().slice(0, 10);
+    const snapshot: ScreenerSnapshot = {
+      date: today,
+      updatedAt: `${today}T06:10:51+09:00`,
+      universeCount: 1,
+      processedCount: 1,
+      topN: 1,
+      source: "KIS",
+      warnings: [
+        "리빌드 초기화 중입니다. 잠시 후 진행률이 갱신됩니다.",
+        "External/Backup 소스 실패로 StaticProvider 유니버스를 사용했습니다.",
+        "데이터 부족 12종목 제외",
+        "데이터 부족 88종목 제외",
+      ],
+      topCandidates: [],
+      candidates: [
+        makeCandidate({
+          code: "111111",
+          name: "적립후보",
+          overallScore: 82,
+          confidence: 78,
+          wangStrategy: {
+            eligible: true,
+            label: "적립 후보",
+            score: 86,
+            confidence: 79,
+            currentPhase: "MIN_VOLUME",
+            actionBias: "ACCUMULATE",
+            executionState: "READY_ON_ZONE",
+            reasons: ["최소거래량 이후 zone 재접근입니다."],
+            weekBias: "주봉 최소거래량 구간입니다.",
+            dayBias: "일봉 zone 재접근입니다.",
+            zoneReady: true,
+            ma20DiscountReady: true,
+            dailyRebaseReady: true,
+            retestReady: true,
+          },
+        }),
+      ],
+    };
+
+    mockedGetCachedJson.mockImplementation(async (_cache, key) => {
+      if (String(key).includes("last_success")) {
+        return { ...snapshot, date: "2025-01-10" } as never;
+      }
+      return null as never;
+    });
+    mockedGetPersistedJson.mockImplementation(async (_env, key) => {
+      if (String(key).includes(`snapshot:date:${today}`)) return snapshot as never;
+      return null as never;
+    });
+
+    const result = await buildDashboardOverview({} as any, {} as Cache, []);
+
+    expect(result.meta.snapshotDate).toBe(today);
+    expect(result.warnings.some((warning) => warning.includes("리빌드 초기화"))).toBe(false);
+    expect(
+      result.warnings.some((warning) =>
+        warning.includes("StaticProvider 유니버스를 사용했습니다."),
+      ),
+    ).toBe(false);
+    expect(result.warnings.filter((warning) => warning.includes("데이터 부족")).length).toBe(1);
+    expect(mockedPutCachedJson).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining(`screener:v1:market=ALL:strategy=ALL:${today}`),
+      snapshot,
+      expect.any(Number),
+    );
   });
 });

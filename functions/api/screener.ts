@@ -1,4 +1,3 @@
-import { getCachedJson } from "../lib/cache";
 import { nowIsoKst } from "../lib/market";
 import { attachMetrics, createRequestMetrics } from "../lib/observability";
 import {
@@ -6,15 +5,15 @@ import {
   loadRebuildRuntimeProgress,
 } from "../lib/rebuildRuntime";
 import { json, serverError } from "../lib/response";
+import {
+  loadScreenerSnapshotBundle,
+  sanitizeUserScreenerWarnings,
+} from "../lib/screenerSnapshot";
 import { buildScreenerView } from "../lib/screener";
-import { getPersistedJson, persistenceBackend } from "../lib/screenerPersistence";
+import { persistenceBackend } from "../lib/screenerPersistence";
 import {
   SCREENER_CACHE_TTL_SEC,
   type ScreenerSnapshot,
-  persistScreenerDateKey,
-  persistScreenerLastSuccessKey,
-  screenerDateKey,
-  screenerLastSuccessKey,
 } from "../lib/screenerStore";
 import type {
   Env,
@@ -190,21 +189,6 @@ const triggerAutoBootstrap = async (
 
 const dedupeWarnings = (warnings: string[]): string[] => [...new Set(warnings)];
 
-const USER_NOISY_WARNING_PATTERNS: RegExp[] = [
-  /^현재 rebuild 진행 중:/,
-  /^리빌드 초기화 중입니다\./,
-  /^요청 시간 예산\(/,
-  /^ExternalProvider 실패로 StaticProvider 유니버스를 사용했습니다\./,
-  /^External\/Backup 소스 실패로 StaticProvider 유니버스를 사용했습니다\./,
-  /^Primary 유니버스 소스 실패로 보조 소스/,
-  /^Cache API miss로 영속 저장소\(KV\/D1\) 결과를 반환합니다\./,
-];
-
-const sanitizeUserWarnings = (warnings: string[], maxItems = 8): string[] =>
-  dedupeWarnings(warnings)
-    .filter((warning) => !USER_NOISY_WARNING_PATTERNS.some((pattern) => pattern.test(warning)))
-    .slice(0, maxItems);
-
 const normalizeProgress = (
   progress: RebuildProgressSnapshot | null,
 ): RebuildProgressSnapshot | null => {
@@ -255,45 +239,27 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const cache = await caches.open("kis-analyzer-cache-v3");
     const today = nowIsoKst().slice(0, 10);
     const backend = persistenceBackend(context.env);
-    const todayKey = screenerDateKey(today);
-    const lastSuccessKey = screenerLastSuccessKey();
     const progress = normalizeProgress(
       await loadRebuildRuntimeProgress(context.env, cache, today),
     );
     const runtimeLock = await loadRebuildRuntimeLock(context.env, cache);
 
-    let snapshot = await getCachedJson<ScreenerSnapshot>(cache, todayKey);
-    let servedFromPersist = false;
-    let rebuildRequired = false;
+    const snapshotBundle = await loadScreenerSnapshotBundle(context.env, cache, today);
+    let snapshot = snapshotBundle.snapshot;
+    let rebuildRequired = !snapshot || !snapshotBundle.isToday;
     let autoBootstrapTriggered = false;
     const warnings: string[] = [];
 
-    if (snapshot) {
+    if (snapshotBundle.source === "cache_today") {
       metrics.apiCacheHits += 1;
       console.log(`[screener-cache-hit] date=${today}`);
     } else {
       metrics.apiCacheMisses += 1;
-      rebuildRequired = true;
-      console.log(`[screener-cache-miss] date=${today}`);
-      const cachedLastSuccess = await getCachedJson<ScreenerSnapshot>(cache, lastSuccessKey);
-      const persistedToday = await getPersistedJson<ScreenerSnapshot>(
-        context.env,
-        persistScreenerDateKey(today),
-      );
-      const persistedLastSuccess = await getPersistedJson<ScreenerSnapshot>(
-        context.env,
-        persistScreenerLastSuccessKey(),
-      );
-      snapshot = cachedLastSuccess ?? persistedToday ?? persistedLastSuccess;
-      servedFromPersist = !cachedLastSuccess && !!snapshot;
-      if (snapshot) {
-        warnings.push(
-          servedFromPersist
-            ? "Cache API miss로 영속 저장소(KV/D1) 결과를 반환합니다."
-            : "오늘 스크리너 캐시가 없어 마지막 성공 결과를 반환합니다. 재빌드가 필요합니다.",
-        );
-      } else {
+      console.log(`[screener-cache-miss] date=${today} source=${snapshotBundle.source}`);
+      if (!snapshot) {
         warnings.push("스크리너 결과 캐시가 없습니다. /api/admin/rebuild-screener 실행이 필요합니다.");
+      } else if (!snapshotBundle.isToday) {
+        warnings.push("오늘 스크리너 캐시가 없어 마지막 성공 결과를 반환합니다. 재빌드가 필요합니다.");
       }
       const hasPendingProgress =
         !!progress && progress.universeCount > 0 && progress.cursor < progress.universeCount;
@@ -434,7 +400,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         },
         items: [],
         warningItems: [],
-        warnings: sanitizeUserWarnings(warnings),
+        warnings: sanitizeUserScreenerWarnings(warnings),
       };
       return finalize(
         json(emptyPayload, 200, {
@@ -607,7 +573,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       },
       items: view.items,
       warningItems: view.warningItems,
-      warnings: sanitizeUserWarnings([
+      warnings: sanitizeUserScreenerWarnings([
         ...warnings,
         ...snapshot.warnings,
         strategy !== "HS"
@@ -621,13 +587,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     return finalize(
       json(payload, 200, {
-        "x-cache": servedFromPersist
-          ? "PERSIST"
-          : autoBootstrapTriggered
+        "x-cache": rebuildRequired
+          ? autoBootstrapTriggered
             ? "STALE-AUTO"
-          : snapshot.date === today
+            : snapshotBundle.fromPersistence
+              ? "PERSIST-STALE"
+              : "STALE"
+          : snapshotBundle.source === "cache_today"
             ? "HIT"
-            : "STALE",
+            : snapshotBundle.fromPersistence
+              ? "PERSIST"
+              : "RESTORED",
         "cache-control": "public, max-age=30",
       }),
     );

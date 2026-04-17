@@ -9,6 +9,7 @@ import { nowIsoKst } from "../../../lib/market";
 import { attachMetrics, createRequestMetrics } from "../../../lib/observability";
 import { errorJson, json, serverError } from "../../../lib/response";
 import { analyzeTimeframe } from "../../../lib/scoring";
+import { sanitizeScreenerSnapshotWarnings } from "../../../lib/screenerSnapshot";
 import { hasAdminOrSessionAccess } from "../../../lib/siteAuth";
 import {
   analyzeScreenerRawCandidate,
@@ -1419,6 +1420,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const alertCandidates = buildAlertCandidates(changeSummary, alertOptions);
     const alerts = await applyAlertCooldown(context.env, alertOptions, alertCandidates);
     const durationMs = Date.now() - startedAtMs;
+    const finalWarnings = sanitizeScreenerSnapshotWarnings(progress.warnings);
 
     const snapshot: ScreenerSnapshot = {
       date,
@@ -1427,7 +1429,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       processedCount: progress.processedCount,
       topN: TOP_N_STORE,
       source: "KIS",
-      warnings: progress.warnings,
+      warnings: finalWarnings,
       candidates,
       topCandidates: candidates.slice(0, TOP_N_STORE),
       changeSummary,
@@ -1547,7 +1549,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           tuningSummary,
           validationSummary,
           alerts,
-          warnings: snapshot.warnings,
+          warnings: finalWarnings,
         },
         200,
       ),

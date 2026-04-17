@@ -27,6 +27,15 @@ const VALID_CODE_RE = /^\d{6}$/;
 const MAX_LIMIT = 1200;
 const DEFAULT_MAX_PAGES = 10;
 const DEFAULT_TIMEOUT_MS = 8000;
+const NAVER_FINANCE_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+  "cache-control": "no-cache",
+  pragma: "no-cache",
+  referer: "https://finance.naver.com/",
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+} as const;
 
 const stocks = stockList as StockEntry[];
 const stockByCode = new Map<string, StockEntry>();
@@ -53,6 +62,20 @@ const parseNumber = (value: string): number => {
   const normalized = value.replace(/,/g, "").trim();
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const assertLooksLikeNaverFinancePage = (html: string, label: string): void => {
+  const hasStockLinks = /\/item\/main\.naver\?code=\d{6}/.test(html);
+  const hasTitleCells = /class="tltle">/.test(html);
+  if (hasStockLinks && hasTitleCells) return;
+
+  const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+  const title = titleMatch ? decodeHtml(stripTags(titleMatch[1])) : null;
+  throw new Error(
+    title
+      ? `${label} source returned unexpected page (${title})`
+      : `${label} source returned unexpected page`,
+  );
 };
 
 const parseMarketRows = (html: string, market: "KOSPI" | "KOSDAQ"): UniverseTurnoverItem[] => {
@@ -195,16 +218,14 @@ export class ExternalProvider implements UniverseProvider {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetcher(url, {
-        headers: {
-          accept: "text/html,application/xhtml+xml",
-          "user-agent": "Mozilla/5.0",
-        },
+        headers: NAVER_FINANCE_HEADERS,
         signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`external source http ${response.status}`);
       }
       const html = await response.text();
+      assertLooksLikeNaverFinancePage(html, "external");
       return parseMarketRows(html, market);
     } finally {
       clearTimeout(timer);
@@ -256,16 +277,14 @@ export class MarketSummaryProvider implements UniverseProvider {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetcher(url, {
-        headers: {
-          accept: "text/html,application/xhtml+xml",
-          "user-agent": "Mozilla/5.0",
-        },
+        headers: NAVER_FINANCE_HEADERS,
         signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`market-sum source http ${response.status}`);
       }
       const html = await response.text();
+      assertLooksLikeNaverFinancePage(html, "market-sum");
       return parseMarketSumRows(html, market);
     } finally {
       clearTimeout(timer);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nowIsoKst } from "../functions/lib/market";
 import type { ScreenerStoredCandidate } from "../functions/lib/screener";
 import type { ScreenerSnapshot } from "../functions/lib/screenerStore";
 
@@ -7,10 +8,22 @@ vi.mock("../functions/lib/cache", () => ({
   putCachedJson: vi.fn(async () => undefined),
 }));
 
+vi.mock("../functions/lib/screenerPersistence", () => ({
+  getPersistedJson: vi.fn(async () => null),
+  persistenceBackend: vi.fn(() => "none"),
+}));
+
 import { onRequestGet } from "../functions/api/screener";
-import { getCachedJson } from "../functions/lib/cache";
+import { getCachedJson, putCachedJson } from "../functions/lib/cache";
+import {
+  getPersistedJson,
+  persistenceBackend,
+} from "../functions/lib/screenerPersistence";
 
 const getCachedJsonMock = vi.mocked(getCachedJson);
+const putCachedJsonMock = vi.mocked(putCachedJson);
+const getPersistedJsonMock = vi.mocked(getPersistedJson);
+const persistenceBackendMock = vi.mocked(persistenceBackend);
 
 const sampleCandidate: ScreenerStoredCandidate = {
   code: "005930",
@@ -407,16 +420,25 @@ const makeContext = (url: string): Parameters<typeof onRequestGet>[0] =>
 describe("/api/screener (cache-only)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getPersistedJsonMock.mockResolvedValue(null);
+    persistenceBackendMock.mockReturnValue("none");
     (globalThis as unknown as { caches: unknown }).caches = {
       open: vi.fn(async () => ({}) as unknown as Cache),
     };
   });
 
   it("returns cached snapshot immediately", async () => {
+    const today = nowIsoKst().slice(0, 10);
+    const todaySnapshot: ScreenerSnapshot = {
+      ...sampleSnapshot,
+      date: today,
+      updatedAt: `${today}T06:10:51+09:00`,
+    };
+
     getCachedJsonMock.mockImplementation(async (_cache, key) => {
       const keyText = String(key);
       if (keyText.includes("rebuild-progress")) return null as never;
-      return sampleSnapshot as never;
+      return todaySnapshot as never;
     });
 
     const response = await onRequestGet(
@@ -473,6 +495,54 @@ describe("/api/screener (cache-only)", () => {
     expect(body.meta.rebuildRequired).toBe(true);
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.warnings.some((warning) => warning.includes("재빌드"))).toBe(true);
+  });
+
+  it("hydrates today's persisted snapshot and clears rebuildRequired on cache miss", async () => {
+    const today = nowIsoKst().slice(0, 10);
+    const todaySnapshot: ScreenerSnapshot = {
+      ...sampleSnapshot,
+      date: today,
+      updatedAt: `${today}T06:10:51+09:00`,
+      warnings: [
+        "리빌드 초기화 중입니다. 잠시 후 진행률이 갱신됩니다.",
+        "External/Backup 소스 실패로 StaticProvider 유니버스를 사용했습니다.",
+        "데이터 부족 12종목 제외",
+        "데이터 부족 88종목 제외",
+      ],
+    };
+
+    getCachedJsonMock.mockImplementation(async (_cache, key) => {
+      const keyText = String(key);
+      if (keyText.includes("rebuild-progress")) return null as never;
+      if (keyText.includes("market=ALL:strategy=ALL:last_success")) {
+        return { ...sampleSnapshot, date: "2025-01-10" } as never;
+      }
+      return null as never;
+    });
+    getPersistedJsonMock.mockImplementation(async (_env, key) => {
+      if (String(key).includes(`snapshot:date:${today}`)) return todaySnapshot as never;
+      return null as never;
+    });
+    persistenceBackendMock.mockReturnValue("kv");
+
+    const response = await onRequestGet(
+      makeContext("http://localhost/api/screener?market=ALL&strategy=ALL&count=30"),
+    );
+    const body = (await response.json()) as {
+      meta: { rebuildRequired: boolean; lastUpdatedAt: string | null };
+      warnings: string[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.meta.rebuildRequired).toBe(false);
+    expect(body.meta.lastUpdatedAt).toBe(todaySnapshot.updatedAt);
+    expect(putCachedJsonMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining(`screener:v1:market=ALL:strategy=ALL:${today}`),
+      todaySnapshot,
+      expect.any(Number),
+    );
+    expect(body.warnings.some((warning) => warning.includes("재빌드"))).toBe(false);
   });
 
   it("supports strategy=VCP filter", async () => {
