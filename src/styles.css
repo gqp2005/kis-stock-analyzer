@@ -4300,6 +4300,40 @@ button {
   background: rgba(196, 84, 110, 0.1);
 }
 
+.level-guide-head h4,
+.level-guide-list strong,
+.risk-row strong {
+  color: var(--heading);
+}
+
+.level-guide-head small,
+.level-guide-list p,
+.marker-detail-hint,
+.rsi-badge,
+.risk-row {
+  color: var(--muted);
+}
+
+.level-guide-list li,
+.risk-row {
+  border-color: rgba(123, 145, 166, 0.2);
+  background: var(--surface-muted);
+}
+
+.level-guide-list span,
+.rsi-badge {
+  color: #8a5d1f;
+}
+
+.level-guide-list span {
+  background: transparent;
+}
+
+.rsi-badge {
+  border-color: rgba(47, 122, 209, 0.28);
+  background: rgba(47, 122, 209, 0.1);
+}
+
 .screener-opinion,
 .strategy-one-liner,
 .backtest-opinion {
