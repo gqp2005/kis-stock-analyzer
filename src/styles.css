@@ -4095,6 +4095,7 @@ input::placeholder {
 
 button {
   box-shadow: 0 10px 24px rgba(21, 92, 148, 0.16);
+  color: #f5fbff;
 }
 
 .search-clear-btn,
@@ -4261,6 +4262,32 @@ button {
 .washout-warning,
 .suggestion-item small {
   color: var(--muted);
+}
+
+.card li,
+.decision-reason-list li,
+.decision-reason-list li > span,
+.analysis-detail-summary strong,
+.analysis-detail-summary small {
+  color: var(--muted);
+}
+
+.analysis-detail-summary strong {
+  color: var(--heading);
+}
+
+.decision-reason-list li {
+  border-color: rgba(123, 145, 166, 0.2);
+  background: var(--surface-muted);
+}
+
+.decision-reason-list li > span {
+  color: var(--text);
+}
+
+.analysis-detail-toggle::before,
+.analysis-detail-toggle::after {
+  background: rgba(95, 120, 144, 0.72);
 }
 
 .analysis-warning-shell strong,
