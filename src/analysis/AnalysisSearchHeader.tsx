@@ -1,4 +1,4 @@
-import type { FormEvent, RefObject } from "react";
+import type { FormEvent, MutableRefObject } from "react";
 
 interface AnalysisSuggestion {
   code: string;
@@ -14,8 +14,8 @@ interface AnalysisSearchHeaderProps {
   showSuggestions: boolean;
   suggestions: AnalysisSuggestion[];
   showEmptyState: boolean;
-  searchWrapRef: RefObject<HTMLDivElement | null>;
-  queryInputRef: RefObject<HTMLInputElement | null>;
+  searchWrapRef: MutableRefObject<HTMLDivElement | null>;
+  queryInputRef: MutableRefObject<HTMLInputElement | null>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onQueryChange: (value: string) => void;
   onInputFocus: () => void;

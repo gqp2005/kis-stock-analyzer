@@ -3,6 +3,7 @@ import {
   ColorType,
   LineStyle,
   createChart,
+  type LineWidth,
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
@@ -135,7 +136,7 @@ function StrategyOverlayChart(props: {
       candleSeries.createPriceLine({
         price: line.price,
         color: line.color,
-        lineWidth: line.lineWidth ?? 2,
+        lineWidth: (line.lineWidth ?? 2) as LineWidth,
         lineStyle: lineStyleMap[line.style],
         axisLabelVisible: true,
         title: line.label,

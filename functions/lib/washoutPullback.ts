@@ -448,7 +448,7 @@ export const detectWashoutPullback = (candles: Candle[]): DetectionResult => {
     ma20Last != null && ma60Last != null && ma120Last != null
       ? latest.close >= ma20Last && ma20Last >= ma60Last * 0.95 && ma60Last >= ma120Last * 0.9
       : false;
-  if (trendGuard && state !== "NONE") {
+  if (trendGuard) {
     reasons.push("MA20 및 중기 지지대 방어가 유지되고 있습니다.");
   }
 
@@ -499,7 +499,7 @@ export const detectWashoutPullback = (candles: Candle[]): DetectionResult => {
   const card: WashoutPullbackCard = {
     id: "washout_pullback_v1",
     displayName: "거래대금 설거지 + 눌림목 전략",
-    detected: state !== "NONE",
+    detected: true,
     state,
     score,
     confidence,

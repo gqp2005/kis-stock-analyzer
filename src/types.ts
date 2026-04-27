@@ -1065,23 +1065,19 @@ export interface FlowPersistenceHit {
   reasons: string[];
 }
 
-export type WangStrategyPhase =
-  | "LIFE_VOLUME"
-  | "BASE_VOLUME"
-  | "RISING_VOLUME"
-  | "ELASTIC_VOLUME"
-  | "MIN_VOLUME"
-  | "REACCUMULATION"
-  | "NONE";
+import type {
+  WangStrategyPhase,
+  WangStrategyInterpretation,
+  WangStrategyExecutionState,
+} from "./wang/types";
 
-export type WangStrategyActionBias = "ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT";
-export type WangStrategyExecutionState =
-  | "WAIT_WEEKLY_STRUCTURE"
-  | "WAIT_PULLBACK"
-  | "READY_ON_ZONE"
-  | "READY_ON_RETEST"
-  | "AVOID_BREAKDOWN"
-  | "AVOID_OVERHEAT";
+export type {
+  WangStrategyPhase,
+  WangStrategyInterpretation,
+  WangStrategyExecutionState,
+};
+
+export type WangStrategyActionBias = WangStrategyInterpretation;
 
 export interface WangStrategyScreeningSummary {
   eligible: boolean;

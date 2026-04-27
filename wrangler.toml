@@ -6,13 +6,3 @@ pages_build_output_dir = "./dist"
 binding = "KIS_KV"
 id = "35990b05d18549f4b5538d5b647e9ae5"
 preview_id = "35990b05d18549f4b5538d5b647e9ae5"
-
-[[kv_namespaces]]
-binding = "SCREENER_KV"
-id = "35990b05d18549f4b5538d5b647e9ae5"
-preview_id = "35990b05d18549f4b5538d5b647e9ae5"
-
-[[kv_namespaces]]
-binding = "AUTOTRADE_KV"
-id = "35990b05d18549f4b5538d5b647e9ae5"
-preview_id = "35990b05d18549f4b5538d5b647e9ae5"

@@ -5,7 +5,7 @@ import { makeWeeklyStructureCandles } from "./weekly";
 
 export const makeWangPayloadInputFixture = (options?: {
   eventRisk?: boolean;
-  executionState?: Parameters<typeof makeDailyBundleFixture>[0]["executionState"];
+  executionState?: NonNullable<Parameters<typeof makeDailyBundleFixture>[0]>["executionState"];
 }) => {
   const weekCandles = makeWeeklyStructureCandles();
   const weekly = detectWeeklyWangStructure({
@@ -47,5 +47,5 @@ export const makeWangPayloadInputFixture = (options?: {
 
 export const buildWangPayloadFixture = (options?: {
   eventRisk?: boolean;
-  executionState?: Parameters<typeof makeDailyBundleFixture>[0]["executionState"];
+  executionState?: NonNullable<Parameters<typeof makeDailyBundleFixture>[0]>["executionState"];
 }) => buildWangPayload(makeWangPayloadInputFixture(options));

@@ -383,7 +383,7 @@ export default function WangStrategyPanel({ apiBase, initialQuery }: WangStrateg
             <article className="card">
               <h3>체크리스트</h3>
               <div className="wang-checklist-columns">
-                {[["구조 판정", structureChecklist], ["실행 판정", executionChecklist], ["리스크 판정", riskChecklist]].map(([title, items]) => <div key={title}><h4>{title}</h4><ul className="insight-list">{(items as WangStrategyChecklistItem[]).map((item) => <li key={item.id}><span><small className={item.ok ? "reason-tag positive" : "reason-tag negative"}>{item.ok ? "충족" : "미충족"}</small> {item.label}</span><small>{item.detail}</small></li>)}</ul></div>)}
+                {([["구조 판정", structureChecklist], ["실행 판정", executionChecklist], ["리스크 판정", riskChecklist]] as Array<[string, WangStrategyChecklistItem[]]>).map(([title, items]) => <div key={title}><h4>{title}</h4><ul className="insight-list">{items.map((item) => <li key={item.id}><span><small className={item.ok ? "reason-tag positive" : "reason-tag negative"}>{item.ok ? "충족" : "미충족"}</small> {item.label}</span><small>{item.detail}</small></li>)}</ul></div>)}
               </div>
             </article>
           </div>

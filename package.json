@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "cf:dev": "npm run build && wrangler pages dev dist --compatibility-date=2025-01-01",
     "stocks:refresh": "node scripts/build-stock-map.mjs",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

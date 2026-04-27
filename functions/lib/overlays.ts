@@ -613,7 +613,8 @@ const buildTrendAndChannelSegments = (
   for (const candidate of trendCandidates) trendByWindow.set(candidate.lookback, candidate);
   const regimeItems = MULTI_CHANNEL_WINDOWS.map((window) => {
     const candidate = trendByWindow.get(window);
-    const label = window >= 200 ? "장기" : window >= 120 ? "중기" : "단기";
+    const label: "장기" | "중기" | "단기" =
+      window >= 200 ? "장기" : window >= 120 ? "중기" : "단기";
     if (!candidate) {
       return {
         window,
@@ -720,7 +721,7 @@ const buildVcpContractionMarkers = (signals: Signals): OverlayMarker[] => {
   if (!signals.vcp.detected || signals.vcp.contractions.length === 0) return [];
 
   const recentContractions = signals.vcp.contractions.slice(-4);
-  const contractionMarkers = recentContractions.flatMap((contraction, index) => {
+  const contractionMarkers: OverlayMarker[] = recentContractions.flatMap((contraction, index) => {
     const order = index + 1;
     return [
       {

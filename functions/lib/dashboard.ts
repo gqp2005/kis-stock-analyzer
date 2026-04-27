@@ -535,7 +535,9 @@ const buildStrategyRanking = (candidates: ScreenerStoredCandidate[]): StrategyRa
     return {
       key: definition.key,
       label: definition.label,
-      scoreMode: definition.key === "wangStrategy" ? "validation" : "primary",
+      scoreMode: (definition.key === "wangStrategy" ? "validation" : "primary") as
+        | "primary"
+        | "validation",
       candidateCount: matched.length,
       avgScore,
       avgConfidence,

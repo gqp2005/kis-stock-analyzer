@@ -829,40 +829,21 @@ export interface FlowPersistenceHit {
   reasons: string[];
 }
 
-export type WangStrategyPhase =
-  | "LIFE_VOLUME"
-  | "BASE_VOLUME"
-  | "RISING_VOLUME"
-  | "ELASTIC_VOLUME"
-  | "MIN_VOLUME"
-  | "REACCUMULATION"
-  | "NONE";
+import type {
+  WangStrategyPhase,
+  WangStrategyInterpretation,
+  WangStrategyExecutionState,
+  WangStrategyScreeningSummary,
+} from "./wangTypes";
 
-export type WangStrategyActionBias = "ACCUMULATE" | "WATCH" | "CAUTION" | "OVERHEAT";
-export type WangStrategyExecutionState =
-  | "WAIT_WEEKLY_STRUCTURE"
-  | "WAIT_PULLBACK"
-  | "READY_ON_ZONE"
-  | "READY_ON_RETEST"
-  | "AVOID_BREAKDOWN"
-  | "AVOID_OVERHEAT";
+export type {
+  WangStrategyPhase,
+  WangStrategyInterpretation,
+  WangStrategyExecutionState,
+  WangStrategyScreeningSummary,
+};
 
-export interface WangStrategyScreeningSummary {
-  eligible: boolean;
-  label: "적립 후보" | "관찰 후보" | "비적합";
-  score: number;
-  confidence: number;
-  currentPhase: WangStrategyPhase;
-  actionBias: WangStrategyActionBias;
-  executionState: WangStrategyExecutionState;
-  reasons: string[];
-  weekBias: string;
-  dayBias: string;
-  zoneReady: boolean;
-  ma20DiscountReady: boolean;
-  dailyRebaseReady: boolean;
-  retestReady: boolean;
-}
+export type WangStrategyActionBias = WangStrategyInterpretation;
 
 export interface ScreenerItem {
   code: string;

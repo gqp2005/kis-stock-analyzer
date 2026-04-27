@@ -64,9 +64,13 @@ export const WANG_PHASE_LABEL: Record<Exclude<WangStrategyPhase, "NONE">, string
 
 export const WANG_EXECUTION_STATE_LABEL: Record<WangStrategyExecutionState, string> = {
   WAIT_WEEKLY_STRUCTURE: "주봉 구조 대기",
+  WAIT_MIN_REGION: "최소거래량 구간 대기",
   WAIT_PULLBACK: "당김 대기",
+  READY_ON_DISCOUNT: "20일선 할인 적립",
   READY_ON_ZONE: "zone 진입 관찰",
   READY_ON_RETEST: "재접근 적립 후보",
+  READY_ON_PSYCHOLOGY_FLIP: "심리 전환 적립",
   AVOID_BREAKDOWN: "zone 이탈 경계",
+  AVOID_EVENT_RISK: "이슈 리스크 경계",
   AVOID_OVERHEAT: "과열 추격 금지",
 };

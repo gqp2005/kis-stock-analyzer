@@ -13,6 +13,7 @@ import { buildScreenerView } from "../lib/screener";
 import { persistenceBackend } from "../lib/screenerPersistence";
 import {
   SCREENER_CACHE_TTL_SEC,
+  type RebuildProgressSnapshot,
   type ScreenerSnapshot,
 } from "../lib/screenerStore";
 import type {

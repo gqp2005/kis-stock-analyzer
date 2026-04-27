@@ -4,6 +4,7 @@ import {
   createChart,
   type HistogramData,
   type LineData,
+  type LineWidth,
   type SeriesMarker,
   type Time,
   type WhitespaceData,
@@ -176,12 +177,11 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "",
-      scaleMargins: {
-        top: 0.76,
-        bottom: 0,
-      },
       lastValueVisible: false,
       priceLineVisible: false,
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.76, bottom: 0 },
     });
 
     candleSeries.setData(
@@ -205,7 +205,7 @@ export default function WangStrategyChart(props: WangStrategyChartProps) {
     chartOverlays.movingAverages.forEach((line) => {
       const series = chart.addLineSeries({
         color: line.color,
-        lineWidth: line.lineWidth,
+        lineWidth: line.lineWidth as LineWidth,
         priceLineVisible: false,
         lastValueVisible: false,
       });

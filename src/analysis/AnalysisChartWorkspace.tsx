@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 
 interface AnalysisTabItem {
   id: string;
@@ -16,8 +16,8 @@ interface AnalysisChartWorkspaceProps {
   chartTitle: string;
   priceChartHeight: number;
   mobileChartFullWidth: boolean;
-  priceChartRef: RefObject<HTMLDivElement | null>;
-  rsiChartRef: RefObject<HTMLDivElement | null>;
+  priceChartRef: MutableRefObject<HTMLDivElement | null>;
+  rsiChartRef: MutableRefObject<HTMLDivElement | null>;
   presetMode: "basic" | "detail" | "custom";
   onApplyBasicPreset: () => void;
   onApplyDetailPreset: () => void;
