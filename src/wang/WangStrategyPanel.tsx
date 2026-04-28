@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import FavoriteButton from "../FavoriteButton";
 import { useFavorites } from "../favorites";
+import { formatPrice, formatSignedPercent as formatPercent } from "../format";
 import WangStrategyChart from "./WangStrategyChart";
 import type {
   WangStrategyChecklistItem,
@@ -77,14 +78,8 @@ const MARKER_GUIDE: Record<WangStrategyMarkerType, { why: string; action: string
   STRONG_PULLBACK: { why: "강한 종목의 저거래량 눌림일 수 있습니다.", action: "무너지는 약세인지 건강한 조정인지 구분합니다." },
 };
 
-const formatPrice = (value: number | null): string =>
-  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
-
 const formatVolume = (value: number | null): string =>
   value == null ? "-" : Math.round(value).toLocaleString("ko-KR");
-
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 
 const interpretationClassName = (value: WangStrategyInterpretation): string =>
   value === "ACCUMULATE" ? "badge good" : value === "WATCH" ? "badge neutral" : "badge caution";

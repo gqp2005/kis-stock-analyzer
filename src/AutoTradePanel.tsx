@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatPrice } from "./format";
 import type {
   AutotradeCapitalMode,
   AutotradeMarketFilter,
@@ -58,9 +59,6 @@ const pickApiError = (payload: unknown, fallback: string): string => {
   const row = payload as Record<string, unknown>;
   return (typeof row.error === "string" && row.error) || (typeof row.message === "string" && row.message) || fallback;
 };
-
-const formatPrice = (value: number | null | undefined): string =>
-  value == null || !Number.isFinite(value) ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
 
 const formatPct = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) ? "-" : `${value.toFixed(2)}%`;

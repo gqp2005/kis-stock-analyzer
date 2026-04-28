@@ -1,9 +1,12 @@
 node_modules
 dist
 .wrangler
+.idea/
+.claude/
 .DS_Store
 coverage
 *.log
+tmp-*
 .dev.vars
 .env
 .env.local

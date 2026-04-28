@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import FavoriteButton from "./FavoriteButton";
 import { useFavorites } from "./favorites";
+import { formatPercent, formatPrice } from "./format";
 import type {
   PatternState,
   ScreenerItem,
@@ -21,14 +22,8 @@ type StrategyOpinion = {
   text: string;
 };
 
-const formatPrice = (value: number | null): string =>
-  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
-
 const formatMultiple = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}x`;
-
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}%`;
 
 const washoutStateLabel = (state: WashoutPullbackState): string => {
   if (state === "REBOUND_CONFIRMED") return "반등 재개";

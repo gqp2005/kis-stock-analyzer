@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import FavoriteButton from "./FavoriteButton";
 import { useFavorites } from "./favorites";
+import { formatPrice, formatSignedPercent as formatPercent } from "./format";
 import type { AccountDiagnosticsResponse, AccountResponse } from "./types";
 
 interface AccountPanelProps {
@@ -30,18 +31,12 @@ const pickApiError = (payload: unknown, fallback: string): string => {
   return error || message || fallback;
 };
 
-const formatPrice = (value: number | null): string =>
-  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
-
 const formatSignedPrice = (value: number | null): string => {
   if (value == null) return "-";
   const rounded = Math.round(value);
   const abs = Math.abs(rounded).toLocaleString("ko-KR");
   return `${rounded > 0 ? "+" : rounded < 0 ? "-" : ""}${abs}원`;
 };
-
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 
 const formatQty = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}주`;

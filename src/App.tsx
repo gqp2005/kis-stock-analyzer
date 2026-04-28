@@ -45,6 +45,21 @@ import ScreenerPanel from "./ScreenerPanel";
 import StrategyPanel from "./StrategyPanel";
 import WangStrategyPanel from "./wang/WangStrategyPanel";
 import { useFavorites } from "./favorites";
+import {
+  confidenceClass,
+  formatBars,
+  formatFactor,
+  formatPercent,
+  formatPrice,
+  formatR,
+  formatRatio,
+  formatSignedDecimal,
+  formatSignedPriceChange,
+  overallClass,
+  overallLabel,
+  scoreClass,
+  verdictToneClass,
+} from "./format";
 
 interface StockLookup {
   code: string;
@@ -66,24 +81,6 @@ const MOBILE_MORE_ITEMS: Array<{ id: PageMode; label: string }> = [
   { id: "account", label: "계좌" },
   { id: "admin", label: "운영" },
 ];
-
-const scoreClass = (score: number): string => {
-  if (score >= 70) return "score good";
-  if (score >= 45) return "score neutral";
-  return "score caution";
-};
-
-const overallClass = (overall: Overall): string => {
-  if (overall === "GOOD") return "badge good";
-  if (overall === "NEUTRAL") return "badge neutral";
-  return "badge caution";
-};
-
-const overallLabel = (overall: Overall): string => {
-  if (overall === "GOOD") return "양호";
-  if (overall === "NEUTRAL") return "중립";
-  return "주의";
-};
 
 const profileOverallFromScore = (score: number): Overall => {
   if (score >= 70) return "GOOD";
@@ -113,12 +110,6 @@ const buildProfileScoreFromBase = (
     },
     description: cfg.description,
   };
-};
-
-const confidenceClass = (confidence: number): string => {
-  if (confidence >= 70) return "confidence good";
-  if (confidence >= 45) return "confidence neutral";
-  return "confidence caution";
 };
 
 const TF_LABEL: Record<Timeframe, string> = {
@@ -283,33 +274,13 @@ const toOverlayMarkers = (
     text: marker.text,
   })) as SeriesMarker<Time>[];
 
-const formatPrice = (value: number | null): string =>
-  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
-
 const formatSigned = (value: number): string => `${value > 0 ? "+" : ""}${value}`;
 const formatRiskReward = (value: number | null): string =>
   value == null ? "-" : `${Math.round(value)}대1`;
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}%`;
-const formatR = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}R`;
-const formatFactor = (value: number | null): string =>
-  value == null ? "-" : value.toFixed(2);
-const formatRatio = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}배`;
-const formatSignedDecimal = (value: number | null): string =>
-  value == null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
-const formatSignedPriceChange = (change: number | null, changePct: number | null): string => {
-  if (change == null || changePct == null) return "-";
-  const rounded = Math.round(change);
-  const priceText = `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("ko-KR")}원`;
-  return `${priceText} (${formatSignedDecimal(changePct)}%)`;
-};
 const formatSignedQty = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value).toLocaleString("ko-KR")}주`;
 const formatPctPoint = (value: number | null): string =>
   value == null ? "-" : `${value.toFixed(2)}%`;
-const formatBars = (value: number | null): string => (value == null ? "-" : `${value}봉`);
 const backtestExitReasonLabel = (value: string): string => {
   if (value === "TARGET") return "목표";
   if (value === "STOP") return "손절";
@@ -566,12 +537,6 @@ const strategySignalStateClass = (state: StrategySignalState): string => {
   if (state === "CONFIRMED") return "signal-tag positive";
   if (state === "POTENTIAL") return "signal-tag neutral";
   return "signal-tag muted";
-};
-
-const verdictToneClass = (verdict: "매수 검토" | "관망" | "비중 축소"): string => {
-  if (verdict === "매수 검토") return "signal-tag positive";
-  if (verdict === "비중 축소") return "signal-tag negative";
-  return "signal-tag neutral";
 };
 
 type ReasonTone = "positive" | "negative";

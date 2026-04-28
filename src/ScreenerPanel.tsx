@@ -29,6 +29,13 @@ import {
   useFavorites,
   writeFavoriteNotificationState,
 } from "./favorites";
+import {
+  formatFactor,
+  formatPercent,
+  formatPrice,
+  overallClass,
+  overallLabel,
+} from "./format";
 
 interface ScreenerPanelProps {
   apiBase: string;
@@ -74,27 +81,7 @@ type WangPresetId =
   | "MA20_DISCOUNT"
   | "CLEAR";
 
-const overallLabel = (overall: Overall): string => {
-  if (overall === "GOOD") return "양호";
-  if (overall === "NEUTRAL") return "중립";
-  return "주의";
-};
-
-const overallClass = (overall: Overall): string => {
-  if (overall === "GOOD") return "badge good";
-  if (overall === "NEUTRAL") return "badge neutral";
-  return "badge caution";
-};
-
-const formatPrice = (value: number | null): string =>
-  value == null ? "-" : `${Math.round(value).toLocaleString("ko-KR")}원`;
-
 const formatScore = (value: number): string => `${Math.round(value)}점`;
-const formatPercent = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}%`;
-
-const formatFactor = (value: number | null): string =>
-  value == null ? "-" : value.toFixed(2);
 const formatSignedScore = (value: number | null): string =>
   value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value)}점`;
 
