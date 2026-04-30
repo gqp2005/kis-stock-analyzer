@@ -1,14 +1,4 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ColorType,
-  LineStyle,
-  createChart,
-  type LineData,
-  type LogicalRange,
-  type SeriesMarker,
-  type Time,
-  type WhitespaceData,
-} from "lightweight-charts";
 import type {
   BacktestRuleId,
   BacktestResponse,
@@ -17,8 +7,6 @@ import type {
   IndicatorPoint,
   InvestmentProfile,
   MultiAnalysisResponse,
-  OverlayMarker,
-  OverlayMarkerType,
   Overall,
   Timeframe,
   TimeframeAnalysis,
@@ -27,6 +15,17 @@ import type {
   VolumePatternSignal,
   VolumePatternType,
 } from "./types";
+import {
+  type LevelGuideItem,
+  canShowMainChartMarkerByType,
+  clusterPriceItems,
+  filterCommonOverlayMarkers,
+  filterCommonOverlayPriceLines,
+  findLastIndicatorPoint,
+  levelMeaningText,
+  pickNearestPriceItems,
+} from "./analysis/chartHelpers";
+import { useAnalysisChart } from "./analysis/useAnalysisChart";
 import AdminOpsPanel from "./AdminOpsPanel";
 import AccountPanel from "./AccountPanel";
 import AnalysisChartWorkspace from "./analysis/AnalysisChartWorkspace";
@@ -141,13 +140,6 @@ const PROFILE_WEIGHT_CONFIG: Record<
   },
 };
 
-const CHART_THEME = {
-  background: "#fbfdff",
-  textColor: "#5f7890",
-  gridColor: "#d9e4ee",
-  borderColor: "#c7d7e6",
-};
-
 const TF_TABS: Timeframe[] = ["month", "week", "day"];
 const TF_FALLBACK_ORDER: Timeframe[] = ["day", "week", "month"];
 const DEFAULT_PRICE_CHART_HEIGHT = 420;
@@ -168,111 +160,8 @@ const VOLUME_PATTERN_TEXT: Record<VolumePatternType, string> = {
   WeakBounce: "약한 반등(F)",
 };
 
-const BASIC_PATTERN_TYPES = new Set<OverlayMarkerType>([
-  "BreakoutConfirmed",
-  "Upthrust",
-  "PullbackReaccumulation",
-  "DarvasBreakout",
-  "DarvasRetest",
-  "NR7Setup",
-  "NR7Breakout",
-  "TrendTemplate",
-  "RsiDivLow1",
-  "RsiDivLow2",
-  "RsiDivBreakout",
-  "FlowPersistence",
-]);
-const isVcpMarkerType = (type: OverlayMarkerType): boolean =>
-  type === "VCPPeak" || type === "VCPTrough" || type === "VCPBreakout";
-const STRATEGY_MARKER_TYPES = new Set<OverlayMarkerType>([
-  "DarvasBreakout",
-  "DarvasRetest",
-  "NR7Setup",
-  "NR7Breakout",
-  "TrendTemplate",
-  "RsiDivLow1",
-  "RsiDivLow2",
-  "RsiDivBreakout",
-  "FlowPersistence",
-]);
-const STRATEGY_OVERLAY_ID_PREFIXES = [
-  "darvasRetest:",
-  "nr7InsideBar:",
-  "trendTemplate:",
-  "rsiDivergence:",
-  "flowPersistence:",
-];
-const isStrategyMarkerType = (type: OverlayMarkerType): boolean => STRATEGY_MARKER_TYPES.has(type);
-
-const canShowMarkerByType = (
-  type: OverlayMarkerType,
-  showAdvanced: boolean,
-): boolean => isVcpMarkerType(type) || showAdvanced || BASIC_PATTERN_TYPES.has(type);
-const canShowMainChartMarkerByType = (type: OverlayMarkerType, showAdvanced: boolean): boolean =>
-  !isStrategyMarkerType(type) && canShowMarkerByType(type, showAdvanced);
-const filterCommonOverlayPriceLines = (lines: TimeframeAnalysis["overlays"]["priceLines"] | undefined) =>
-  (lines ?? []).filter((line) => !STRATEGY_OVERLAY_ID_PREFIXES.some((prefix) => line.id.startsWith(prefix)));
-const filterCommonOverlayMarkers = (markers: TimeframeAnalysis["overlays"]["markers"] | undefined) =>
-  (markers ?? []).filter((marker) => !isStrategyMarkerType(marker.type));
-
-const toChartTime = (value: string): Time => {
-  if (value.includes("T")) {
-    return Math.floor(new Date(value).getTime() / 1000) as Time;
-  }
-  return value as Time;
-};
-
-const toPatternTimeKey = (value: string): string => (value.includes("T") ? value.slice(0, 16) : value);
-
-const fromChartTimeKey = (value: unknown): string | null => {
-  if (!value) return null;
-  if (typeof value === "string") return toPatternTimeKey(value);
-  if (typeof value === "number") {
-    return new Date(value * 1000).toISOString().slice(0, 10);
-  }
-  if (typeof value === "object" && value !== null && "year" in value && "month" in value && "day" in value) {
-    const businessDay = value as { year: number; month: number; day: number };
-    return `${businessDay.year}-${String(businessDay.month).padStart(2, "0")}-${String(businessDay.day).padStart(2, "0")}`;
-  }
-  return null;
-};
-
-const findCandleIndexByPatternTime = (
-  candles: Array<{ time: string }>,
-  patternTime: string,
-): number => {
-  const selectedKey = toPatternTimeKey(patternTime);
-  return candles.findIndex((candle) => {
-    const candleKey = toPatternTimeKey(candle.time);
-    return candleKey === selectedKey || candle.time.startsWith(`${selectedKey}T`);
-  });
-};
-
 const pickDefaultTf = (payload: MultiAnalysisResponse): Timeframe =>
   TF_FALLBACK_ORDER.find((tf) => payload.timeframes[tf] !== null) ?? "day";
-
-const toLineData = (points: IndicatorPoint[]): Array<LineData<Time> | WhitespaceData<Time>> =>
-  points.map((point) =>
-    point.value == null ? { time: toChartTime(point.time) } : { time: toChartTime(point.time), value: point.value },
-  );
-
-const findLastIndicatorPoint = (points: IndicatorPoint[]): IndicatorPoint | null => {
-  for (let i = points.length - 1; i >= 0; i -= 1) {
-    if (points[i].value != null) return points[i];
-  }
-  return null;
-};
-
-const toOverlayMarkers = (
-  markers: OverlayMarker[],
-): SeriesMarker<Time>[] =>
-  markers.map((marker) => ({
-    time: toChartTime(marker.t),
-    position: marker.position,
-    shape: marker.shape,
-    color: marker.color,
-    text: marker.text,
-  })) as SeriesMarker<Time>[];
 
 const formatSigned = (value: number): string => `${value > 0 ? "+" : ""}${value}`;
 const formatRiskReward = (value: number | null): string =>
@@ -293,149 +182,6 @@ const backtestEntriesLabel = (
   return entries
     .map((entry) => `${entry.label} ${formatPrice(entry.price)}(${Math.round(entry.weight * 100)}%)`)
     .join(" / ");
-};
-
-type LevelGuideItem = {
-  id: string;
-  label: string;
-  price: number;
-  meaning: string;
-};
-
-type PriceClusterItem = {
-  id: string;
-  label: string;
-  price: number;
-  meaning?: string;
-  color?: string;
-  group?: string;
-};
-
-const levelMeaningText = (label: string): string => {
-  if (label.includes("52주 고점")) {
-    return "최근 52주 최고가 기준선입니다. 돌파 시 신고가 추세 강화, 미돌파 시 장기 저항으로 해석합니다.";
-  }
-  if (label.includes("다르바스 상단")) {
-    return "다르바스 박스 상단 트리거입니다. 상단 안착 여부로 추세 지속 가능성을 확인합니다.";
-  }
-  if (label.includes("다르바스 하단")) {
-    return "다르바스 박스 하단 지지선입니다. 하향 이탈 시 박스 전략 무효 가능성이 커집니다.";
-  }
-  if (label.includes("NR7 상단")) {
-    return "NR7(변동성 축소) 패턴의 상방 트리거입니다. 상향 돌파 시 단기 확장 신호로 봅니다.";
-  }
-  if (label.includes("NR7 하단")) {
-    return "NR7 패턴의 하방 기준선입니다. 하향 이탈 시 약세 전개 가능성을 경계합니다.";
-  }
-  if (label.includes("다이버전스 넥라인")) {
-    return "RSI 다이버전스 확인용 넥라인입니다. 상향 돌파 시 반등 확증 신호로 해석합니다.";
-  }
-  if (label.includes("추세 MA50")) {
-    return "추세 템플릿의 50일 이동평균선입니다. 가격이 위에 있으면 중기 추세가 상대적으로 우호적입니다.";
-  }
-  if (label.includes("수급 MA20")) {
-    return "수급 지속성 관찰용 20일 평균선입니다. 평균선 위 유지 여부로 수급 우위를 확인합니다.";
-  }
-  if (label.includes("핵심 지지") || label.includes("지지 레벨")) {
-    return "최근 스윙/클러스터에서 계산한 핵심 지지 가격대입니다. 눌림 시 방어 여부를 봅니다.";
-  }
-  if (label.includes("핵심 저항") || label.includes("저항 레벨")) {
-    return "최근 스윙/클러스터에서 계산한 핵심 저항 가격대입니다. 돌파/반락 분기점으로 봅니다.";
-  }
-  if (label.includes("지지존")) {
-    return "지지 구간 경계선입니다. 하단 이탈 여부보다 구간 재진입/유지 여부를 함께 확인합니다.";
-  }
-  if (label.includes("저항존")) {
-    return "저항 구간 경계선입니다. 상단 돌파 후 안착 여부가 중요합니다.";
-  }
-  if (label.includes("VCP 저항R") || label.includes("VCP R-zone")) {
-    return "VCP 패턴의 저항 기준 구간입니다. 거래량 동반 돌파 시 패턴 완성 확률이 높아집니다.";
-  }
-  if (label.includes("VCP 무효화") || label.includes("무효화")) {
-    return "전략 무효화 기준선입니다. 이탈 시 보수적으로 리스크 관리(손절/비중 축소)합니다.";
-  }
-  if (label.includes("눌림목 존")) {
-    return "설거지+눌림목 전략의 관찰 구간입니다. 구간 내에서 분할 접근과 거래대금 감소 여부를 확인합니다.";
-  }
-  const maMatch = label.match(/^MA(\d+)/);
-  if (maMatch) {
-    return `${maMatch[1]}일 이동평균선입니다. 가격이 위에 있으면 추세 우위, 아래면 단기 약세 가능성을 시사합니다.`;
-  }
-  if (label.includes("지지")) return "가격이 반등하기 쉬운 지지 후보선입니다. 이탈 여부를 리스크 기준으로 사용합니다.";
-  if (label.includes("저항")) return "가격이 막히기 쉬운 저항 후보선입니다. 돌파 후 안착 여부를 함께 확인합니다.";
-  return "차트 해석을 위한 참고 레벨입니다. 단일 선보다 거래량/추세와 함께 판단하는 것이 안전합니다.";
-};
-
-const pickNearestPriceItems = <T extends { price: number; label: string }>(
-  items: T[],
-  referencePrice: number | null,
-  limit: number,
-): T[] => {
-  if (referencePrice == null || items.length <= limit) return items;
-  const unique = new Map<string, T>();
-  for (const item of items) {
-    const key = `${item.label}:${Math.round(item.price * 100) / 100}`;
-    if (!unique.has(key)) unique.set(key, item);
-  }
-  return [...unique.values()]
-    .sort((a, b) => Math.abs(a.price - referencePrice) - Math.abs(b.price - referencePrice))
-    .slice(0, limit)
-    .sort((a, b) => b.price - a.price);
-};
-
-const clusterPriceItems = <T extends PriceClusterItem>(
-  items: T[],
-  toleranceRatio: number,
-): T[] => {
-  if (items.length <= 1 || toleranceRatio <= 0) return items;
-  const sorted = [...items].sort((a, b) => b.price - a.price);
-  const result: T[] = [];
-  let bucket: T[] = [];
-
-  const flush = () => {
-    if (bucket.length === 0) return;
-    if (bucket.length === 1) {
-      result.push(bucket[0]);
-      bucket = [];
-      return;
-    }
-    const avgPrice = bucket.reduce((sum, item) => sum + item.price, 0) / bucket.length;
-    const first = bucket[0];
-    const mergedMeaning = bucket
-      .map((item) => item.meaning)
-      .filter((item): item is string => Boolean(item))
-      .slice(0, 2)
-      .join(" · ");
-    result.push({
-      ...first,
-      price: avgPrice,
-      label: `${first.label} 외 ${bucket.length - 1}`,
-      meaning:
-        mergedMeaning ||
-        bucket
-          .map((item) => item.label)
-          .slice(0, 2)
-          .join(" · "),
-    });
-    bucket = [];
-  };
-
-  for (const item of sorted) {
-    if (bucket.length === 0) {
-      bucket.push(item);
-      continue;
-    }
-    const anchor = bucket[0].price;
-    const diffRatio = Math.abs(item.price - anchor) / Math.max(Math.abs(anchor), 1);
-    if (diffRatio <= toleranceRatio) {
-      bucket.push(item);
-    } else {
-      flush();
-      bucket.push(item);
-    }
-  }
-  flush();
-  return result;
 };
 
 const rsiSignalLabel = (rsiBand: "HIGH" | "MID" | "LOW"): string => {
@@ -860,397 +606,12 @@ export default function App() {
   const effectiveShowZones = showZones && !shouldCondenseOverlays;
   const effectiveShowAdvancedPatternMarkers = showAdvancedPatternMarkers && !shouldCondenseOverlays;
 
-  useEffect(() => {
-    if (!priceChartRef.current || !result) return;
-    const active = result.timeframes[activeTf];
-    if (!active || active.candles.length === 0) return;
-
-    const mainContainer = priceChartRef.current;
-    const mainChart = createChart(mainContainer, {
-      width: mainContainer.clientWidth,
-      height: priceChartHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: CHART_THEME.background },
-        textColor: CHART_THEME.textColor,
-      },
-      grid: {
-        vertLines: { color: CHART_THEME.gridColor },
-        horzLines: { color: CHART_THEME.gridColor },
-      },
-      rightPriceScale: {
-        borderColor: CHART_THEME.borderColor,
-      },
-      timeScale: {
-        borderColor: CHART_THEME.borderColor,
-        timeVisible: false,
-        secondsVisible: false,
-      },
-    });
-
-    const candleSeries = mainChart.addCandlestickSeries({
-      upColor: "#00b386",
-      downColor: "#ff5a76",
-      borderVisible: false,
-      wickUpColor: "#00b386",
-      wickDownColor: "#ff5a76",
-    });
-    candleSeries.setData(
-      active.candles.map((c) => ({
-        time: toChartTime(c.time),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
-
-    const showMaOverlay = true;
-    if (showMaOverlay) {
-      const maDefs = [
-        {
-          enabled: showMa1,
-          series: active.indicators.ma.ma1,
-          period: active.indicators.ma.ma1Period,
-          color: "#d58b3d",
-        },
-        {
-          enabled: showMa2,
-          series: active.indicators.ma.ma2,
-          period: active.indicators.ma.ma2Period,
-          color: "#57a3ff",
-        },
-        {
-          enabled: showMa3 && active.indicators.ma.ma3Period != null,
-          series: active.indicators.ma.ma3,
-          period: active.indicators.ma.ma3Period ?? 0,
-          color: "#db6e5c",
-        },
-      ];
-
-      for (const ma of maDefs) {
-        if (!ma.enabled) continue;
-        const maSeries = mainChart.addLineSeries({
-          color: ma.color,
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
-        maSeries.setData(toLineData(ma.series));
-        const last = findLastIndicatorPoint(ma.series);
-        if (last?.value != null) {
-          maSeries.createPriceLine({
-            price: last.value,
-            color: ma.color,
-            lineStyle: LineStyle.Solid,
-            lineVisible: false,
-            axisLabelVisible: true,
-            title: `MA${ma.period} ${Math.round(last.value).toLocaleString("ko-KR")}원`,
-          });
-        }
-      }
-    }
-
-    const markerPatterns =
-      activeTf === "day"
-        ? (active.signals.volumePatterns ?? []).filter(
-            (pattern) => effectiveShowAdvancedPatternMarkers || BASIC_PATTERN_TYPES.has(pattern.type),
-          )
-        : [];
-    const commonOverlayMarkers = filterCommonOverlayMarkers(active.overlays?.markers);
-    const overlayMarkers =
-      activeTf === "day"
-        ? commonOverlayMarkers.filter((marker) =>
-            canShowMainChartMarkerByType(marker.type, effectiveShowAdvancedPatternMarkers),
-          )
-        : [];
-
-    if (showMarkers && activeTf === "day") {
-      candleSeries.setMarkers(toOverlayMarkers(overlayMarkers));
-    } else {
-      candleSeries.setMarkers([]);
-    }
-
-    const latestChartClose = active.candles.length > 0 ? active.candles[active.candles.length - 1].close : null;
-    const commonOverlayPriceLines = filterCommonOverlayPriceLines(active.overlays?.priceLines);
-    const baseLevelLines = pickNearestPriceItems(
-      commonOverlayPriceLines.filter((line) => line.group === "level"),
-      compactLabelMode ? latestChartClose : null,
-      compactLabelMode ? 8 : 12,
-    );
-    const levelLines = clusterPriceItems(
-      baseLevelLines.map((line) => ({
-        ...line,
-        meaning: levelMeaningText(line.label),
-      })),
-      compactLabelMode ? 0.006 : 0,
-    );
-    const baseZoneLines = pickNearestPriceItems(
-      commonOverlayPriceLines.filter((line) => line.group === "zone"),
-      compactLabelMode ? latestChartClose : null,
-      compactLabelMode ? 4 : 8,
-    );
-    const zoneLines = clusterPriceItems(
-      baseZoneLines.map((line) => ({
-        ...line,
-        meaning: levelMeaningText(line.label),
-      })),
-      compactLabelMode ? 0.006 : 0,
-    );
-    if (showLevels) {
-      for (const line of levelLines) {
-        candleSeries.createPriceLine({
-          price: line.price,
-          color: line.color ?? "rgba(47, 122, 209, 0.82)",
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: line.label,
-        });
-      }
-    }
-    if (effectiveShowZones) {
-      for (const line of zoneLines) {
-        candleSeries.createPriceLine({
-          price: line.price,
-          color: line.color ?? "rgba(106, 129, 152, 0.72)",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: line.label,
-        });
-      }
-    }
-
-    const overlaySegments = active.overlays?.segments ?? [];
-    const segmentVisible = overlaySegments.filter((segment) => {
-      if (segment.kind === "trendlineUp" || segment.kind === "trendlineDown") return effectiveShowTrendlines;
-      if (segment.kind === "channelLow" || segment.kind === "channelHigh") return effectiveShowChannels;
-      if (segment.kind === "fanlineUp" || segment.kind === "fanlineDown") return effectiveShowFanLines;
-      return false;
-    });
-    for (const segment of segmentVisible) {
-      const color =
-        segment.kind === "trendlineUp"
-            ? "#00b386"
-            : segment.kind === "trendlineDown"
-              ? "#ff5a76"
-              : segment.kind === "channelLow"
-                ? "#4db5ff"
-                : segment.kind === "channelHigh"
-                  ? "#d5862f"
-                  : segment.kind === "fanlineUp"
-                    ? "#5ea67f"
-                    : "#d9738c";
-      const segmentSeries = mainChart.addLineSeries({
-        color,
-        lineWidth: segment.score >= 75 ? 2 : 1,
-        lineStyle:
-          segment.kind.startsWith("channel")
-            ? LineStyle.Dotted
-            : segment.kind.startsWith("fanline")
-              ? LineStyle.Dashed
-              : LineStyle.Solid,
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-      segmentSeries.setData([
-        { time: toChartTime(segment.t1), value: segment.p1 },
-        { time: toChartTime(segment.t2), value: segment.p2 },
-      ]);
-    }
-
-    const selectedCandleIndex =
-      activeTf === "day" && selectedPattern
-        ? findCandleIndexByPatternTime(active.candles, selectedPattern.t)
-        : -1;
-
-    if (
-      activeTf === "day" &&
-      showPatternReferenceLevel &&
-      selectedPattern?.details?.refLevel != null &&
-      Number.isFinite(selectedPattern.details.refLevel) &&
-      selectedCandleIndex >= 0
-    ) {
-      const startIndex = Math.max(0, selectedCandleIndex - 10);
-      const endIndex = Math.min(active.candles.length - 1, selectedCandleIndex + 10);
-      const refLevel = selectedPattern.details.refLevel;
-      const refSeries = mainChart.addLineSeries({
-        color: "rgba(213, 139, 61, 0.92)",
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      refSeries.setData([
-        { time: toChartTime(active.candles[startIndex].time), value: refLevel },
-        { time: toChartTime(active.candles[endIndex].time), value: refLevel },
-      ]);
-    }
-
-    if (activeTf === "day" && highlightSelectedCandle && selectedCandleIndex >= 0) {
-      const selectedCandle = active.candles[selectedCandleIndex];
-      const highlightSeries = mainChart.addHistogramSeries({
-        priceScaleId: "selected-candle-highlight",
-        priceFormat: { type: "volume" },
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-      highlightSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0, bottom: 0 },
-      });
-      highlightSeries.setData([
-        {
-          time: toChartTime(selectedCandle.time),
-          value: 1,
-          color: "rgba(47, 122, 209, 0.18)",
-        },
-      ]);
-    }
-
-    const volumeSeries = mainChart.addHistogramSeries({
-      priceFormat: { type: "volume" },
-      priceScaleId: "",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.78, bottom: 0 },
-    });
-    volumeSeries.setData(
-      active.candles.map((c) => ({
-        time: toChartTime(c.time),
-        value: c.volume,
-        color: c.close >= c.open ? "rgba(11, 141, 101, 0.28)" : "rgba(196, 84, 110, 0.28)",
-      })),
-    );
-
-    const rsiPoints = active.indicators.rsi14;
-    const hasRsi = rsiPoints.some((point) => point.value != null);
-    let rsiChart: ReturnType<typeof createChart> | null = null;
-    let onMainRangeChange: ((range: LogicalRange | null) => void) | null = null;
-    let onMainChartClick: ((param: unknown) => void) | null = null;
-
-    if (activeTf === "day") {
-      onMainChartClick = (param: unknown) => {
-        if (!showMarkers) return;
-        const clicked = param as { time?: unknown };
-        const clickedKey = fromChartTimeKey(clicked.time);
-        if (!clickedKey) return;
-
-        let matched: VolumePatternSignal | null = null;
-        for (let i = markerPatterns.length - 1; i >= 0; i -= 1) {
-          const pattern = markerPatterns[i];
-          const patternKey = toPatternTimeKey(pattern.t);
-          if (patternKey === clickedKey || pattern.t.startsWith(`${clickedKey}T`)) {
-            matched = pattern;
-            break;
-          }
-        }
-        if (matched) {
-          setSelectedPattern(matched);
-        }
-      };
-      mainChart.subscribeClick(onMainChartClick);
-    }
-
-    if (hasRsi && rsiChartRef.current) {
-      const rsiContainer = rsiChartRef.current;
-      rsiChart = createChart(rsiContainer, {
-        width: rsiContainer.clientWidth,
-        height: 180,
-        layout: {
-          background: { type: ColorType.Solid, color: CHART_THEME.background },
-          textColor: CHART_THEME.textColor,
-        },
-        grid: {
-          vertLines: { color: CHART_THEME.gridColor },
-          horzLines: { color: CHART_THEME.gridColor },
-        },
-        rightPriceScale: {
-          borderColor: CHART_THEME.borderColor,
-        },
-        timeScale: {
-          borderColor: CHART_THEME.borderColor,
-          timeVisible: false,
-          secondsVisible: false,
-        },
-      });
-
-      const rsiSeries = rsiChart.addLineSeries({
-        color: "#1f9d74",
-        lineWidth: 2,
-      });
-      rsiSeries.setData(toLineData(rsiPoints));
-      rsiSeries.createPriceLine({
-        price: 70,
-        color: "rgba(196, 84, 110, 0.55)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "70",
-      });
-      rsiSeries.createPriceLine({
-        price: 50,
-        color: "rgba(106, 129, 152, 0.55)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: "50",
-      });
-      rsiSeries.createPriceLine({
-        price: 30,
-        color: "rgba(47, 122, 209, 0.55)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "30",
-      });
-
-      const lastRsi = findLastIndicatorPoint(rsiPoints);
-      if (lastRsi?.value != null) {
-        rsiSeries.createPriceLine({
-          price: lastRsi.value,
-          color: "#7ee787",
-          lineStyle: LineStyle.Solid,
-          lineVisible: false,
-          axisLabelVisible: true,
-          title: `RSI ${lastRsi.value.toFixed(2)}`,
-        });
-      }
-
-      onMainRangeChange = (range) => {
-        if (!range) return;
-        rsiChart?.timeScale().setVisibleLogicalRange(range);
-      };
-      mainChart.timeScale().subscribeVisibleLogicalRangeChange(onMainRangeChange);
-      mainChart.timeScale().fitContent();
-      rsiChart.timeScale().fitContent();
-    } else if (rsiChartRef.current) {
-      rsiChartRef.current.innerHTML = "";
-    }
-
-    const onResize = () => {
-      mainChart.applyOptions({ width: mainContainer.clientWidth, height: priceChartHeight });
-      if (rsiChart && rsiChartRef.current) {
-        rsiChart.applyOptions({ width: rsiChartRef.current.clientWidth });
-      }
-    };
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      if (onMainRangeChange) {
-        mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRangeChange);
-      }
-      if (onMainChartClick) {
-        mainChart.unsubscribeClick(onMainChartClick);
-      }
-      rsiChart?.remove();
-      mainChart.remove();
-    };
-  }, [
+  useAnalysisChart({
+    priceChartRef,
+    rsiChartRef,
     result,
     activeTf,
+    priceChartHeight,
     showMa1,
     showMa2,
     showMa3,
@@ -1266,9 +627,9 @@ export default function App() {
     shouldCondenseOverlays,
     compactLabelMode,
     showWashoutEntries,
-    priceChartHeight,
     selectedPattern,
-  ]);
+    onSelectPattern: setSelectedPattern,
+  });
 
   const decreasePriceChartHeight = () =>
     setPriceChartHeight((prev) => Math.max(MIN_PRICE_CHART_HEIGHT, prev - PRICE_CHART_HEIGHT_STEP));

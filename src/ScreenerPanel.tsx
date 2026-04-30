@@ -1,25 +1,16 @@
 ﻿import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
   DashboardOverviewResponse,
-  Overall,
-  PatternState,
   ScreenerBooleanFilter,
-  StrategySignalState,
-  WashoutZonePosition,
   ScreenerWashoutPositionFilter,
   ScreenerWashoutStateFilter,
   ScreenerWangActionBiasFilter,
   ScreenerWangPhaseFilter,
-  VcpLeadershipLabel,
-  VcpPivotLabel,
-  VcpRiskGrade,
   ScreenerItem,
   ScreenerMarketFilter,
   ScreenerResponse,
   ScreenerStrategyFilter,
-  VolumePatternType,
   WangStrategyActionBias,
-  WangStrategyExecutionState,
   WangStrategyPhase,
   WangStrategyScreeningSummary,
 } from "./types";
@@ -36,17 +27,69 @@ import {
   overallClass,
   overallLabel,
 } from "./format";
+import {
+  type ScreenerVerdict,
+  type SortKey,
+  FAVORITE_NOTIFY_KEY,
+  atrShrinkPercent,
+  booleanFilterLabel,
+  cupHandleStateLabel,
+  cupHandleTagClass,
+  dashboardScoreModeLabel,
+  dashboardStrategyLabel,
+  dryUpStrengthLabel,
+  formatDepth,
+  formatDistancePercent,
+  formatNullable,
+  formatRatioPercent,
+  formatRiskPercent,
+  formatScore,
+  formatSignedPercent,
+  formatSignedRatioPercent,
+  formatSignedScore,
+  formatMultiple,
+  hsStateLabel,
+  isWangSortKey,
+  leadershipLabel,
+  marketLabel,
+  patternTypeLabel,
+  pivotLabel,
+  riskGradeLabel,
+  rsStrengthLabel,
+  simpleStrategyStateClass,
+  simpleStrategyStateLabel,
+  sortLabel,
+  strategyLabel,
+  vcpStateLabel,
+  verdictClass,
+  wangActionBiasLabel,
+  wangBadgeClass,
+  wangPhaseLabel,
+  washoutPositionLabel,
+  washoutStateBadgeClass,
+  washoutStateLabel,
+  washoutStatePriority,
+} from "./screener/labels";
+import {
+  normalizeDashboard,
+  normalizeScreenerResponse,
+} from "./screener/normalize";
+import {
+  type ScreenerCompactItem,
+  type WangFilterState,
+  type WangPresetId,
+  WANG_FILTER_DEFAULTS,
+  WANG_PRESETS,
+  buildCardOneLiner,
+  buildCompactItems,
+  sortItems,
+} from "./screener/buildCard";
 
 interface ScreenerPanelProps {
   apiBase: string;
   onSelectSymbol: (code: string) => void;
   onSelectWangStrategy: (code: string) => void;
 }
-
-const FAVORITE_NOTIFY_KEY = "kis-favorite-notify-enabled";
-
-type SortKey = "SCORE" | "CONFIDENCE" | "BACKTEST" | "WANG_SCORE" | "WANG_CONFIDENCE";
-type ScreenerVerdict = "매수 검토" | "관망" | "비중 축소";
 
 interface ScreenerQueryState {
   market: ScreenerMarketFilter;
@@ -62,731 +105,6 @@ interface ScreenerQueryState {
   count: number;
   universe: number;
 }
-
-interface ScreenerCompactItem {
-  label: string;
-  value: string;
-}
-
-type WangFilterState = Pick<
-  ScreenerQueryState,
-  "wangEligible" | "wangActionBias" | "wangPhase" | "wangZoneReady" | "wangMa20DiscountReady"
->;
-
-type WangPresetId =
-  | "ACCUMULATE"
-  | "REACCUMULATION"
-  | "MIN_VOLUME"
-  | "ZONE_READY"
-  | "MA20_DISCOUNT"
-  | "CLEAR";
-
-const formatScore = (value: number): string => `${Math.round(value)}점`;
-const formatSignedScore = (value: number | null): string =>
-  value == null ? "-" : `${value > 0 ? "+" : ""}${Math.round(value)}점`;
-
-const formatMultiple = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(2)}x`;
-
-const patternTypeLabel = (type: VolumePatternType): string => {
-  if (type === "BreakoutConfirmed") return "돌파확인";
-  if (type === "Upthrust") return "불트랩";
-  if (type === "PullbackReaccumulation") return "눌림재개";
-  if (type === "ClimaxUp") return "상승과열";
-  if (type === "CapitulationAbsorption") return "투매흡수";
-  return "약한반등";
-};
-
-const hsStateLabel = (state: PatternState): string => {
-  if (state === "CONFIRMED") return "확정";
-  if (state === "POTENTIAL") return "잠재";
-  return "없음";
-};
-
-const vcpStateLabel = (state: PatternState): string => {
-  if (state === "CONFIRMED") return "확정";
-  if (state === "POTENTIAL") return "잠재";
-  return "없음";
-};
-
-const cupHandleStateLabel = (state: PatternState): string => {
-  if (state === "CONFIRMED") return "확정";
-  if (state === "POTENTIAL") return "후보";
-  return "없음";
-};
-
-const formatDepth = (value: number | null): string =>
-  value == null ? "-" : `${(value * 100).toFixed(1)}%`;
-
-const formatSignedPercent = (value: number | null): string =>
-  value == null ? "-" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-
-const formatSignedRatioPercent = (value: number | null): string =>
-  value == null ? "-" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-
-const formatDistancePercent = (value: number | null): string =>
-  value == null ? "-" : `${(Math.abs(value) * 100).toFixed(2)}%`;
-
-const formatRatioPercent = (value: number | null): string =>
-  value == null ? "-" : `${(value * 100).toFixed(2)}%`;
-
-const formatNullable = (value: number | null): string =>
-  value == null ? "-" : `${value.toFixed(1)}`;
-
-const dryUpStrengthLabel = (value: "NONE" | "WEAK" | "STRONG"): string => {
-  if (value === "STRONG") return "강함";
-  if (value === "WEAK") return "보통";
-  return "약함";
-};
-
-const leadershipLabel = (value: VcpLeadershipLabel): string => {
-  if (value === "STRONG") return "STRONG";
-  if (value === "OK") return "OK";
-  return "WEAK";
-};
-
-const pivotLabel = (value: VcpPivotLabel): string => {
-  if (value === "PIVOT_READY") return "PIVOT_READY";
-  if (value === "PIVOT_NEAR_52W") return "PIVOT_NEAR_52W";
-  if (value === "PIVOT_52W_BREAK") return "PIVOT_52W_BREAK";
-  if (value === "BREAKOUT_CONFIRMED") return "CONFIRMED";
-  return "NONE";
-};
-
-const riskGradeLabel = (value: VcpRiskGrade): string => {
-  if (value === "OK") return "OK";
-  if (value === "HIGH") return "HIGH";
-  if (value === "BAD") return "BAD";
-  return "N/A";
-};
-
-const rsStrengthLabel = (value: "STRONG" | "NEUTRAL" | "WEAK" | "N/A"): string => {
-  if (value === "STRONG") return "강함";
-  if (value === "NEUTRAL") return "보통";
-  if (value === "WEAK") return "약함";
-  return "N/A";
-};
-
-const atrShrinkPercent = (atr20: number | null, atr120: number | null): string => {
-  if (atr20 == null || atr120 == null || atr120 <= 0) return "-";
-  return `${((1 - atr20 / atr120) * 100).toFixed(1)}%`;
-};
-
-const cupHandleTagClass = (state: PatternState): string => {
-  if (state === "CONFIRMED") return "reason-tag positive";
-  if (state === "POTENTIAL") return "reason-tag neutral";
-  return "reason-tag neutral";
-};
-
-const washoutStatePriority = (state: ScreenerWashoutStateFilter | "NONE"): number => {
-  if (state === "REBOUND_CONFIRMED") return 4;
-  if (state === "PULLBACK_READY") return 3;
-  if (state === "WASHOUT_CANDIDATE") return 2;
-  if (state === "ANCHOR_DETECTED") return 1;
-  return 0;
-};
-
-const washoutStateLabel = (state: ScreenerWashoutStateFilter | "NONE"): string => {
-  if (state === "REBOUND_CONFIRMED") return "반등 재개";
-  if (state === "PULLBACK_READY") return "눌림 관찰";
-  if (state === "WASHOUT_CANDIDATE") return "반등 후보";
-  if (state === "ANCHOR_DETECTED") return "대금 흔적";
-  return "미감지";
-};
-
-const washoutStateBadgeClass = (state: ScreenerWashoutStateFilter | "NONE"): string => {
-  if (state === "REBOUND_CONFIRMED") return "badge good";
-  if (state === "PULLBACK_READY") return "badge neutral";
-  if (state === "WASHOUT_CANDIDATE") return "badge neutral";
-  if (state === "ANCHOR_DETECTED") return "badge caution";
-  return "badge neutral";
-};
-
-const simpleStrategyStateLabel = (state: StrategySignalState | undefined): string => {
-  if (state === "CONFIRMED") return "확정";
-  if (state === "POTENTIAL") return "후보";
-  return "미감지";
-};
-
-const simpleStrategyStateClass = (state: StrategySignalState | undefined): string => {
-  if (state === "CONFIRMED") return "reason-tag positive";
-  if (state === "POTENTIAL") return "reason-tag neutral";
-  return "reason-tag neutral";
-};
-
-const washoutPositionLabel = (position: WashoutZonePosition): string => {
-  if (position === "IN_ZONE") return "존 내부";
-  if (position === "ABOVE_ZONE") return "존 위";
-  if (position === "BELOW_ZONE") return "존 아래";
-  return "N/A";
-};
-
-const formatRiskPercent = (value: number | null): string =>
-  value == null ? "-" : `${(value * 100).toFixed(1)}%`;
-
-const strategyLabel = (value: ScreenerStrategyFilter): string => {
-  if (value === "ALL") return "전체";
-  if (value === "VOLUME") return "거래량";
-  if (value === "VCP") return "VCP";
-  if (value === "WASHOUT_PULLBACK") return "설거지+눌림목";
-  if (value === "DARVAS") return "다르바스";
-  if (value === "NR7") return "NR7";
-  if (value === "TREND_TEMPLATE") return "추세 템플릿";
-  if (value === "RSI_DIVERGENCE") return "RSI 다이버전스";
-  if (value === "FLOW_PERSISTENCE") return "수급 지속성";
-  if (value === "IHS") return "IHS";
-  return "H&S";
-};
-
-const marketLabel = (value: ScreenerMarketFilter): string => {
-  if (value === "ALL") return "전체";
-  if (value === "KOSPI") return "KOSPI";
-  return "KOSDAQ";
-};
-
-const sortLabel = (value: SortKey): string => {
-  if (value === "SCORE") return "점수순";
-  if (value === "CONFIDENCE") return "신뢰도순";
-  if (value === "WANG_SCORE") return "왕장군 점수순";
-  if (value === "WANG_CONFIDENCE") return "왕장군 신뢰도순";
-  return "백테스트순";
-};
-
-const wangPhaseLabel = (value: WangStrategyPhase): string => {
-  if (value === "LIFE_VOLUME") return "인생거래량";
-  if (value === "BASE_VOLUME") return "기준거래량";
-  if (value === "RISING_VOLUME") return "상승거래량";
-  if (value === "ELASTIC_VOLUME") return "탄력거래량";
-  if (value === "MIN_VOLUME") return "최소거래량";
-  if (value === "REACCUMULATION") return "재축적";
-  return "미감지";
-};
-
-const wangActionBiasLabel = (value: WangStrategyActionBias): string => {
-  if (value === "ACCUMULATE") return "적립";
-  if (value === "CAUTION") return "경계";
-  if (value === "OVERHEAT") return "과열";
-  return "관찰";
-};
-
-const dashboardStrategyLabel = (key: string): string => {
-  if (key === "wangStrategy") return "왕장군 검증";
-  if (key === "washoutPullback") return "설거지+눌림목";
-  if (key === "darvasRetest") return "다르바스";
-  if (key === "nr7InsideBar") return "NR7";
-  if (key === "trendTemplate") return "추세 템플릿";
-  if (key === "rsiDivergence") return "RSI 다이버전스";
-  if (key === "flowPersistence") return "수급 지속성";
-  if (key === "volume") return "거래량";
-  if (key === "vcp") return "VCP";
-  if (key === "ihs") return "IHS";
-  if (key === "hs") return "H&S";
-  if (key.startsWith("wangActionBias:")) {
-    return `행동 · ${wangActionBiasLabel(key.replace("wangActionBias:", "") as WangStrategyActionBias)}`;
-  }
-  if (key.startsWith("wangPhase:")) {
-    return `phase · ${wangPhaseLabel(key.replace("wangPhase:", "") as WangStrategyPhase)}`;
-  }
-  return key;
-};
-
-const dashboardScoreModeLabel = (scoreMode: "primary" | "validation" | undefined): string =>
-  scoreMode === "validation" ? "보조 검증" : "본 전략";
-
-const normalizeWangStrategy = (
-  wang: WangStrategyScreeningSummary | null | undefined,
-): WangStrategyScreeningSummary => ({
-  eligible: wang?.eligible ?? false,
-  label: wang?.label ?? "비적합",
-  score: wang?.score ?? 0,
-  confidence: wang?.confidence ?? 0,
-  currentPhase: wang?.currentPhase ?? "NONE",
-  actionBias: wang?.actionBias ?? "WATCH",
-  executionState: wang?.executionState ?? ("WAIT_WEEKLY_STRUCTURE" as WangStrategyExecutionState),
-  reasons: wang?.reasons ?? [],
-  weekBias: wang?.weekBias ?? "주봉 미평가",
-  dayBias: wang?.dayBias ?? "일봉 미평가",
-  zoneReady: wang?.zoneReady ?? false,
-  ma20DiscountReady: wang?.ma20DiscountReady ?? false,
-  dailyRebaseReady: wang?.dailyRebaseReady ?? false,
-  retestReady: wang?.retestReady ?? false,
-});
-
-const normalizeScreenerItem = (item: ScreenerItem): ScreenerItem => ({
-  ...item,
-  reasons: item.reasons ?? [],
-  wangStrategy: normalizeWangStrategy(item.wangStrategy),
-});
-
-const normalizeDashboard = (dashboard: DashboardOverviewResponse): DashboardOverviewResponse => ({
-  ...dashboard,
-  marketTemperature: {
-    ...dashboard.marketTemperature,
-    wangWatchCount: dashboard.marketTemperature.wangWatchCount ?? 0,
-    wangIneligibleCount: dashboard.marketTemperature.wangIneligibleCount ?? 0,
-  },
-  strategyRanking: (dashboard.strategyRanking ?? []).map((item) => ({
-    ...item,
-    scoreMode: item.scoreMode ?? (item.key === "wangStrategy" ? "validation" : "primary"),
-  })),
-  wangValidation: dashboard.wangValidation ?? {
-    totalValidated: 0,
-    summary: "왕장군 검증 데이터가 아직 없습니다.",
-    distribution: {
-      eligible: 0,
-      watchCandidate: 0,
-      notEligible: 0,
-      byActionBias: {
-        ACCUMULATE: 0,
-        WATCH: 0,
-        CAUTION: 0,
-        OVERHEAT: 0,
-      },
-      byPhase: [],
-    },
-    ranking: {
-      byActionBias: [],
-      byPhase: [],
-    },
-  },
-  timeline: (dashboard.timeline ?? []).map((item) => ({
-    ...item,
-    scoreMode: item.scoreMode ?? (item.strategyKey === "wangStrategy" ? "validation" : "primary"),
-  })),
-  favorites: {
-    trackedCount: dashboard.favorites?.trackedCount ?? 0,
-    activeCount: dashboard.favorites?.activeCount ?? 0,
-    missingCodes: dashboard.favorites?.missingCodes ?? [],
-    alerts: (dashboard.favorites?.alerts ?? []).map((item) => ({
-      ...item,
-      wangPhase: item.wangPhase ?? null,
-      wangActionBias: item.wangActionBias ?? null,
-    })),
-  },
-});
-
-const normalizeScreenerResponse = (response: ScreenerResponse): ScreenerResponse => ({
-  ...response,
-  meta: {
-    ...response.meta,
-    changeSummary: response.meta.changeSummary
-      ? {
-          ...response.meta.changeSummary,
-          added: response.meta.changeSummary.added ?? [],
-          removed: response.meta.changeSummary.removed ?? [],
-          risers: response.meta.changeSummary.risers ?? [],
-          fallers: response.meta.changeSummary.fallers ?? [],
-          scoreRisers: response.meta.changeSummary.scoreRisers ?? [],
-          scoreFallers: response.meta.changeSummary.scoreFallers ?? [],
-        }
-      : null,
-    validationSummary: response.meta.validationSummary
-      ? {
-          ...response.meta.validationSummary,
-          activeCutoffs: response.meta.validationSummary.activeCutoffs ?? {
-            all: 0,
-            volume: 0,
-            hs: 0,
-            ihs: 0,
-            vcp: 0,
-          },
-          latestRuns: response.meta.validationSummary.latestRuns ?? {
-            weekly: null,
-            monthly: null,
-          },
-        }
-      : null,
-    lastRebuildStatus: response.meta.lastRebuildStatus
-      ? {
-          ...response.meta.lastRebuildStatus,
-          inProgress: response.meta.lastRebuildStatus.inProgress ?? false,
-          processed: response.meta.lastRebuildStatus.processed ?? 0,
-          total: response.meta.lastRebuildStatus.total ?? 0,
-          updatedAt: response.meta.lastRebuildStatus.updatedAt ?? null,
-          failedCount: response.meta.lastRebuildStatus.failedCount ?? 0,
-          retriedSymbols: response.meta.lastRebuildStatus.retriedSymbols ?? 0,
-          totalRetries: response.meta.lastRebuildStatus.totalRetries ?? 0,
-        }
-      : null,
-    filters: response.meta.filters
-      ? {
-          ...response.meta.filters,
-          wangEligible: response.meta.filters.wangEligible ?? "ALL",
-          wangActionBias: response.meta.filters.wangActionBias ?? "ALL",
-          wangPhase: response.meta.filters.wangPhase ?? "ALL",
-          wangZoneReady: response.meta.filters.wangZoneReady ?? "ALL",
-          wangMa20DiscountReady: response.meta.filters.wangMa20DiscountReady ?? "ALL",
-        }
-      : undefined,
-  },
-  items: (response.items ?? []).map(normalizeScreenerItem),
-  warningItems: (response.warningItems ?? []).map(normalizeScreenerItem),
-  warnings: response.warnings ?? [],
-});
-
-const wangBadgeClass = (wang: WangStrategyScreeningSummary): string => {
-  if (wang.eligible) return "badge good";
-  if (wang.actionBias === "CAUTION" || wang.actionBias === "OVERHEAT") return "badge caution";
-  return "badge neutral";
-};
-
-const booleanFilterLabel = (value: ScreenerBooleanFilter): string => {
-  if (value === "YES") return "YES";
-  if (value === "NO") return "NO";
-  return "ALL";
-};
-
-const isWangSortKey = (value: SortKey): boolean =>
-  value === "WANG_SCORE" || value === "WANG_CONFIDENCE";
-
-const WANG_FILTER_DEFAULTS: WangFilterState = {
-  wangEligible: "ALL",
-  wangActionBias: "ALL",
-  wangPhase: "ALL",
-  wangZoneReady: "ALL",
-  wangMa20DiscountReady: "ALL",
-};
-
-const WANG_PRESETS: Array<{
-  id: WangPresetId;
-  label: string;
-  summary: string;
-  filters: WangFilterState;
-  sortKey: SortKey;
-}> = [
-  {
-    id: "ACCUMULATE",
-    label: "적립 후보",
-    summary: "적합도 YES + 적립 바이어스",
-    filters: {
-      ...WANG_FILTER_DEFAULTS,
-      wangEligible: "YES",
-      wangActionBias: "ACCUMULATE",
-    },
-    sortKey: "WANG_SCORE",
-  },
-  {
-    id: "REACCUMULATION",
-    label: "재축적",
-    summary: "주봉 재축적 phase",
-    filters: {
-      ...WANG_FILTER_DEFAULTS,
-      wangPhase: "REACCUMULATION",
-    },
-    sortKey: "WANG_SCORE",
-  },
-  {
-    id: "MIN_VOLUME",
-    label: "최소거래량",
-    summary: "최소거래량 phase",
-    filters: {
-      ...WANG_FILTER_DEFAULTS,
-      wangPhase: "MIN_VOLUME",
-    },
-    sortKey: "WANG_SCORE",
-  },
-  {
-    id: "ZONE_READY",
-    label: "Zone Ready",
-    summary: "zone 진입 준비 완료",
-    filters: {
-      ...WANG_FILTER_DEFAULTS,
-      wangZoneReady: "YES",
-    },
-    sortKey: "WANG_SCORE",
-  },
-  {
-    id: "MA20_DISCOUNT",
-    label: "MA20 할인",
-    summary: "20일선 이하 할인 구간",
-    filters: {
-      ...WANG_FILTER_DEFAULTS,
-      wangMa20DiscountReady: "YES",
-    },
-    sortKey: "WANG_SCORE",
-  },
-  {
-    id: "CLEAR",
-    label: "왕장군 해제",
-    summary: "왕장군 필터 초기화",
-    filters: WANG_FILTER_DEFAULTS,
-    sortKey: "SCORE",
-  },
-];
-
-const verdictClass = (value: ScreenerVerdict): string => {
-  if (value === "매수 검토") return "signal-tag positive";
-  if (value === "비중 축소") return "signal-tag negative";
-  return "signal-tag neutral";
-};
-
-const buildCardOneLiner = (item: ScreenerItem, strategy: ScreenerStrategyFilter): { verdict: ScreenerVerdict; text: string } => {
-  if (strategy === "WASHOUT_PULLBACK") {
-    const hit = item.hits.washoutPullback;
-    if (hit.state === "REBOUND_CONFIRMED" && (hit.riskPct ?? 1) <= 0.1) {
-      return {
-        verdict: "매수 검토",
-        text: "반등 확인 단계이며 리스크가 관리 가능한 수준이라 분할 접근 후보로 볼 수 있습니다.",
-      };
-    }
-    if (hit.state === "PULLBACK_READY") {
-      return {
-        verdict: "관망",
-        text: "눌림 준비 구간으로 존 방어와 거래대금 재유입을 추가 확인한 뒤 대응이 유리합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "설거지 구조 확증이 약하거나 리스크가 커서 보수적 대응이 필요합니다.",
-    };
-  }
-
-  if (strategy === "VCP") {
-    if (item.hits.vcp.state === "CONFIRMED" && item.hits.vcp.score >= 88) {
-      return {
-        verdict: "매수 검토",
-        text: "VCP 확정 신호와 점수 우위가 확인되어 손절 기준 하 조건부 접근을 검토할 수 있습니다.",
-      };
-    }
-    if (item.hits.vcp.detected) {
-      return {
-        verdict: "관망",
-        text: "VCP 후보 단계로 저항 돌파와 거래량 확증 전까지 대기 전략이 안전합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "VCP 근거가 약해 추격 진입보다 신호 누적을 기다리는 편이 좋습니다.",
-    };
-  }
-
-  if (strategy === "DARVAS") {
-    const hit = item.hits.darvasRetest;
-    if (hit?.state === "CONFIRMED") {
-      return {
-        verdict: "매수 검토",
-        text: "다르바스 돌파-리테스트 확정 상태로 지지 유지 시나리오를 우선 볼 수 있습니다.",
-      };
-    }
-    if (hit?.state === "POTENTIAL") {
-      return {
-        verdict: "관망",
-        text: "다르바스 후보 구간으로 리테스트 지지 확인 전까지는 대기가 유리합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "다르바스 조건이 약해 추격 진입보다 관찰 우선이 적절합니다.",
-    };
-  }
-
-  if (strategy === "NR7") {
-    const hit = item.hits.nr7InsideBar;
-    if (hit?.state === "CONFIRMED" && hit.breakoutDirection === "UP") {
-      return {
-        verdict: "매수 검토",
-        text: "NR7 수축 후 상방 돌파가 확인되어 단기 모멘텀 우위가 나타났습니다.",
-      };
-    }
-    if (hit?.state === "POTENTIAL") {
-      return {
-        verdict: "관망",
-        text: "NR7 세팅은 형성됐지만 방향성 돌파 확증이 필요합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "NR7 신호가 약하거나 하방 이탈 이력이 있어 보수적 대응이 필요합니다.",
-    };
-  }
-
-  if (strategy === "TREND_TEMPLATE") {
-    const hit = item.hits.trendTemplate;
-    if (hit?.state === "CONFIRMED") {
-      return {
-        verdict: "매수 검토",
-        text: "장기 정배열 템플릿이 충족되어 추세 추종 후보로 해석할 수 있습니다.",
-      };
-    }
-    if (hit?.state === "POTENTIAL") {
-      return {
-        verdict: "관망",
-        text: "추세 템플릿 일부 충족 상태라 추가 정렬 확인이 필요합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "추세 템플릿 근거가 약해 단기 신호보다 장기 정렬 확인이 우선입니다.",
-    };
-  }
-
-  if (strategy === "RSI_DIVERGENCE") {
-    const hit = item.hits.rsiDivergence;
-    if (hit?.state === "CONFIRMED") {
-      return {
-        verdict: "매수 검토",
-        text: "RSI 다이버전스 확정으로 반등 시나리오 우위가 강화됐습니다.",
-      };
-    }
-    if (hit?.state === "POTENTIAL") {
-      return {
-        verdict: "관망",
-        text: "다이버전스 후보 단계라 넥라인 돌파 확증을 먼저 확인해야 합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "다이버전스 근거가 약해 반등 매매의 우선순위가 낮습니다.",
-    };
-  }
-
-  if (strategy === "FLOW_PERSISTENCE") {
-    const hit = item.hits.flowPersistence;
-    if (hit?.state === "CONFIRMED") {
-      return {
-        verdict: "매수 검토",
-        text: "수급 지속성 확정 신호로 추세 유지 관점의 조건부 접근이 가능합니다.",
-      };
-    }
-    if (hit?.state === "POTENTIAL") {
-      return {
-        verdict: "관망",
-        text: "수급 지속성 후보 단계로 거래량/가격 동시 확증을 더 기다려야 합니다.",
-      };
-    }
-    return {
-      verdict: "비중 축소",
-      text: "수급 지속성 신호가 약해 관망 또는 비중 축소 대응이 유리합니다.",
-    };
-  }
-
-  if (item.overallLabel === "GOOD" && item.confidence >= 65 && item.hits.hs.state !== "CONFIRMED") {
-    return {
-      verdict: "매수 검토",
-      text: "점수/신뢰도 조합이 양호해 지지 확인 시 분할 진입을 검토할 수 있습니다.",
-    };
-  }
-  if (item.overallLabel === "CAUTION" || item.hits.hs.state === "CONFIRMED") {
-    return {
-      verdict: "비중 축소",
-      text: "주의 또는 하락 패턴 신호가 있어 신규 진입보다 방어적 대응이 우선입니다.",
-    };
-  }
-  return {
-    verdict: "관망",
-    text: "신호가 혼조 구간이라 명확한 돌파/지지 확증이 나오기 전까지 대기가 유리합니다.",
-  };
-};
-
-const buildCompactItems = (item: ScreenerItem, strategy: ScreenerStrategyFilter): ScreenerCompactItem[] => {
-  if (strategy === "WASHOUT_PULLBACK") {
-    return [
-      { label: "Anchor", value: formatMultiple(item.hits.washoutPullback.anchorTurnoverRatio) },
-      { label: "재유입", value: formatMultiple(item.hits.washoutPullback.reentryTurnoverRatio) },
-      {
-        label: "눌림 존",
-        value: `${formatPrice(item.hits.washoutPullback.pullbackZone.low)} ~ ${formatPrice(item.hits.washoutPullback.pullbackZone.high)}`,
-      },
-      {
-        label: "현재 위치",
-        value: `${washoutPositionLabel(item.hits.washoutPullback.position)} / ${formatRiskPercent(item.hits.washoutPullback.riskPct)}`,
-      },
-    ];
-  }
-
-  if (strategy === "VCP") {
-    return [
-      {
-        label: "R-zone",
-        value: `${formatPrice(item.hits.vcp.resistance.zoneLow)} ~ ${formatPrice(item.hits.vcp.resistance.zoneHigh)}`,
-      },
-      {
-        label: "컨트랙션",
-        value:
-          item.hits.vcp.contractions.length > 0
-            ? `${item.hits.vcp.contractions.length}회 / ${item.hits.vcp.contractions
-                .map((contraction) => formatDepth(contraction.depth))
-                .join(" → ")}`
-            : "없음",
-      },
-      {
-        label: "거래량 수축",
-        value: `${dryUpStrengthLabel(item.hits.vcp.volume.dryUpStrength)} / ${
-          item.hits.vcp.volume.volRatioAvg10 != null ? `${item.hits.vcp.volume.volRatioAvg10.toFixed(2)}배` : "-"
-        }`,
-      },
-      {
-        label: "리더십",
-        value: `${leadershipLabel(item.hits.vcp.leadership.label)} / ${formatSignedPercent(
-          item.hits.vcp.leadership.ret63 != null ? item.hits.vcp.leadership.ret63 * 100 : null,
-        )}`,
-      },
-    ];
-  }
-
-  return [
-    { label: "RS", value: `${rsStrengthLabel(item.rs.label)} / ${formatSignedRatioPercent(item.rs.ret63Diff)}` },
-    { label: "거래량", value: `${formatScore(item.hits.volume.score)} / ${item.hits.volume.confidence}` },
-    {
-      label: "컵앤핸들",
-      value: `${cupHandleStateLabel(item.hits.cupHandle.state)} / ${item.hits.cupHandle.score}`,
-    },
-    {
-      label: "설거지+눌림",
-      value: `${washoutStateLabel(item.hits.washoutPullback.state)} / ${item.hits.washoutPullback.score}`,
-    },
-  ];
-};
-
-const sortItems = (
-  items: ScreenerItem[],
-  sortKey: SortKey,
-  strategy: ScreenerStrategyFilter,
-): ScreenerItem[] => {
-  const cloned = [...items];
-  if (strategy === "WASHOUT_PULLBACK") {
-    return cloned.sort((a, b) => {
-      const stateDiff =
-        washoutStatePriority(b.hits.washoutPullback.state) -
-        washoutStatePriority(a.hits.washoutPullback.state);
-      if (stateDiff !== 0) return stateDiff;
-      if (b.scoreTotal !== a.scoreTotal) return b.scoreTotal - a.scoreTotal;
-      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      const ar = a.hits.washoutPullback.riskPct ?? Number.POSITIVE_INFINITY;
-      const br = b.hits.washoutPullback.riskPct ?? Number.POSITIVE_INFINITY;
-      return ar - br;
-    });
-  }
-  if (sortKey === "CONFIDENCE") {
-    return cloned.sort((a, b) => b.confidence - a.confidence || b.scoreTotal - a.scoreTotal);
-  }
-  if (sortKey === "WANG_SCORE") {
-    return cloned.sort(
-      (a, b) =>
-        b.wangStrategy.score - a.wangStrategy.score ||
-        b.wangStrategy.confidence - a.wangStrategy.confidence ||
-        b.scoreTotal - a.scoreTotal,
-    );
-  }
-  if (sortKey === "WANG_CONFIDENCE") {
-    return cloned.sort(
-      (a, b) =>
-        b.wangStrategy.confidence - a.wangStrategy.confidence ||
-        b.wangStrategy.score - a.wangStrategy.score ||
-        b.scoreTotal - a.scoreTotal,
-    );
-  }
-  if (sortKey === "BACKTEST") {
-    return cloned.sort((a, b) => {
-      const ar = a.backtestSummary?.avgReturn ?? Number.NEGATIVE_INFINITY;
-      const br = b.backtestSummary?.avgReturn ?? Number.NEGATIVE_INFINITY;
-      if (br !== ar) return br - ar;
-      return b.scoreTotal - a.scoreTotal;
-    });
-  }
-  return cloned.sort((a, b) => b.scoreTotal - a.scoreTotal || b.confidence - a.confidence);
-};
-
 export default function ScreenerPanel(props: ScreenerPanelProps) {
   const { apiBase, onSelectSymbol, onSelectWangStrategy } = props;
   const [isMobileView, setIsMobileView] = useState(() => {
