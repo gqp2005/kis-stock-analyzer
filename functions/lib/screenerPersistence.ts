@@ -40,16 +40,15 @@ const resolvePersistenceBackend = (
 
 const ensureD1Schema = async (env: Env): Promise<void> => {
   if (!env.SCREENER_DB || d1SchemaReady) return;
-  await env.SCREENER_DB.exec(
-    `CREATE TABLE IF NOT EXISTS ${D1_TABLE} (
-      k TEXT PRIMARY KEY,
-      v TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      expire_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_${D1_TABLE}_expire ON ${D1_TABLE}(expire_at);
-    CREATE INDEX IF NOT EXISTS idx_${D1_TABLE}_key ON ${D1_TABLE}(k);`,
-  );
+  await env.SCREENER_DB.prepare(
+    `CREATE TABLE IF NOT EXISTS ${D1_TABLE} (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at TEXT NOT NULL, expire_at INTEGER)`,
+  ).run();
+  await env.SCREENER_DB.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_${D1_TABLE}_expire ON ${D1_TABLE}(expire_at)`,
+  ).run();
+  await env.SCREENER_DB.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_${D1_TABLE}_key ON ${D1_TABLE}(k)`,
+  ).run();
   d1SchemaReady = true;
 };
 
