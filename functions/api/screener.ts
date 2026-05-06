@@ -135,7 +135,7 @@ const parseCount = (raw: string | null): number => {
   return Math.max(5, Math.min(100, Math.floor(parsed)));
 };
 
-const DEFAULT_AUTO_BOOTSTRAP_BATCH = 20;
+const DEFAULT_AUTO_BOOTSTRAP_BATCH = 10;
 
 const parseBooleanEnv = (raw: string | undefined, fallback: boolean): boolean => {
   if (raw == null || raw.trim() === "") return fallback;

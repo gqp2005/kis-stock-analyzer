@@ -799,7 +799,7 @@ const fetchPeriodCandles = async (
   const periodCode = tf === "day" ? "D" : tf === "week" ? "W" : "M";
   const windowDays = tf === "day" ? 420 : tf === "week" ? 4500 : 12000;
   const targetCount = Math.max(minCount, tf === "day" ? 170 : tf === "week" ? 120 : 80);
-  const maxPage = tf === "day" ? Math.max(6, Math.ceil(targetCount / 90) + 2) : 4;
+  const maxPage = tf === "day" ? Math.max(4, Math.ceil(targetCount / 90) + 1) : 4;
   const candleByDate = new Map<string, Candle>();
 
   let endDate = formatKstDate(new Date());
