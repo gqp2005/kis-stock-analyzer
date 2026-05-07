@@ -24,6 +24,12 @@ export const rebuildLockKey = (): string =>
 export const rebuildProgressKey = (date: string): string =>
   toCacheUrl(`screener:v1:rebuild-progress:${date}`);
 
+export const persistUniverseDateKey = (date: string): string =>
+  `universe:turnoverTop500:${date}`;
+
+export const persistUniverseLastSuccessKey = (): string =>
+  "universe:turnoverTop500:last_success";
+
 export const persistRebuildLockKey = (): string =>
   "runtime:lock:rebuild-screener";
 

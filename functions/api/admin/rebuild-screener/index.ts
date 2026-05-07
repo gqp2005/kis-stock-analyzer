@@ -35,6 +35,8 @@ import {
   persistAlertStateKey,
   persistChangeHistoryKey,
   persistFailureHistoryKey,
+  persistUniverseDateKey,
+  persistUniverseLastSuccessKey,
   persistValidationHistoryKey,
   persistValidationStateKey,
   persistScreenerDateKey,
@@ -196,8 +198,10 @@ const isProgressStale = (
 };
 
 const loadUniverseSnapshot = async (
+  env: Env,
   cache: Cache,
   date: string,
+  forceReload: boolean,
 ): Promise<{
   snapshot: UniverseSnapshot;
   cacheHit: boolean;
@@ -205,11 +209,32 @@ const loadUniverseSnapshot = async (
 }> => {
   const warnings: string[] = [];
   const dailyKey = universeDateKey(date);
-  let snapshot = await getCachedJson<UniverseSnapshot>(cache, dailyKey);
-  if (snapshot && snapshot.items.length > 0) {
-    return { snapshot, cacheHit: true, providerWarnings: warnings };
+  const persistDateKey = persistUniverseDateKey(date);
+  const persistLastKey = persistUniverseLastSuccessKey();
+  const persistEnabled = persistenceBackend(env) !== "none";
+
+  if (forceReload) {
+    await cache.delete(new Request(dailyKey));
+    if (persistEnabled) {
+      await deletePersistedJson(env, persistDateKey);
+    }
+  } else {
+    const cached = await getCachedJson<UniverseSnapshot>(cache, dailyKey);
+    if (cached && cached.items.length > 0) {
+      return { snapshot: cached, cacheHit: true, providerWarnings: warnings };
+    }
+
+    if (persistEnabled) {
+      const persisted = await getPersistedJson<UniverseSnapshot>(env, persistDateKey);
+      if (persisted && persisted.items.length > 0) {
+        // isolate 간 일관성을 위해 D1 → Cache API 채워둠.
+        await putCachedJson(cache, dailyKey, persisted, SCREENER_CACHE_TTL_SEC);
+        return { snapshot: persisted, cacheHit: true, providerWarnings: warnings };
+      }
+    }
   }
 
+  let snapshot: UniverseSnapshot | null = null;
   const externalProvider = new ExternalProvider();
   try {
     const externalUniverse = await externalProvider.getTopByTurnover(date, TARGET_UNIVERSE);
@@ -238,7 +263,11 @@ const loadUniverseSnapshot = async (
         backupError instanceof Error ? backupError.message : "backup provider error";
       warnings.push(`MarketSummaryProvider 실패: ${backupMessage}`);
 
-      const lastUniverse = await getCachedJson<UniverseSnapshot>(cache, universeLastSuccessKey());
+      const lastUniverse =
+        (persistEnabled
+          ? await getPersistedJson<UniverseSnapshot>(env, persistLastKey)
+          : null) ??
+        (await getCachedJson<UniverseSnapshot>(cache, universeLastSuccessKey()));
       if (lastUniverse && lastUniverse.items.length > 0) {
         snapshot = {
           ...lastUniverse,
@@ -263,6 +292,13 @@ const loadUniverseSnapshot = async (
 
   await putCachedJson(cache, dailyKey, snapshot, SCREENER_CACHE_TTL_SEC);
   await putCachedJson(cache, universeLastSuccessKey(), snapshot, SCREENER_CACHE_TTL_SEC);
+  if (persistEnabled) {
+    await putPersistedJson(env, persistDateKey, snapshot, SCREENER_CACHE_TTL_SEC);
+    if (snapshot.source !== "STATIC") {
+      // STATIC fallback은 last_success로 승격하지 않는다(다음 trigger에서 재시도 기회 유지).
+      await putPersistedJson(env, persistLastKey, snapshot, SCREENER_CACHE_TTL_SEC);
+    }
+  }
   return { snapshot, cacheHit: false, providerWarnings: warnings };
 };
 
@@ -1041,7 +1077,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const batchSize = parseBatchSize(url);
 
-    const universeLoad = await loadUniverseSnapshot(cache, date);
+    // mode=trigger + force=1 호출 시 universe 캐시도 강제 갱신해 isolate 간 stale 데이터를 정리한다.
+    const forceUniverseReload = forceRun && mode === "trigger";
+    const universeLoad = await loadUniverseSnapshot(
+      context.env,
+      cache,
+      date,
+      forceUniverseReload,
+    );
     const universe = universeLoad.snapshot.items.slice(0, TARGET_UNIVERSE);
     const benchmarks: ScreenerBenchmarkMap = {};
     const benchmarkWarnings: string[] = [];
