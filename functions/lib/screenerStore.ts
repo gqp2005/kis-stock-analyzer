@@ -30,6 +30,17 @@ export const persistRebuildLockKey = (): string =>
 export const persistRebuildProgressKey = (date: string): string =>
   `runtime:progress:rebuild-screener:${date}`;
 
+export const persistRebuildProgressCandidatesPrefix = (date: string): string =>
+  `runtime:progress:rebuild-screener:${date}:candidates:`;
+
+export const persistRebuildProgressCandidatesKey = (
+  date: string,
+  chunkIndex: number,
+): string =>
+  `${persistRebuildProgressCandidatesPrefix(date)}${chunkIndex
+    .toString()
+    .padStart(6, "0")}`;
+
 export const persistScreenerDateKey = (date: string): string =>
   `snapshot:date:${date}`;
 

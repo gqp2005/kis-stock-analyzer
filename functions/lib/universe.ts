@@ -203,7 +203,7 @@ export class ExternalProvider implements UniverseProvider {
   private readonly timeoutMs: number;
 
   constructor(options: ExternalProviderOptions = {}) {
-    this.fetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
     this.maxPagesPerMarket = Math.max(1, Math.min(20, options.maxPagesPerMarket ?? DEFAULT_MAX_PAGES));
     this.timeoutMs = Math.max(1000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
@@ -262,7 +262,7 @@ export class MarketSummaryProvider implements UniverseProvider {
   private readonly timeoutMs: number;
 
   constructor(options: ExternalProviderOptions = {}) {
-    this.fetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
     this.maxPagesPerMarket = Math.max(1, Math.min(30, options.maxPagesPerMarket ?? DEFAULT_MAX_PAGES));
     this.timeoutMs = Math.max(1000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }

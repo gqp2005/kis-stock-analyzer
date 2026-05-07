@@ -1,7 +1,9 @@
 import { getCachedJson, putCachedJson } from "./cache";
+import type { ScreenerStoredCandidate } from "./screener";
 import {
   deletePersistedJson,
   getPersistedJson,
+  listPersistedByPrefix,
   type PersistBackend,
   putPersistedJson,
 } from "./screenerPersistence";
@@ -10,11 +12,16 @@ import {
   SCREENER_CACHE_TTL_SEC,
   type RebuildProgressSnapshot,
   persistRebuildLockKey,
+  persistRebuildProgressCandidatesKey,
+  persistRebuildProgressCandidatesPrefix,
   persistRebuildProgressKey,
   rebuildLockKey,
   rebuildProgressKey,
 } from "./screenerStore";
 import type { Env } from "./types";
+
+const RUNTIME_CANDIDATES_PER_CHUNK = 50;
+const RUNTIME_CANDIDATES_MAX_CHUNKS = 50;
 
 export type RebuildRuntimeBackend = "cache" | "d1";
 
@@ -81,6 +88,52 @@ export const clearRebuildRuntimeLock = async (
   await cache.delete(new Request(rebuildLockKey()));
 };
 
+const loadCandidateChunks = async (
+  env: Env,
+  date: string,
+): Promise<ScreenerStoredCandidate[]> => {
+  const chunks = await listPersistedByPrefix<ScreenerStoredCandidate[]>(
+    env,
+    persistRebuildProgressCandidatesPrefix(date),
+    RUNTIME_CANDIDATES_MAX_CHUNKS,
+    "d1",
+  );
+  return chunks
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .flatMap((item) => (Array.isArray(item.value) ? item.value : []));
+};
+
+const saveCandidateChunks = async (
+  env: Env,
+  date: string,
+  candidates: ScreenerStoredCandidate[],
+): Promise<void> => {
+  const totalChunks = Math.ceil(candidates.length / RUNTIME_CANDIDATES_PER_CHUNK);
+  for (let i = 0; i < totalChunks; i += 1) {
+    const start = i * RUNTIME_CANDIDATES_PER_CHUNK;
+    const chunk = candidates.slice(start, start + RUNTIME_CANDIDATES_PER_CHUNK);
+    await putPersistedJson(
+      env,
+      persistRebuildProgressCandidatesKey(date, i),
+      chunk,
+      SCREENER_CACHE_TTL_SEC,
+      "d1",
+    );
+  }
+};
+
+const clearCandidateChunks = async (env: Env, date: string): Promise<void> => {
+  const chunks = await listPersistedByPrefix<unknown>(
+    env,
+    persistRebuildProgressCandidatesPrefix(date),
+    RUNTIME_CANDIDATES_MAX_CHUNKS,
+    "d1",
+  );
+  for (const item of chunks) {
+    await deletePersistedJson(env, item.key, "d1");
+  }
+};
+
 export const loadRebuildRuntimeProgress = async (
   env: Env,
   cache: Cache,
@@ -88,11 +141,14 @@ export const loadRebuildRuntimeProgress = async (
 ): Promise<RebuildProgressSnapshot | null> => {
   const backend = rebuildRuntimeBackend(env);
   if (backend === "d1") {
-    return await getPersistedJson<RebuildProgressSnapshot>(
+    const meta = await getPersistedJson<RebuildProgressSnapshot>(
       env,
       persistRebuildProgressKey(date),
       "d1",
     );
+    if (!meta) return null;
+    const candidates = await loadCandidateChunks(env, date);
+    return { ...meta, candidates };
   }
   const cacheValue = await getCachedJson<RebuildProgressSnapshot>(cache, rebuildProgressKey(date));
   if (cacheValue) return cacheValue;
@@ -115,13 +171,17 @@ export const saveRebuildRuntimeProgress = async (
 ): Promise<void> => {
   const backend = rebuildRuntimeBackend(env);
   if (backend === "d1") {
+    // candidates는 D1 row size 한도(약 1MB) 회피를 위해 청크 단위로 분리 저장한다.
+    const candidates = payload.candidates ?? [];
+    const meta: RebuildProgressSnapshot = { ...payload, candidates: [] };
     await putPersistedJson(
       env,
       persistRebuildProgressKey(date),
-      payload,
+      meta,
       SCREENER_CACHE_TTL_SEC,
       "d1",
     );
+    await saveCandidateChunks(env, date, candidates);
     return;
   }
   await putCachedJson(cache, rebuildProgressKey(date), payload, SCREENER_CACHE_TTL_SEC);
@@ -145,6 +205,7 @@ export const clearRebuildRuntimeProgress = async (
 ): Promise<void> => {
   const backend = rebuildRuntimeBackend(env);
   if (backend === "d1") {
+    await clearCandidateChunks(env, date);
     await deletePersistedJson(env, persistRebuildProgressKey(date), "d1");
     return;
   }
