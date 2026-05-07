@@ -179,13 +179,14 @@ export const listPersistedByPrefix = async <T>(
   if (!env.SCREENER_DB) return [];
   await ensureD1Schema(env);
   await purgeExpiredD1(env);
+  // D1의 LIKE 패턴 한도("too complex")를 우회하고 인덱스 lookup을 활용하기 위해 범위 비교 사용.
   const rows = await env.SCREENER_DB.prepare(
     `SELECT k, v FROM ${D1_TABLE}
-     WHERE k LIKE ? AND (expire_at IS NULL OR expire_at > ?)
+     WHERE k >= ? AND k < ? AND (expire_at IS NULL OR expire_at > ?)
      ORDER BY k DESC
      LIMIT ?`,
   )
-    .bind(`${prefixedPrefix}%`, nowSec(), safeLimit)
+    .bind(prefixedPrefix, `${prefixedPrefix}￿`, nowSec(), safeLimit)
     .all<{ k: string; v: string }>();
 
   const resultRows = rows.results ?? [];
