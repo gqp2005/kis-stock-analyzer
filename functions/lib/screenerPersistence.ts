@@ -9,6 +9,9 @@ export interface PersistListItem<T> {
 
 const PERSIST_PREFIX = "screener:persist:v1:";
 const D1_TABLE = "screener_persist";
+const D1_CHUNK_ROOT_PREFIX = `${PERSIST_PREFIX}__chunks__:`;
+const D1_SAFE_CHAR_LIMIT = 128 * 1024;
+const D1_CHUNK_MARKER = "__screenerPersistChunked";
 
 let d1SchemaReady = false;
 
@@ -18,6 +21,44 @@ const stripPrefix = (key: string): string =>
   key.startsWith(PERSIST_PREFIX) ? key.slice(PERSIST_PREFIX.length) : key;
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+const upperBoundForPrefix = (prefix: string): string =>
+  `${prefix}${String.fromCharCode(0xffff)}`;
+
+interface D1ChunkManifest {
+  [D1_CHUNK_MARKER]: true;
+  version: 1;
+  chunkPrefix: string;
+  chunks: number;
+  charLength: number;
+  updatedAt: string;
+}
+
+const isD1ChunkManifest = (value: unknown): value is D1ChunkManifest =>
+  !!value &&
+  typeof value === "object" &&
+  (value as Record<string, unknown>)[D1_CHUNK_MARKER] === true &&
+  (value as Record<string, unknown>).version === 1 &&
+  typeof (value as Record<string, unknown>).chunkPrefix === "string" &&
+  typeof (value as Record<string, unknown>).chunks === "number";
+
+const d1ChunkRoot = (key: string): string => `${D1_CHUNK_ROOT_PREFIX}${key}:`;
+
+const d1ChunkPrefix = (key: string): string => {
+  const generation = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${d1ChunkRoot(key)}${generation}:`;
+};
+
+const d1ChunkKey = (chunkPrefix: string, index: number): string =>
+  `${chunkPrefix}${index.toString().padStart(6, "0")}`;
+
+const splitIntoChunks = (value: string, chunkSize: number): string[] => {
+  const chunks: string[] = [];
+  for (let start = 0; start < value.length; start += chunkSize) {
+    chunks.push(value.slice(start, start + chunkSize));
+  }
+  return chunks;
+};
 
 export const persistenceBackend = (env: Env): PersistBackend => {
   if (env.SCREENER_KV) return "kv";
@@ -61,6 +102,118 @@ const purgeExpiredD1 = async (env: Env): Promise<void> => {
     .run();
 };
 
+const listD1ChunkKeys = async (env: Env, key: string): Promise<string[]> => {
+  if (!env.SCREENER_DB) return [];
+  const root = d1ChunkRoot(key);
+  const rows = await env.SCREENER_DB.prepare(
+    `SELECT k FROM ${D1_TABLE}
+     WHERE k >= ? AND k < ?
+     ORDER BY k ASC`,
+  )
+    .bind(root, upperBoundForPrefix(root))
+    .all<{ k: string }>();
+  return (rows.results ?? []).map((row) => row.k);
+};
+
+const cleanupD1Chunks = async (
+  env: Env,
+  key: string,
+  keepPrefix?: string,
+): Promise<void> => {
+  if (!env.SCREENER_DB) return;
+  const keys = await listD1ChunkKeys(env, key);
+  for (const chunkKey of keys) {
+    if (keepPrefix && chunkKey.startsWith(keepPrefix)) continue;
+    await env.SCREENER_DB.prepare(`DELETE FROM ${D1_TABLE} WHERE k = ?`)
+      .bind(chunkKey)
+      .run();
+  }
+};
+
+const putD1Row = async (
+  env: Env,
+  key: string,
+  value: string,
+  updatedAt: string,
+  expireAt: number | null,
+): Promise<void> => {
+  if (!env.SCREENER_DB) return;
+  await env.SCREENER_DB.prepare(
+    `INSERT INTO ${D1_TABLE} (k, v, updated_at, expire_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(k) DO UPDATE SET
+      v=excluded.v,
+      updated_at=excluded.updated_at,
+      expire_at=excluded.expire_at`,
+  )
+    .bind(key, value, updatedAt, expireAt)
+    .run();
+};
+
+const putD1Json = async (
+  env: Env,
+  key: string,
+  prefixed: string,
+  payload: unknown,
+  updatedAt: string,
+  expireAt: number | null,
+): Promise<void> => {
+  const serialized = JSON.stringify(payload);
+  if (serialized.length <= D1_SAFE_CHAR_LIMIT) {
+    await putD1Row(env, prefixed, serialized, updatedAt, expireAt);
+    await cleanupD1Chunks(env, key);
+    return;
+  }
+
+  const chunks = splitIntoChunks(serialized, D1_SAFE_CHAR_LIMIT);
+  const chunkPrefix = d1ChunkPrefix(key);
+  for (let index = 0; index < chunks.length; index += 1) {
+    await putD1Row(env, d1ChunkKey(chunkPrefix, index), chunks[index], updatedAt, expireAt);
+  }
+
+  const manifest: D1ChunkManifest = {
+    [D1_CHUNK_MARKER]: true,
+    version: 1,
+    chunkPrefix,
+    chunks: chunks.length,
+    charLength: serialized.length,
+    updatedAt,
+  };
+  await putD1Row(env, prefixed, JSON.stringify(manifest), updatedAt, expireAt);
+  await cleanupD1Chunks(env, key, chunkPrefix);
+};
+
+const parseD1StoredJson = async <T>(env: Env, stored: string): Promise<T | null> => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    return null;
+  }
+
+  if (!isD1ChunkManifest(parsed)) {
+    return parsed as T;
+  }
+
+  if (!env.SCREENER_DB || parsed.chunks < 1) return null;
+  const chunks: string[] = [];
+  for (let index = 0; index < parsed.chunks; index += 1) {
+    const row = await env.SCREENER_DB.prepare(
+      `SELECT v FROM ${D1_TABLE} WHERE k = ? LIMIT 1`,
+    )
+      .bind(d1ChunkKey(parsed.chunkPrefix, index))
+      .first<{ v: string }>();
+    if (typeof row?.v !== "string") return null;
+    chunks.push(row.v);
+  }
+
+  try {
+    return JSON.parse(chunks.join("")) as T;
+  } catch {
+    return null;
+  }
+};
+
 export const putPersistedJson = async (
   env: Env,
   key: string,
@@ -83,16 +236,7 @@ export const putPersistedJson = async (
   await ensureD1Schema(env);
   const expireAt = ttlSec && ttlSec > 0 ? nowSec() + ttlSec : null;
   const updatedAt = new Date().toISOString();
-  await env.SCREENER_DB.prepare(
-    `INSERT INTO ${D1_TABLE} (k, v, updated_at, expire_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(k) DO UPDATE SET
-      v=excluded.v,
-      updated_at=excluded.updated_at,
-      expire_at=excluded.expire_at`,
-  )
-    .bind(prefixed, JSON.stringify(payload), updatedAt, expireAt)
-    .run();
+  await putD1Json(env, key, prefixed, payload, updatedAt, expireAt);
   return true;
 };
 
@@ -115,6 +259,7 @@ export const deletePersistedJson = async (
   await env.SCREENER_DB.prepare(`DELETE FROM ${D1_TABLE} WHERE k = ?`)
     .bind(prefixed)
     .run();
+  await cleanupD1Chunks(env, key);
   return true;
 };
 
@@ -141,11 +286,7 @@ export const getPersistedJson = async <T>(
     .first<{ v: string }>();
 
   if (!row?.v) return null;
-  try {
-    return JSON.parse(row.v) as T;
-  } catch {
-    return null;
-  }
+  return await parseD1StoredJson<T>(env, row.v);
 };
 
 export const listPersistedByPrefix = async <T>(
@@ -186,19 +327,19 @@ export const listPersistedByPrefix = async <T>(
      ORDER BY k DESC
      LIMIT ?`,
   )
-    .bind(prefixedPrefix, `${prefixedPrefix}￿`, nowSec(), safeLimit)
+    .bind(prefixedPrefix, upperBoundForPrefix(prefixedPrefix), nowSec(), safeLimit)
     .all<{ k: string; v: string }>();
 
   const resultRows = rows.results ?? [];
   const parsed: Array<PersistListItem<T>> = [];
   for (const row of resultRows) {
-    try {
+    if (row.k.startsWith(D1_CHUNK_ROOT_PREFIX)) continue;
+    const value = await parseD1StoredJson<T>(env, row.v);
+    if (value != null) {
       parsed.push({
         key: stripPrefix(row.k),
-        value: JSON.parse(row.v) as T,
+        value,
       });
-    } catch {
-      // ignore invalid rows
     }
   }
   return parsed;
