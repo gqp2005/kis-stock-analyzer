@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import AccountAssetChart from "./AccountAssetChart";
 import FavoriteButton from "./FavoriteButton";
 import { useFavorites } from "./favorites";
 import { formatPrice, formatSignedPercent as formatPercent } from "./format";
@@ -152,6 +153,7 @@ export default function AccountPanel(props: AccountPanelProps) {
                 ))}
               </div>
             )}
+            <AccountAssetChart history={account.history} />
           </>
         )}
       </div>

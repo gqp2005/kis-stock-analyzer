@@ -1984,6 +1984,111 @@ h2 {
   margin-bottom: 10px;
 }
 
+.account-history-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(123, 145, 166, 0.18);
+}
+
+.account-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-history-head h4 {
+  margin: 0 0 4px;
+  color: var(--heading, #e9f3ff);
+  font-size: 16px;
+}
+
+.account-history-tabs {
+  margin: 0;
+}
+
+.account-history-tabs .tab {
+  min-width: 42px;
+}
+
+.account-history-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-history-chart {
+  min-height: 250px;
+  border: 1px solid rgba(123, 145, 166, 0.2);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 252, 0.92)),
+    var(--surface-soft, rgba(13, 25, 37, 0.78));
+  overflow: hidden;
+}
+
+.account-history-chart svg {
+  display: block;
+  width: 100%;
+  height: 260px;
+}
+
+.account-history-empty {
+  margin: 0;
+  padding: 28px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-history-grid-line {
+  stroke: rgba(106, 129, 152, 0.22);
+  stroke-width: 1;
+}
+
+.account-history-zero-line {
+  stroke: rgba(106, 129, 152, 0.34);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.account-history-line {
+  fill: none;
+  stroke: #2f7ad1;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.account-history-point {
+  fill: #ffffff;
+  stroke: #2f7ad1;
+  stroke-width: 2;
+}
+
+.account-history-bar.positive {
+  fill: rgba(11, 141, 101, 0.62);
+}
+
+.account-history-bar.negative {
+  fill: rgba(196, 84, 110, 0.62);
+}
+
+.account-history-axis-text,
+.account-history-x-text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.positive-value {
+  color: var(--good) !important;
+}
+
+.negative-value {
+  color: var(--caution) !important;
+}
+
 .strategy-head {
   display: flex;
   justify-content: space-between;
@@ -2762,11 +2867,19 @@ h2 {
     align-items: flex-start;
   }
 
+  .account-history-head {
+    flex-direction: column;
+  }
+
   .strategy-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .account-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-history-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3269,6 +3382,7 @@ h2 {
   .strategy-summary-grid,
   .glossary-grid,
   .account-summary-grid,
+  .account-history-kpis,
   .fund-grid,
   .volume-grid,
   .plan-grid,

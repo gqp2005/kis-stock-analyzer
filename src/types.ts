@@ -577,6 +577,42 @@ export interface AccountHolding {
   weightPercent: number | null;
 }
 
+export type AccountAssetHistoryPeriod = "day" | "week" | "month";
+
+export interface AccountAssetHistoryPoint {
+  key: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  asOf: string;
+  totalAssetAmount: number | null;
+  totalEvaluationAmount: number | null;
+  cashAmount: number | null;
+  changeAmount: number | null;
+  changeRate: number | null;
+}
+
+export interface AccountAssetHistorySeries {
+  period: AccountAssetHistoryPeriod;
+  points: AccountAssetHistoryPoint[];
+  latestChangeAmount: number | null;
+  latestChangeRate: number | null;
+  totalChangeAmount: number | null;
+  totalChangeRate: number | null;
+  averageChangeAmount: number | null;
+}
+
+export interface AccountAssetHistory {
+  storage: {
+    enabled: boolean;
+    backend: "kv" | "d1" | "none";
+  };
+  day: AccountAssetHistorySeries;
+  week: AccountAssetHistorySeries;
+  month: AccountAssetHistorySeries;
+  warnings: string[];
+}
+
 export interface AccountResponse {
   meta: {
     asOf: string;
@@ -594,6 +630,7 @@ export interface AccountResponse {
   };
   holdings: AccountHolding[];
   warnings: string[];
+  history?: AccountAssetHistory;
 }
 
 export interface AccountDiagnosticsItem {
